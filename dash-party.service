@@ -1,0 +1,18 @@
+[Unit]
+Description=DASH Parkour party server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# change "pi" and the folder if you put the server somewhere else
+User=pi
+WorkingDirectory=/home/pi/dash-server
+ExecStart=/usr/bin/node /home/pi/dash-server/server.js
+Environment=PORT=8787
+Restart=always
+RestartSec=3
+# keep the Pi's small memory safe
+MemoryMax=150M
+
+[Install]
+WantedBy=multi-user.target
