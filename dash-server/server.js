@@ -15,13 +15,13 @@
 //
 // Parties live in memory (a restart empties the list; hosts make a new
 // party). Bans and admin keys are files in DATA_DIR.
- 
+
 "use strict";
 const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
- 
+
 const PORT = Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -31,12 +31,27 @@ const PARTY_TTL = 15000; // a party disappears 15 s after its host stops checkin
 const REQUEST_TTL = 30000; // a join request is dropped 30 s after the joiner stops asking
 const MAX_BODY = 16 * 1024; // connection codes are ~1-3 KB
 const MAX_CODE = 6000;
- 
+
+// [v1.1] The addresses, from the setup (or PARTY_HOST / SITE_DOMAIN). The party
+// address only shows a status page (and the API); the game is on the website,
+// at /dashparkour.
+const SETUP_CONF = {};
+try {
+  for (const line of fs.readFileSync(process.env.SETUP_CONF || "/etc/dash-party/setup.conf", "utf8").split("\n")) {
+    const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+    if (m) SETUP_CONF[m[1]] = m[2];
+  }
+} catch (e) {}
+const SITE_DOMAIN = (process.env.SITE_DOMAIN || SETUP_CONF.DOMAIN || "digitsandkineto.com").toLowerCase();
+const PARTY_HOST = (process.env.PARTY_HOST || SETUP_CONF.PARTY_HOST || "party." + SITE_DOMAIN).toLowerCase();
+const GAME_PATH = "/dashparkour";
+const GAME_FILE = "dash-parkour.ka.html";
+
 const parties = new Map(); // id -> party
 const requests = new Map(); // rid -> join request
 const startedAt = Date.now();
 const stats = { made: 0, joins: 0, kicks: 0, bans: 0, errors: 0 };
- 
+
 const id = (bytes) => crypto.randomBytes(bytes).toString("base64").replace(/[+/=]/g, (c) => ({ "+": "-", "/": "_", "=": "" }[c]));
 const sha = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
 const hashPass = (salt, pass) => sha(salt + "\u0000" + pass);
@@ -47,11 +62,11 @@ const sameText = (a, b) => {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 const norm = (n) => clean(n, 16).toLowerCase();
- 
+
 function log(...a) {
   if (!process.env.QUIET) console.log(new Date().toISOString(), ...a);
 }
- 
+
 // ---------------- files: admin keys and bans ----------------
 try {
   fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
@@ -94,7 +109,7 @@ function adminFor(key) {
   for (const a of admins) if (a && a.hash && sameText(a.hash, h)) return a;
   return null;
 }
- 
+
 // ---------------- rate limit (requests per 10 s, per address) ----------------
 const hits = new Map();
 function limited(ip, cost, cap) {
@@ -106,7 +121,7 @@ function limited(ip, cost, cap) {
   return h.n > (cap || 150);
 }
 const adminTries = new Map(); // wrong admin keys: at most 5 a minute per address
- 
+
 // ---------------- tidy up ----------------
 setInterval(() => {
   const now = Date.now();
@@ -121,13 +136,13 @@ setInterval(() => {
     writeJson(path.join(DATA_DIR, "status.json"), { at: Date.now(), parties: parties.size, players: [...parties.values()].reduce((a, p) => a + p.n, 0), up: Math.round((Date.now() - startedAt) / 1000), stats, bans: bans.length, admins: admins.length });
   } catch (e) {}
 }, 10000).unref();
- 
+
 function dropParty(pid) {
   parties.delete(pid);
   for (const [rid, r] of requests) if (r.party === pid) requests.delete(rid);
 }
 const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max: p.max, playing: p.playing, host: p.host });
- 
+
 // ---------------- HTTP helpers ----------------
 const API_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -172,7 +187,7 @@ const clientIp = (req) => {
   const local = req.socket.remoteAddress === "127.0.0.1" || req.socket.remoteAddress === "::1" || req.socket.remoteAddress === "::ffff:127.0.0.1";
   return String((local && req.headers["cf-connecting-ip"]) || req.socket.remoteAddress || "?");
 };
- 
+
 // ---------------- the website (optional) ----------------
 const MIME = { ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".txt": "text/plain; charset=utf-8", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav", ".mp4": "video/mp4", ".webm": "video/webm", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf" };
 function serveSite(req, res, urlPath) {
@@ -223,7 +238,34 @@ function listGames(res) {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(body), "X-Content-Type-Options": "nosniff" });
   res.end(body);
 }
- 
+
+// [v1.1] The party address's page: is the server up, and where the game is.
+const fmtUp = (sec) => {
+  sec = Math.max(0, Math.round(sec));
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return (d ? d + "d " : "") + (d || h ? h + "h " : "") + m + "m";
+};
+function statusPage(req, res) {
+  const players = [...parties.values()].reduce((a, p) => a + p.n, 0);
+  const playing = [...parties.values()].filter((p) => p.playing).length;
+  let piUp = 0, load = "";
+  try {
+    piUp = require("os").uptime();
+    load = require("os").loadavg()[0].toFixed(2);
+  } catch (e) {}
+  const mem = Math.round(process.memoryUsage().rss / 1048576);
+  const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
+  const game = "https://" + SITE_DOMAIN + GAME_PATH;
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="30"><title>DASH Parkour party server</title>
+<style>:root{color-scheme:dark}body{font:17px/1.5 system-ui,-apple-system,sans-serif;background:#0d0f16;color:#f5f4f0;max-width:560px;margin:0 auto;padding:32px 16px}h1{font-size:26px;margin:0 0 4px}.ok{display:inline-block;background:#1f8a4c;color:#fff;border-radius:999px;padding:2px 12px;font-weight:600;font-size:14px}table{border-collapse:collapse;width:100%;margin:22px 0}th,td{text-align:left;padding:9px 0;border-bottom:1px solid #262a38}th{color:#9aa0b4;font-weight:500;width:58%;padding-right:12px}a.play{display:block;text-align:center;background:#e11;color:#fff;text-decoration:none;font-weight:700;font-size:20px;border-radius:14px;padding:14px;border:3px solid #000}small{color:#9aa0b4}</style></head>
+<body><h1>DASH Parkour party server</h1><span class="ok">Online</span>
+<table>${row("Server up for", fmtUp((Date.now() - startedAt) / 1000))}${row("Raspberry Pi up for", piUp ? fmtUp(piUp) : "?")}${row("Parties open", parties.size)}${row("Parties playing", playing)}${row("Players in parties", players)}${row("Parties made since start", stats.made)}${row("Pi load (1 min)", load || "?")}${row("Server memory", mem + " MB")}</table>
+<a class="play" href="${game}">Play DASH Parkour</a>
+<p><small>This page refreshes every 30 seconds. The game lives at <a href="${game}" style="color:#b8f279">${SITE_DOMAIN + GAME_PATH}</a>.</small></p></body></html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+  res.end(req.method === "HEAD" ? undefined : body);
+}
+
 // ---------------- the API ----------------
 async function handle(req, res) {
   const url = new URL(req.url, "http://x");
@@ -231,17 +273,28 @@ async function handle(req, res) {
   const ip = clientIp(req);
   if (req.method === "OPTIONS") return send(res, 204, {});
   if (limited(ip, req.method === "GET" ? 1 : 2)) return fail(res, 429, "Too many requests. Slow down a little.");
- 
+
   if (!p0.startsWith("/api/")) {
     if (req.method !== "GET" && req.method !== "HEAD") return fail(res, 405, "Not allowed.");
-    if (p0 === "/" && !SITE_DIR) return send(res, 200, { ok: true, game: "DASH Parkour party server" });
+    const host = String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "");
+    // [v1.1] the party address: just the status page (the game is on the website)
+    if (host === PARTY_HOST || !SITE_DIR) {
+      if (p0 === "/") return statusPage(req, res);
+      res.writeHead(302, { Location: "https://" + SITE_DOMAIN + GAME_PATH, "Cache-Control": "no-store" });
+      return res.end();
+    }
+    // the website: the game at /dashparkour
+    if (p0.toLowerCase() === GAME_PATH) {
+      const file = path.join(SITE_DIR, GAME_FILE);
+      return fs.stat(file, (err, st) => (err || !st.isFile() ? fail(res, 404, "The game isn't on the server yet.") : sendFile(req, res, file, st)));
+    }
     return serveSite(req, res, url.pathname);
   }
   if (req.method === "GET" && p0 === "/api/health") {
     return send(res, 200, { ok: true, game: "DASH Parkour party server", parties: parties.size, uptime: Math.round(process.uptime()) });
   }
   const dev = cleanDev(url.searchParams.get("dev"));
- 
+
   // list (and search) parties
   if (req.method === "GET" && p0 === "/api/parties") {
     const q = clean(url.searchParams.get("q"), 24).toLowerCase();
@@ -252,7 +305,7 @@ async function handle(req, res) {
       .map(publicParty);
     return send(res, 200, { parties: list, banned: !!isBanned(ip, dev) });
   }
- 
+
   // joiner: is my connection code ready?
   let m = /^\/api\/join\/([\w-]{8,40})$/.exec(p0);
   if (req.method === "GET" && m) {
@@ -262,7 +315,7 @@ async function handle(req, res) {
     const p = parties.get(r.party);
     return send(res, 200, r.offer ? { state: "offer", offer: r.offer } : { state: "waiting", playing: p.playing });
   }
- 
+
   if (req.method !== "POST") return fail(res, 404, "Not found.");
   let body;
   try {
@@ -271,7 +324,7 @@ async function handle(req, res) {
     return fail(res, 400, "Bad request.");
   }
   const bdev = cleanDev(body.dev);
- 
+
   // joiner's answer code
   m = /^\/api\/join\/([\w-]{8,40})\/answer$/.exec(p0);
   if (m) {
@@ -283,7 +336,7 @@ async function handle(req, res) {
     r.seen = Date.now();
     return send(res, 200, { ok: true });
   }
- 
+
   // moderators: /kick and /ban (and unban) from the game
   if (p0 === "/api/admin") {
     const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
@@ -297,7 +350,7 @@ async function handle(req, res) {
     }
     return adminAction(res, who, body);
   }
- 
+
   // host: make a party
   if (p0 === "/api/parties") {
     if (isBanned(ip, bdev)) return fail(res, 403, "You can't host multiplayer games right now.", { banned: true });
@@ -315,13 +368,13 @@ async function handle(req, res) {
     log("party made", p.id, JSON.stringify(p.name), priv ? "(private)" : "");
     return send(res, 200, { id: p.id, token: p.token });
   }
- 
+
   m = /^\/api\/parties\/([\w-]{4,20})\/(beat|close|offer|join)$/.exec(p0);
   if (!m) return fail(res, 404, "Not found.");
   const p = parties.get(m[1]);
   const action = m[2];
   if (!p) return fail(res, 404, action === "join" ? "That party has closed." : "That party is no longer listed.");
- 
+
   if (action === "join") {
     if (isBanned(ip, bdev)) return fail(res, 403, "You can't join multiplayer games right now.", { banned: true });
     if (p.priv && !sameText(hashPass(p.salt, String(body.pass || "").slice(0, 24)), p.pass)) return fail(res, 403, "Wrong passcode.");
@@ -334,10 +387,10 @@ async function handle(req, res) {
     stats.joins++;
     return send(res, 200, { rid });
   }
- 
+
   // everything below is the host's, checked by its secret token
   if (!sameText(body.token || "", p.token)) return fail(res, 403, "Not your party.");
- 
+
   if (action === "close") {
     dropParty(p.id);
     log("party closed", p.id);
@@ -379,7 +432,7 @@ async function handle(req, res) {
   }
   return fail(res, 404, "Not found.");
 }
- 
+
 // body: { key, action: "kick" | "ban" | "unban", party, name }
 function adminAction(res, who, body) {
   const action = String(body.action || "");
@@ -422,7 +475,7 @@ function adminAction(res, who, body) {
   log("ADMIN", who.name, action, JSON.stringify(found.name), "in", p.id);
   return send(res, 200, { ok: true, text: (action === "ban" ? "Banned " : "Kicked ") + found.name + (action === "ban" ? " from all multiplayer games." : ".") });
 }
- 
+
 const server = http.createServer((req, res) => {
   handle(req, res).catch((e) => {
     stats.errors++;

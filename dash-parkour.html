@@ -40114,8 +40114,9 @@ function program() {
       __p.stroke(205);
       __p.strokeWeight(4);
       if (checkpointReached && checkCircSize < 1200) {
-        __p.fill(0, 230, 0, 200 - checkCircSize / 4);
-        __p.stroke(0, 230, 0);
+        var cFade0 = 1 - checkCircSize / 1200; // [v1.1] fades out
+        __p.fill(0, 230, 0, __p.max(0, 200 - checkCircSize / 4) * cFade0);
+        __p.stroke(0, 230, 0, 255 * cFade0 * cFade0);
         __p.strokeWeight(30);
       }
     } else if (o.type === 'launcher') {
@@ -44911,8 +44912,10 @@ function program() {
 
                 // Checkpoint reached effect
                 if (checkpointReached && checkCircSize < 1200) {
-                  __p.fill(0, 230, 0, 200 - checkCircSize / 4);
-                  __p.stroke(0, 230, 0);
+                  // [v1.1] the ring fades out as it grows (it used to vanish all at once)
+                  var cFade = 1 - checkCircSize / 1200;
+                  __p.fill(0, 230, 0, __p.max(0, 200 - checkCircSize / 4) * cFade);
+                  __p.stroke(0, 230, 0, 255 * cFade * cFade);
                   __p.strokeWeight(30);
                   __p.ellipse(0, 0, checkCircSize, checkCircSize);
                 }
@@ -48063,7 +48066,9 @@ function program() {
     session: 0 // increases whenever a level starts, so stale gate/finish messages are ignored
   };
   try {
-    MP.fields.name = window.localStorage.getItem("dashparkour-mp-name") || "";
+    MP.fields.name = String(window.localStorage.getItem("dashparkour-mp-name") || "").split("").filter(function (ch) {
+      return arcGlyphWidths[ch] !== undefined; // (only letters the ArcDash font has)
+    }).join("");
     if (savedPlayerName) {
       MP.fields.name = savedPlayerName; // [v1.1] the name from the save code
     }
@@ -50730,8 +50735,9 @@ function program() {
         });
       }
       mpParagraph(MP.mode === "linked" ? "One team. Shared deaths and lives, and everyone must reach checkpoints, launchers, bosses and the finish." : "Everyone for themselves. First to the finish wins.", 40, 406, 210, 12, 80);
-      // Same Wi-Fi mode switch
-      if (!MP.noMic && mpButton(40, 466, 210, 36, MP.lanMode ? "SAME WI-FI: ON" : "SAME WI-FI: OFF", MP.lanMode ? __p.color(0, 160, 90) : __p.color(150))) {
+      // Same Wi-Fi mode switch ([v1.1] not with the party server: there it is only
+      // offered when two players on one Wi-Fi can't reach each other)
+      if (!MP.noMic && !mpServerOn() && mpButton(40, 466, 210, 36, MP.lanMode ? "SAME WI-FI: ON" : "SAME WI-FI: OFF", MP.lanMode ? __p.color(0, 160, 90) : __p.color(150))) {
         mpSetLanMode(!MP.lanMode, true);
       }
       // right column: invite steps
@@ -51216,8 +51222,8 @@ function program() {
         } else {
           val = val.slice(0, -1);
         }
-      } else if (e.key.length === 1 && val.length < maxLen) {
-        val += e.key;
+      } else if (e.key.length === 1 && val.length < maxLen && (target === "chat" || mpArcSafe(e.key) === e.key)) {
+        val += e.key; // ([v1.1] fields are drawn in ArcDash: only letters it has can be typed)
       }
       if (target === "invite" || target === "reply") {
         val = mpFormatCode(val);
@@ -51287,7 +51293,7 @@ function program() {
       if (MP.chatOpen) {
         MP.chatText = (MP.chatText + t).slice(0, 200);
       } else if (MP.focus) {
-        MP.fields[MP.focus] = (MP.fields[MP.focus] + t).slice(0, MP.focus === "name" ? 16 : 200);
+        MP.fields[MP.focus] = (MP.fields[MP.focus] + mpArcSafe(t)).slice(0, MP.focus === "name" ? 16 : 200);
         if (MP.focus === "invite" || MP.focus === "reply") {
           MP.fields[MP.focus] = mpFormatCode(MP.fields[MP.focus]);
         }
@@ -52618,7 +52624,12 @@ function program() {
       el.value = mobileBoxValue(key);
     });
     el.addEventListener("input", function () {
-      var v = String(el.value).replace(/[\r\n]+/g, " ").slice(0, mobileFieldMax(key));
+      var v = String(el.value).replace(/[\r\n]+/g, " ");
+      if (key !== "chat" && mpArcSafe(v) !== v) {
+        v = mpArcSafe(v); // [v1.1] only letters the ArcDash font has
+        el.value = v;
+      }
+      v = v.slice(0, mobileFieldMax(key));
       if (key === "invite" || key === "reply") {
         v = mpFormatCode(v);
       }
@@ -54108,6 +54119,23 @@ window.__dashParkourBootPromise = runPJS(program);
   var frame = window.requestAnimationFrame || function(callback) {
     return window.setTimeout(callback, 16);
   };
+  // [v1.1] The tab icon: a page written into a new tab (or over the start
+  // screen) only showed it after going fullscreen and back, so it is put back
+  // in once the page is up, which makes the browser pick it up.
+  function refreshIcon() {
+    try {
+      var old = document.querySelector('link[rel="icon"]');
+      if (!old) return;
+      var fresh = document.createElement("link");
+      fresh.rel = "icon";
+      fresh.type = old.type || "image/png";
+      fresh.href = old.href;
+      old.parentNode.removeChild(old);
+      document.head.appendChild(fresh);
+    } catch (e) {}
+  }
+  window.setTimeout(refreshIcon, 50);
+  window.setTimeout(refreshIcon, 1500);
   var labels = ["ES5 Promise compatibility", "Processing renderer", "Offline game adapter", "DASH Parkour"];
   function showSaveCodeStatus(message, isError) {
     saveCodeStatus.textContent = message;

@@ -419,7 +419,12 @@ LAUNCHER_END = r"""</script>
   }
   var framed = true;
   try { framed = window.self !== window.top; } catch (e) { framed = true; }
-  if (!framed) playHere();
+  // ([v1.1] after the page has finished loading: started while it was still
+  // loading, iPhones and iPads stopped before the game began)
+  if (!framed) {
+    if (document.readyState === "complete") setTimeout(playHere, 0);
+    else window.addEventListener("load", function () { setTimeout(playHere, 0); });
+  }
   else try { showArt(); } catch (e) {}
 }());
 </script>
