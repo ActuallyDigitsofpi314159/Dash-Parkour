@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# dash-party: see what the DASH Parkour server is doing, and look after it.
+#   dash-party            live status screen (Ctrl+C to leave)
+#   dash-party log        everything as it happens (Ctrl+C to leave)
+#   dash-party errors     just the problems
+#   dash-party keys       the admin keys for /kick and /ban (keep private!)
+#   dash-party bans       who is banned
+#   dash-party unban NAME let someone back in
+#   dash-party restart    restart the server and the tunnel
+#   dash-party fix        run the watchdog's checks and fixes now
+#   dash-party update     get the newest version from GitHub and set it up again
+set -u
+DATA=/var/lib/dash-party
+ETC=/etc/dash-party
+[ -r "$ETC/setup.conf" ] && . "$ETC/setup.conf" 2>/dev/null
+B=$'\e[1m'; D=$'\e[2m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; N=$'\e[0m'
+S() { sudo -n "$@" 2>/dev/null || sudo "$@"; }
+yes_no() { if [ "$1" = ok ]; then printf '%s●%s %s' "$G" "$N" "$2"; elif [ "$1" = warn ]; then printf '%s●%s %s' "$Y" "$N" "$2"; else printf '%s●%s %s' "$R" "$N" "$2"; fi; }
+ago() { local s=$(( $(date +%s) - ${1:-0} )); if [ "$s" -lt 120 ]; then echo "${s}s ago"; elif [ "$s" -lt 7200 ]; then echo "$((s / 60))m ago"; else echo "$((s / 3600))h ago"; fi; }
+
+dashboard() {
+  local st wd
+  st="$(S cat "$DATA/status.json" 2>/dev/null)"; wd="$(S cat "$DATA/watchdog.json" 2>/dev/null)"
+  clear
+  echo "${B}${R}DASH${N}${B} PARKOUR server${N}   $(date '+%a %H:%M:%S')   ${D}Ctrl+C to leave${N}"
+  echo
+  if systemctl is-active --quiet dash-party; then yes_no ok "Party server running"; else yes_no bad "Party server STOPPED"; fi; echo
+  if systemctl is-active --quiet dash-tunnel; then yes_no ok "Cloudflare tunnel running"; else yes_no bad "Cloudflare tunnel STOPPED"; fi; echo
+  local net pub
+  net="$(printf '%s' "$wd" | jq -r '.net // "?"' 2>/dev/null)"; pub="$(printf '%s' "$wd" | jq -r '.public // "?"' 2>/dev/null)"
+  if [ "$net" = up ]; then yes_no ok "Internet"; elif [ "$net" = down ]; then yes_no bad "Internet is DOWN (waiting for it)"; else yes_no warn "Internet: not checked yet"; fi; echo
+  if [ "$pub" = ok ]; then yes_no ok "https://${PARTY_HOST:-?} reachable"; elif [ "$pub" = bad ]; then yes_no bad "https://${PARTY_HOST:-?} NOT reachable (the watchdog is fixing it)"; else yes_no warn "https://${PARTY_HOST:-?}: not checked yet"; fi; echo
+  if [ "${HOST_SITE:-no}" = yes ]; then echo "  ${D}website:${N} https://${DOMAIN:-?}  ${D}(files from GitHub, updated every 15 min)${N}"; fi
+  echo
+  if [ -n "$st" ]; then
+    local parties players up bans made joins
+    parties="$(printf '%s' "$st" | jq -r .parties)"; players="$(printf '%s' "$st" | jq -r .players)"; up="$(printf '%s' "$st" | jq -r .up)"
+    bans="$(printf '%s' "$st" | jq -r .bans)"; made="$(printf '%s' "$st" | jq -r .stats.made)"; joins="$(printf '%s' "$st" | jq -r .stats.joins)"
+    echo "  ${B}$parties${N} parties now, ${B}$players${N} players   ${D}| since start: $made parties, $joins joins | up $((up / 3600))h $(((up % 3600) / 60))m | $bans banned${N}"
+  else
+    echo "  ${D}(no numbers yet)${N}"
+  fi
+  local freem; freem="$(df -Pm / | awk 'NR==2{print $4}')"
+  echo "  ${D}Pi: $(cut -d' ' -f1 /proc/loadavg) load, $(free -m | awk '/Mem:/{print $7}') MB memory free, $freem MB SD card free, $(vcgencmd measure_temp 2>/dev/null | cut -d= -f2)${N}"
+  echo
+  echo "${B}What the watchdog did lately${N} ${D}(checks every 2 minutes)${N}"
+  S tail -n 8 "$DATA/watchdog.log" 2>/dev/null | sed -e "s/PROBLEM/${R}PROBLEM${N}/; s/FIXED/${G}FIXED${N}/; s/FIX /${Y}FIX${N} /; s/UPDATE/${C}UPDATE${N}/; s/^/  /" || echo "  ${D}nothing yet${N}"
+  echo
+  echo "${B}Recent errors${N}"
+  local errs; errs="$(journalctl -u dash-party -u dash-tunnel --since '-6h' -p err --no-pager -q -o short 2>/dev/null | tail -n 5)"
+  if [ -n "$errs" ]; then printf '%s\n' "$errs" | cut -c1-150 | sed 's/^/  /'; else echo "  ${G}none in the last 6 hours${N}"; fi
+  echo
+  echo "${D}dash-party log | errors | keys | bans | unban NAME | restart | fix | update${N}"
+}
+
+case "${1:-}" in
+  ""|status)
+    S true >/dev/null
+    trap 'tput cnorm 2>/dev/null; echo; exit 0' INT
+    tput civis 2>/dev/null
+    while true; do dashboard; sleep 3; done ;;
+  once) S true >/dev/null; dashboard ;;
+  log) echo "${D}Ctrl+C to leave${N}"; S tail -n 30 -F "$DATA/watchdog.log" & journalctl -u dash-party -u dash-tunnel -f -n 30 --no-pager; kill %1 2>/dev/null ;;
+  errors) journalctl -u dash-party -u dash-tunnel -p warning --since '-3d' --no-pager | tail -n 60; S grep -E 'PROBLEM' "$DATA/watchdog.log" | tail -n 30 ;;
+  keys)
+    echo "${Y}${B}Keep these private.${N} Give Kineto his key in a private message. Never post them."
+    echo; S cat "$ETC/admin-keys.txt" ;;
+  bans) S cat "$DATA/bans.json" 2>/dev/null | jq -r '.[] | "\(.at)  \(.name)  (by \(.by))"' 2>/dev/null || echo "Nobody is banned." ;;
+  unban)
+    [ -z "${2:-}" ] && { echo "Use: dash-party unban NAME"; exit 1; }
+    name="$(printf '%s' "$2" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9 _.-')"
+    S sh -c "jq --arg n '$name' '[.[] | select((.name | ascii_downcase) != \$n)]' $DATA/bans.json > $DATA/bans.json.tmp && mv $DATA/bans.json.tmp $DATA/bans.json && chown dashparty:dashparty $DATA/bans.json && chmod 600 $DATA/bans.json" && echo "Unbanned $2 (if they were banned)." ;;
+  restart) S systemctl restart dash-party dash-tunnel && echo "${G}Restarted.${N}" ;;
+  fix) S /opt/dash-party/dash-watchdog; echo "Done. $(S tail -n 3 "$DATA/watchdog.log")" ;;
+  update) curl -fsSL "https://raw.githubusercontent.com/ActuallyDigitsofpi314159/Dash-Parkour/main/dash-server/setup.sh" | bash ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac
