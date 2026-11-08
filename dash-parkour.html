@@ -15572,6 +15572,9 @@ function _typeof(o) {
         var hgt = h || img.height;
         var bounds = imageModeConvert(x || 0, y || 0, w || img.width, h || img.height, arguments.length < 4);
         var fastImage = !!img.sourceImg && curTint === null;
+        if (fastImage && img.sourceImg.tagName === "IMG" && (!img.sourceImg.complete || !img.sourceImg.naturalWidth)) {
+          return;
+        }
         if (fastImage) {
           var htmlElement = img.sourceImg;
           if (img.__isDirty) {
@@ -20233,12 +20236,12 @@ SOFTWARE.
         soundURLs.push(url);
       },
       getImageURL: function getImageURL(source) {
-        if (window.location.href.indexOf("kasandbox.org") !== -1) source = "https://cdn.kastatic.org/third_party/javascript-khansrc/live-editor/build/images/" + source + ".png";else if (source.indexOf(assetRoot + 'images') !== 0) source = assetRoot + 'images/' + source;
+        if (!/^(\/|[a-z]+:)/i.test(source)) source = "https://cdn.kastatic.org/third_party/javascript-khansrc/live-editor/build/images/" + source + ".png";else if (source.indexOf(assetRoot + 'images') !== 0) source = assetRoot + 'images/' + source;
         if (!hasFileExtension(source)) source += '.png';
         return source;
       },
       getSoundURL: function getSoundURL(source) {
-        if (window.location.href.indexOf("kasandbox.org") !== -1) source = "https://cdn.kastatic.org/third_party/javascript-khansrc/live-editor/sounds/" + source;else if (source.indexOf(assetRoot + 'sounds') !== 0) source = assetRoot + 'sounds/' + source;
+        if (!/^(\/|[a-z]+:)/i.test(source)) source = "https://cdn.kastatic.org/third_party/javascript-khansrc/live-editor/sounds/" + source;else if (source.indexOf(assetRoot + 'sounds') !== 0) source = assetRoot + 'sounds/' + source;
         if (!hasFileExtension(source)) source += '.mp3';
         return source;
       }
@@ -20315,7 +20318,11 @@ SOFTWARE.
       };
     }(canvas);
     // Subsribe to various events to update the layout.
-    screen.orientation.addEventListener("change", layout.update);
+    if (window.screen && screen.orientation && screen.orientation.addEventListener) {
+      screen.orientation.addEventListener("change", layout.update);
+    } else {
+      window.addEventListener("orientationchange", layout.update);
+    }
     window.addEventListener("resize", layout.update);
     window.addEventListener("load", layout.update);
     // To fix an issue where Processing.js throws an error on mobile and breaks the layout
