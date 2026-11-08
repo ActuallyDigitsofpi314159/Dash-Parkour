@@ -525,33 +525,43 @@ window.dashMusic = function (track) {
 <body id="wrapper">
 <canvas id="output-canvas" class="sketch" width="600" height="600"></canvas>
 <style>
-#boot-screen{position:fixed;inset:0;z-index:10;display:grid;place-items:center;padding:24px;background:#090a10;color:#f5f4f0;font:14px system-ui,sans-serif}
-#boot-card{width:min(460px,100%);padding:28px;border:1px solid #272a38;border-radius:16px;background:#11131c;box-shadow:0 24px 90px #0009}
-#boot-kicker{margin:0 0 12px;color:#b8f279;font:11px monospace;letter-spacing:.18em}
-#boot-card h1{margin:0;font-size:24px}
-#boot-status{margin:18px 0 8px;color:#f5f4f0}
-#boot-progress{display:block;width:100%;height:8px;accent-color:#b8f279}
-#boot-detail{min-height:1.5em;margin:10px 0 0;color:#9294a5;font:12px monospace}
-#save-code-tools{margin-top:18px}
-#save-code-tools label{display:block;margin-bottom:7px;color:#f5f4f0;font-weight:600}
-#save-code-field{display:block;box-sizing:border-box;width:100%;min-height:86px;padding:10px;border:1px solid #393d4d;border-radius:8px;background:#090a10;color:#f5f4f0;font:12px monospace;resize:vertical}
-#save-code-help,#save-code-status{margin:8px 0 0;color:#9294a5;font-size:12px;line-height:1.4}
-#save-code-status.error{color:#ff9b9b}
-#start-game{width:100%;margin-top:14px;padding:10px 14px;border:0;border-radius:8px;background:#b8f279;color:#11131c;font-weight:700;cursor:pointer}
-#start-game:disabled{opacity:.55;cursor:wait}
-#start-game:not(:disabled):hover{background:#ccff9b}
+#boot-screen{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));overflow:auto;-webkit-overflow-scrolling:touch;color:#000;font:15px "Trebuchet MS",Arial,sans-serif;background:#fdffff;background-image:linear-gradient(100deg,transparent 48%,#00c8ff 49%,#00c8ff 51%,transparent 52%),linear-gradient(-8deg,transparent 47%,#00c8ff 48%,#00c8ff 52%,transparent 53%);background-size:64px 64px,64px 64px}
+#boot-art{position:fixed;z-index:0;pointer-events:none}
+#boot-card{position:relative;z-index:1;box-sizing:border-box;width:min(440px,100%);max-height:100%;overflow:auto;margin:auto;padding:22px 26px 20px;border:6px solid #000;border-radius:26px;background:#fff;box-shadow:10px 10px 0 #0003;text-align:center}
+#boot-kicker{display:none}
+#boot-card h1{margin:0;font-size:40px;font-weight:900;line-height:1;letter-spacing:3px;color:#f00}
+#boot-card h1 span{display:block;margin-top:4px;font-size:17px;letter-spacing:9px;color:#000}
+#boot-status{margin:16px 0 8px;font-weight:700}
+#boot-progress{-webkit-appearance:none;appearance:none;display:block;box-sizing:border-box;width:100%;height:16px;border:3px solid #000;border-radius:999px;background:#ffdede;overflow:hidden}
+#boot-progress::-webkit-progress-bar{background:#ffdede}
+#boot-progress::-webkit-progress-value{background:#f00}
+#boot-progress::-moz-progress-bar{background:#f00}
+#boot-detail{min-height:1.3em;margin:8px 0 0;color:#555;font-size:13px}
+#save-code-tools{margin-top:16px;text-align:left}
+#save-code-tools label{display:block;margin-bottom:6px;font-weight:800}
+#save-code-field{display:block;box-sizing:border-box;width:100%;min-height:74px;padding:9px 10px;border:3px solid #000;border-radius:14px;background:#f4fdff;color:#000;font:13px/1.35 ui-monospace,Menlo,Consolas,monospace;resize:vertical;-webkit-user-select:text;user-select:text}
+@media (pointer:coarse){#save-code-field{font-size:16px}}
+#save-code-field:focus{outline:none;border-color:#00a0dc;box-shadow:0 0 0 3px #00c8ff55}
+#save-code-help,#save-code-status{margin:7px 0 0;color:#555;font-size:12.5px;line-height:1.4}
+#save-code-status.error{color:#c00;font-weight:700}
+#start-game{display:block;width:100%;margin-top:14px;padding:11px 16px;border:5px solid #000;border-radius:18px;background:#f00;color:#fff;font:800 20px "Trebuchet MS",Arial,sans-serif;cursor:pointer;box-shadow:0 6px 0 #000;-webkit-tap-highlight-color:transparent}
+#start-game:disabled{background:#d9d9d9;color:#555;cursor:wait;box-shadow:0 6px 0 #888;border-color:#555}
+#start-game:not(:disabled):hover{background:#ff3b3b}
+#start-game:not(:disabled):active{transform:translateY(4px);box-shadow:0 2px 0 #000}
+@media (max-height:520px){#boot-card{padding:12px 18px 14px}#boot-card h1{font-size:28px}#boot-card h1 span{font-size:13px}#boot-status{margin:10px 0 6px}#save-code-tools{margin-top:10px}#save-code-field{min-height:52px}#save-code-help{display:none}#start-game{margin-top:10px;padding:8px 14px;font-size:18px}}
+@media (max-height:440px) and (min-width:560px){#boot-card{display:grid;grid-template-columns:1fr 1.25fr;grid-template-rows:auto auto auto 1fr auto;column-gap:22px;width:min(700px,100%);padding:12px 18px;border-width:5px;text-align:center}#boot-card h1,#boot-status,#boot-progress,#boot-detail{grid-column:1}#boot-card h1{grid-row:1;align-self:end}#boot-status{grid-row:2;margin:10px 0 6px}#boot-progress{grid-row:3}#boot-detail{grid-row:4}#save-code-tools{grid-column:2;grid-row:1/5;margin-top:0}#start-game{grid-column:2;grid-row:5;margin-top:8px}#save-code-field{min-height:48px}#save-code-status{min-height:0}}
 </style>
 <div id="boot-screen" role="status" aria-live="polite">
   <div id="boot-card">
     <p id="boot-kicker">EDITABLE BUILD</p>
-    <h1>Preparing DASH Parkour</h1>
+    <h1>DASH<span>PARKOUR</span></h1>
     <p id="boot-status">Preparing compressed game data...</p>
     <progress id="boot-progress" max="100" value="0"></progress>
     <p id="boot-detail">The game starts after decoding completes.</p>
     <div id="save-code-tools">
       <label for="save-code-field">Save code</label>
       <textarea id="save-code-field" spellcheck="false" placeholder="Paste a save code here to restore your progress."></textarea>
-      <p id="save-code-help">Your code is remembered on this device. While playing, press P to print an updated code, then paste it here next time.</p>
+      <p id="save-code-help">Your progress is saved on this device. To move it to another one, copy your code in Settings, then paste it here.</p>
       <p id="save-code-status" aria-live="polite"></p>
     </div>
     <button id="start-game" type="button" disabled>Decode game to continue...</button>
@@ -20719,8 +20729,15 @@ SOFTWARE.
           if (typeof processing.mouseReleased === "function") processing.mouseReleased();
         }
       };
+      // (all fingers up: let go of everything a moment later, unless a finger
+      // came back down in the meantime. [v1.1] it used to let go anyway, so the
+      // second press of a quick double tap didn't hold until lifted and pressed again)
+      var lastTouchStart = 0;
+      window.addEventListener("touchstart", function () { lastTouchStart = Date.now(); }, true);
       window.addEventListener("touchend", function (e) {
-        if (!e.touches || e.touches.length === 0) setTimeout(function () { if (!e.touches || e.touches.length === 0) letGoAll(); }, 120);
+        if (e.touches && e.touches.length > 0) return;
+        var at = Date.now();
+        setTimeout(function () { if (lastTouchStart <= at) letGoAll(); }, 120);
       }, true);
       window.addEventListener("touchcancel", letGoAll, true);
       window.addEventListener("blur", letGoAll);
@@ -25153,79 +25170,59 @@ function program() {
   };
 
   // Achievements logo
+  // [v1.1] Our own trophy, drawn like the rest of DASH Parkour: chunky
+  // rounded shapes with a thick black outline, in the colour that is set
+  // before it is called. (x, y) is the top-left corner, size is the width.
+  var achLogoStyle = {};
   var achievementsLogo = function achievementsLogo(x, y, size) {
+    var c = typeof __p.__dashStyle === "function" ? __p.__dashStyle(achLogoStyle).currentFillColor : null;
+    if (c === null || c === undefined) {
+      c = __p.color(255, 215, 0);
+    }
     __p.pushMatrix();
-    // Move to the target position first
     __p.translate(x, y);
-
-    // Scale based on pixels. 
-    // The original width is like 337 pixels. 
-    // We divide by 337 so that 'size' 100 = 100px wide.
-    var pixelScale = size / 337;
-    __p.scale(pixelScale);
-    // Yes i cooked that
-
-    // Offset the internal coordinates 
-    // This centers the shape so (x, y) is the top-left corner
-    __p.translate(-25, -7);
-
-    // Left Handle
+    __p.scale(size / 100);
+    // handles: black outline, then the cup colour inside
+    __p.noFill();
+    __p.stroke(0);
+    __p.strokeWeight(13);
+    __p.arc(22, 30, 30, 34, 90, 270);
+    __p.arc(78, 30, 30, 34, -90, 90);
+    __p.stroke(c);
+    __p.strokeWeight(5.5);
+    __p.arc(22, 30, 30, 34, 90, 270);
+    __p.arc(78, 30, 30, 34, -90, 90);
+    // cup
+    __p.fill(c);
+    __p.stroke(0);
+    __p.strokeWeight(5);
+    __p.beginShape();
+    __p.vertex(17, 6);
+    __p.vertex(83, 6);
+    __p.bezierVertex(83, 46, 70, 64, 50, 64);
+    __p.bezierVertex(30, 64, 17, 46, 17, 6);
+    __p.endShape(__p.CLOSE);
+    // stem and base
+    __p.rect(43, 62, 14, 15, 2);
+    __p.rect(25, 77, 50, 15, 6);
+    // a shine and a little tilted star mark
     __p.noStroke();
+    __p.fill(255, 255, 255, 150);
+    __p.rect(26, 13, 7, 27, 4);
+    __p.pushMatrix();
+    __p.translate(54, 30);
+    __p.rotate(-12);
+    __p.fill(255, 255, 255, 190);
     __p.beginShape();
-    __p.vertex(95, 39);
-    __p.vertex(25, 39);
-    __p.vertex(37, 93);
-    __p.vertex(79, 135);
-    __p.vertex(131, 156);
-    __p.vertex(120, 121);
-    __p.vertex(85, 106);
-    __p.vertex(59, 81);
-    __p.vertex(60, 67);
-    __p.vertex(100, 67);
-    __p.endShape();
-
-    // Body
-    __p.beginShape();
-    __p.vertex(83, 8);
-    __p.vertex(84, 38);
-    __p.vertex(114, 115);
-    __p.vertex(123, 156);
-    __p.vertex(133, 174);
-    __p.vertex(172, 191);
-    __p.vertex(173, 230);
-    __p.vertex(155, 252);
-    __p.vertex(113, 254);
-    __p.vertex(112, 300);
-    __p.vertex(86, 301);
-    __p.vertex(85, 336);
-    __p.vertex(300, 338);
-    __p.vertex(300, 303);
-    __p.vertex(278, 302);
-    __p.vertex(277, 256);
-    __p.vertex(235, 254);
-    __p.vertex(212, 230);
-    __p.vertex(211, 193);
-    __p.vertex(249, 172);
-    __p.vertex(262, 149);
-    __p.vertex(301, 65);
-    __p.vertex(308, 38);
-    __p.vertex(307, 7);
-    __p.endShape();
-
-    // Right handle
-    __p.beginShape();
-    __p.vertex(252, 153);
-    __p.vertex(310, 134);
-    __p.vertex(343, 93);
-    __p.vertex(362, 40);
-    __p.vertex(299, 39);
-    __p.vertex(293, 66);
-    __p.vertex(326, 65);
-    __p.vertex(327, 79);
-    __p.vertex(309, 109);
-    __p.vertex(265, 121);
-    __p.endShape();
+    for (var i = 0; i < 10; i++) {
+      var r = i % 2 === 0 ? 11 : 4.6;
+      var ang = (-90 + i * 36) * Math.PI / 180;
+      __p.vertex(Math.cos(ang) * r, Math.sin(ang) * r);
+    }
+    __p.endShape(__p.CLOSE);
     __p.popMatrix();
+    __p.popMatrix();
+    __p.fill(c);
   };
   var drawShoppingBag = function drawShoppingBag(x, y, s) {
     __p.pushMatrix();
@@ -26220,7 +26217,7 @@ function program() {
     area: "1"
   }, {
     id: 3,
-    name: "Minecraft\nBlock",
+    name: "Dirt\nBlock",
     mainColor: __p.color(29, 158, 0),
     cost: 2,
     owned: false,
@@ -26299,12 +26296,15 @@ function program() {
     owned: false,
     area: "3"
   }, {
+    // [v1.1] a placeholder for a new costume (this spot used to sell a costume
+    // based on another game's character). Bought ones stay owned.
     id: 14,
-    name: "Mario\nCostume",
+    name: "Coming\nSoon",
     mainColor: __p.color(255, 0, 0),
     cost: 3,
     owned: false,
-    area: "3"
+    area: "3",
+    placeholder: true
   }, {
     id: 15,
     name: "Maze\nDash",
@@ -26930,14 +26930,15 @@ function program() {
     };
     __p.vertex(sxz(100), syz(140));
     __p.bezierVertex(sxz(100), syz(107), sxz(118), syz(100), sxz(140), syz(100));
-    __p.vertex(sxz(279), syz(100));
-    __p.vertex(sxz(273), syz(126));
-    __p.vertex(sxz(228), syz(149));
-    __p.vertex(sxz(251), syz(197));
-    __p.vertex(sxz(255), syz(158));
-    __p.vertex(sxz(285), syz(144));
-    __p.vertex(sxz(300), syz(121));
-    __p.bezierVertex(sxz(308), syz(124), sxz(310), syz(136), sxz(310), syz(141));
+    // [v1.1] our own crack (shorter, with different bends)
+    __p.vertex(sxz(258), syz(100));
+    __p.vertex(sxz(266), syz(121));
+    __p.vertex(sxz(238), syz(138));
+    __p.vertex(sxz(256), syz(176));
+    __p.vertex(sxz(263), syz(148));
+    __p.vertex(sxz(288), syz(134));
+    __p.vertex(sxz(303), syz(114));
+    __p.bezierVertex(sxz(309), syz(119), sxz(310), syz(132), sxz(310), syz(141));
     __p.vertex(sxz(309), syz(260));
     __p.bezierVertex(sxz(310), syz(287), sxz(300), syz(300), sxz(282), syz(300));
     __p.vertex(sxz(141), syz(301));
@@ -26945,22 +26946,28 @@ function program() {
     __p.vertex(sxz(100), syz(130));
     __p.endShape();
   };
+  // [v1.1] our own X eye: two thin bars crossing at a tilt, one a little
+  // shorter, tips cut at an angle
   var drawEye = function drawEye(x, y, s) {
+    var cx = x - s / 3.35,
+      cy = y - s / 70;
+    var L = s / 6.3,
+      w = s / 23;
+    var angs = [38, 128, 218, 308];
     __p.beginShape();
-    __p.vertex(x - s / 9, y - s / 7);
-    __p.vertex(x - s / 5.1, y - s / 70);
-    __p.vertex(x - s / 12, y + s / 13);
-    __p.vertex(x - s / 5.4, y + s / 7);
-    __p.vertex(x - s / 3.45, y + s / 13);
-    __p.vertex(x - s / 2.75, y + s / 7.6);
-    __p.vertex(x - s / 2.2, y + s / 22);
-    __p.vertex(x - s / 2.5, y - s / 40);
-    __p.vertex(x - s / 2.2, y - s / 10);
-    __p.vertex(x - s / 2.7, y - s / 5.6);
-    __p.vertex(x - s / 3.35, y - s / 8);
-    __p.vertex(x - s / 5.1, y - s / 5);
-    __p.vertex(x - s / 9, y - s / 7);
-    __p.endShape();
+    for (var i = 0; i < 4; i++) {
+      var a = angs[i] * Math.PI / 180;
+      var ux = Math.cos(a),
+        uy = Math.sin(a),
+        px = -uy,
+        py = ux;
+      var len = i % 2 === 0 ? L : L * 0.86;
+      __p.vertex(cx + ux * len - px * w * 0.8, cy + uy * len - py * w * 0.8);
+      __p.vertex(cx + ux * len + px * w * 1.15, cy + uy * len + py * w * 1.15);
+      var m = (angs[i] + 45) * Math.PI / 180;
+      __p.vertex(cx + Math.cos(m) * w * 1.5, cy + Math.sin(m) * w * 1.5);
+    }
+    __p.endShape(__p.CLOSE);
   };
   /**
    * Hyper-compressed save system for DASH Parkour Achievements.
@@ -36546,31 +36553,8 @@ function program() {
   }
   var animationToggle = 0;
   var marioDir = "right";
-  function drawMario(x, y, size) {
-    var canvasData = [];
-    if (animationToggle === 0) {
-      canvasData = ["-----rrrr------", "----rrrrrrrr---", "----bbbbss-----", "---bssbssbsss--", "---bssbbssbsss-", "--bbbssssbbbb--", "-----sssssss---", "----bbbbbb-----", "---bbbbrrbb----", "---bbbrrsrr----", "---bbbbrrrrr---", "---rbsssrrrr---", "---rrssrrrrr---", "---rrrr-rrr----", "---bbb--bbb----", "---bbbb-bbbb---"];
-    } else if (animationToggle === 1) {
-      canvasData = ["-----rrrr------", "----rrrrrrrr---", "----bbbbss-----", "---bssbssbsss--", "---bssbbssbsss-", "--bbbssssbbbb--", "-----sssssss---", "--bbbbrrbb---ss", "ssbbbbrrrbbbsss", "sss-bbrsrrrbbss", "ss--rrrrrrr--b-", "---rrrrrrrrrbb-", "--rrrrrrrrrrbb-", "-bbbrr---rrrbb-", "-bbb-----------", "--bbb----------"];
-    } else if (animationToggle === 2) {
-      canvasData = ["-----rrrr------", "----rrrrrrrr---", "----bbbbss-----", "---bssbssbsss--", "---bssbbssbsss-", "--bbbssssbbbb--", "-----sssssss---", "----bbbbbr-s---", "---sbbbbbbsss--", "--ssrrbbbbss---", "bbrrrrrrrrrr---", "bbrrrrrrrrrr---", "bbrrrr--rrr----", "b------bbb-----", "-------bbbb----"];
-    } else if (animationToggle === 3) {
-      canvasData = ["------rrrr---sss", "-----rrrrrrrrsss", "-----bbbbss--bbb", "----bssbssbsssbb", "----bssbbssbsssb", "---bbbssssbbbbb-", "------sssssssb--", "--bbbbbrbbbrb---", "-bbbbbbbrbbbr--b", "ssbbbbbbrrrrr--b", "sss-rrbrrsrrsrbb", "-s-brrrrrrrrrrbb", "--bbbrrrrrrrrrbb", "-bbbrrrrrrr-----", "-b--rrrr--------"];
-    }
-    if (marioDir === "left") {
-      canvasData = flipArray(canvasData);
-    }
-    var colorMap = {
-      "r": __p.color(255, 0, 0),
-      "b": __p.color(12, 35, 240),
-      "s": __p.color(255, 195, 170)
-    };
-    // [BUGFIX] The cached sprite is drawn with image(), which follows whatever
-    // imageMode was last set. In-game that happened to be CENTER; the shop uses
-    // CORNER, so the preview was offset by half its size. Always center it.
-    __p.imageMode(__p.CENTER);
-    drawHugePixelArt(x, y, size, canvasData, colorMap);
-  }
+  // [v1.1] (the old costume drawing based on another game's character was removed)
+
 
   // ]
   var imgs = {
@@ -37082,7 +37066,7 @@ function program() {
         __p.line(hX - hatW / 2, hY + hatH / 8, hX + hatW / 2, hY + hatH / 8);
         break;
       case 3:
-        // Minecraft block
+        // Dirt block
         __p.imageMode(__p.CENTER);
         __p.image(imgs.grassImage, 0, -this.visualH / 2, this.visualW, this.visualH);
         break;
@@ -37426,7 +37410,7 @@ function program() {
         __p.popMatrix();
         break;
       case 14:
-        drawMario(0, -this.h / 2, this.w / 15);
+        // [v1.1] placeholder costume: looks like the normal Dash for now
         break;
       case 15:
         boss3Graphic(0, -this.h / 2, this.w);
@@ -43437,6 +43421,28 @@ function program() {
                     }
                     if (skins[j].soon) {
                       continue; // drawn in the spot of the skin it replaces
+                    }
+
+                    if (skins[j].placeholder) {
+                      // [v1.1] a "coming soon" costume in its own spot
+                      __p.noStroke();
+                      __p.fill(0, 0, 0, 25);
+                      __p.rect(x + 10, displayY(y) - 10, 60, 60, 14);
+                      __p.stroke(0, 0, 0, 110);
+                      __p.strokeWeight(3);
+                      arcAlign(__p.CENTER);
+                      arcSize(26);
+                      arcText("?", x + 40, displayY(y) + 22);
+                      __p.strokeWeight(1.5);
+                      arcSize(8);
+                      arcText("Coming soon", x + 40, displayY(y) + 42);
+                      if (skins[j].owned) {
+                        equipButton(x, displayY(y + 60), 80, skins[j].id, j);
+                      } else {
+                        buyButton(x, displayY(y + 60), 80, skins[j], j);
+                      }
+                      count++;
+                      continue;
                     }
 
                     // --- THE OPTIMIZATION BLOWOUT ---
@@ -54142,6 +54148,42 @@ window.__dashParkourBootPromise = runPJS(program);
     } catch (e) {}
   }
   window.setTimeout(refreshIcon, 50);
+  // [v1.1] The title screen picture behind the loading / save code screen
+  // (kept as text in <script id="dash-launch-art">, see compress.py).
+  function bootArt() {
+    try {
+      var box = document.getElementById("boot-screen");
+      var src = document.getElementById("dash-launch-art");
+      if (!box || !src || typeof DecompressionStream === "undefined" || typeof Response === "undefined") return;
+      var lines = src.textContent.replace(/^\s+|\s+$/g, "").split("\n");
+      var size = lines[0].split(" "), W = +size[0], H = +size[1];
+      var b64 = lines.slice(1).join("").replace(/\s+/g, "");
+      var bin = atob(b64), bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer().then(function (buf) {
+        if (buf.byteLength !== W * H * 4 || !document.getElementById("boot-screen")) return;
+        var c = document.createElement("canvas");
+        c.id = "boot-art";
+        c.width = W;
+        c.height = H;
+        c.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(buf), W, H), 0, 0);
+        c.setAttribute("aria-hidden", "true");
+        function place() {
+          var vw = window.innerWidth, vh = window.innerHeight, k = Math.max(vw / W, vh / H);
+          c.style.width = Math.ceil(W * k) + "px";
+          c.style.height = Math.ceil(H * k) + "px";
+          c.style.left = Math.round((vw - W * k) / 2) + "px";
+          c.style.top = Math.round((vh - H * k) / 2) + "px";
+        }
+        place();
+        window.addEventListener("resize", place);
+        box.insertBefore(c, box.firstChild);
+      }, function () {});
+    } catch (e) {}
+  }
+  // (the picture's block comes after this script in the page)
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bootArt);
+  else window.setTimeout(bootArt, 0);
   window.setTimeout(refreshIcon, 1500);
   var labels = ["ES5 Promise compatibility", "Processing renderer", "Offline game adapter", "DASH Parkour"];
   function showSaveCodeStatus(message, isError) {
