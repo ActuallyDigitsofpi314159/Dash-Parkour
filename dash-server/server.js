@@ -45,7 +45,8 @@ try {
 const SITE_DOMAIN = (process.env.SITE_DOMAIN || SETUP_CONF.DOMAIN || "digitsandkineto.com").toLowerCase();
 const PARTY_HOST = (process.env.PARTY_HOST || SETUP_CONF.PARTY_HOST || "party." + SITE_DOMAIN).toLowerCase();
 const GAME_PATH = "/dashparkour";
-const GAME_FILE = "dash-parkour.ka.html";
+// [v1.1] the full (non-Khan-Academy) build: no size cap and one loading screen fewer
+const GAME_FILES = ["dash-parkour.html", "dash-parkour.ka.html"];
 
 const parties = new Map(); // id -> party
 const requests = new Map(); // rid -> join request
@@ -285,8 +286,12 @@ async function handle(req, res) {
     }
     // the website: the game at /dashparkour
     if (p0.toLowerCase() === GAME_PATH) {
-      const file = path.join(SITE_DIR, GAME_FILE);
-      return fs.stat(file, (err, st) => (err || !st.isFile() ? fail(res, 404, "The game isn't on the server yet.") : sendFile(req, res, file, st)));
+      const tryFile = (i) => {
+        if (i >= GAME_FILES.length) return fail(res, 404, "The game isn't on the server yet.");
+        const file = path.join(SITE_DIR, GAME_FILES[i]);
+        fs.stat(file, (err, st) => (err || !st.isFile() ? tryFile(i + 1) : sendFile(req, res, file, st)));
+      };
+      return tryFile(0);
     }
     return serveSite(req, res, url.pathname);
   }
