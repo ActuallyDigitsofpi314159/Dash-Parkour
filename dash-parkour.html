@@ -21009,7 +21009,7 @@ function program() {
    * RomanStarCoder for Bluey the Circle reference
    * Daniel for Loop Protector
    * Achievements page & death screen inspired by Doors
-   * Larry is rush from Doors
+   * Larry was inspired by Rush from Doors (our own drawing)
    * Level Complete screen inspired from mario wonder (wahoo)
   ]
   
@@ -26228,7 +26228,8 @@ function program() {
     mainColor: __p.color(255, 0, 0),
     cost: 3,
     owned: false,
-    area: "1"
+    area: "3",
+    ord: 13.5 // [v1.1] moved to Area 3 (in the old "coming soon" spot)
   }, {
     id: 5,
     name: "Tower\nDash",
@@ -26303,7 +26304,8 @@ function program() {
     mainColor: __p.color(255, 0, 0),
     cost: 3,
     owned: false,
-    area: "3",
+    area: "1",
+    ord: 4, // [v1.1] now in Area 1, where the Sphere Costume used to be
     placeholder: true
   }, {
     id: 15,
@@ -26931,14 +26933,14 @@ function program() {
     __p.vertex(sxz(100), syz(140));
     __p.bezierVertex(sxz(100), syz(107), sxz(118), syz(100), sxz(140), syz(100));
     // [v1.1] our own crack (shorter, with different bends)
-    __p.vertex(sxz(258), syz(100));
-    __p.vertex(sxz(266), syz(121));
-    __p.vertex(sxz(238), syz(138));
-    __p.vertex(sxz(256), syz(176));
-    __p.vertex(sxz(263), syz(148));
-    __p.vertex(sxz(288), syz(134));
-    __p.vertex(sxz(303), syz(114));
-    __p.bezierVertex(sxz(309), syz(119), sxz(310), syz(132), sxz(310), syz(141));
+    __p.vertex(sxz(250), syz(100));
+    __p.vertex(sxz(262), syz(127));
+    __p.vertex(sxz(227), syz(148));
+    __p.vertex(sxz(252), syz(196));
+    __p.vertex(sxz(262), syz(160));
+    __p.vertex(sxz(292), syz(143));
+    __p.vertex(sxz(305), syz(119));
+    __p.bezierVertex(sxz(309), syz(124), sxz(310), syz(134), sxz(310), syz(143));
     __p.vertex(sxz(309), syz(260));
     __p.bezierVertex(sxz(310), syz(287), sxz(300), syz(300), sxz(282), syz(300));
     __p.vertex(sxz(141), syz(301));
@@ -26951,8 +26953,8 @@ function program() {
   var drawEye = function drawEye(x, y, s) {
     var cx = x - s / 3.35,
       cy = y - s / 70;
-    var L = s / 6.3,
-      w = s / 23;
+    var L = s / 5.3,
+      w = s / 19;
     var angs = [38, 128, 218, 308];
     __p.beginShape();
     for (var i = 0; i < 4; i++) {
@@ -27103,7 +27105,7 @@ function program() {
     // Worlds Achievements
     {
       name: "Starting Small",
-      img: __p.getImage("avatars/aqualine-seed"),
+      img: imgs.seedIcon,
       description: "This is just the beginning.",
       tutorial: "Complete area 1.",
       rarity: "Uncommon",
@@ -36491,22 +36493,105 @@ function program() {
     __p.fill(219, 21, 166);
     __p.ellipse(x, y - h, w / 5, w / 5);
   }
-  var larryText = ["!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!úúúú!!!!!úúú!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!!!úú!!!!!úúú₥₥úúúúú₥₥₥₥₥₥ú!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!ú₥úúúúú!úú!!!úúúú!úúúúúúúúúú!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!úúúúúúúúú₥úú₥ú!!úú!!ú₥ú!!!!úúúúú!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!ú₥úúúúúúúúúúúúúúúúú!!!úúúúúúúúúú₥ú!!!!!!!!!!", "!!!!!!!!!!!!!!!!úúúúúúú₥úúúúúúúúú!!úúúú!!!ú₥úúúúúúúú!!!!!!!!!", "!!!!!!!!!!!!!!ú₥ú₥úú!!úúúúúúúúú₥úúúúúú!!!!!úúúúúúúú₥ú!!!!!!!!", "!!!!!!!!!!!!!!úúúúúú!!!ú₥ú₥úú!ú₥úúú₥!!!!ú!!!!!ú₥ú₥úúúú!!!!!!!", "!!!!!!!!!!!!!úú₥úúú₥úúúúúúúúú!!úúúúúú!úúú!!!!ú!ú₥úúúúú!!!!!!!", "!!!!!!!!!!!!!úú!ú₥ú₥ú!!!!úú₥ú!!!!!!!ú₥₥₥₥úú!úú!ú₥úú₥ú!ú!!!!!!", "!!!!!!!!!!!!úúú!úúú₥!!!!!!ú₥ú!!!!!!!úúúúú₥₥!úúúúú₥úúúú₥ú!!!!!", "!!!!!!!!!!!!úúúúúúúú!!!!!!ú₥ú!!!!!!!úú!!úúúúú!ú₥úúúúúúúú!!!!!", "!!!!!!!!!!!!ú₥úúúú₥ú!!!ú!!úú!!!!!!!úúú!!!ú₥ú!!úúúúúúúúú₥ú!!!!", "!!!!!!!!!!ú₥úúúúúú₥úúú₥₥úúúú!!!!!ú!ú₥ú!!!úúúú!úú!úúúú₥úúú!!!!", "!!!!!!!!!!úúúúúúúúúú₥úúúúú₥ú!!!!!ú!úúú!!!ú₥₥₥ú!ú!₥ú!!úúúú!!!!", "!!!!!!!!!!úúú₥úúúúúúúúú!!ú₥ú!!!!!!!ú₥ú!!!úúúú₥ú!úú₥ú!úú₥úú!!!", "!!!!!!!!!!úúúú₥úúú₥ú!ú!!!!úú!!!!!!!!úú!!!ú!!ú₥úú!₥₥ú!!úúúú!!!", "!!!!!!!!!!!ú!úúúúú₥ú!!!!!!ú₥ú!!!!úúúúú!!!!!!!₥úúúúúú!!!!!úú!!", "!!!!!!!!!!!!!!!úúú₥!!!!!!!!úú!!!!₥ú₥₥ú!!!!!!!ú₥ú!!úú!!!!!!ú!!", "!!!!!!ú!!!!!!!ú₥úúú!!!!!!!!ú₥!!!ú!!ú₥ú!!!!!!!ú₥úú₥ú!!!!!!!ú!!", "!!!!!!!!!!!!!úúúú₥ú!!!!!!!!ú₥ú!!ú!!ú₥ú!!!!!!!!ú₥úúú!!!!!!!ú!!", "!!!!!!!!!!!!!ú₥úú₥ú!!!!!!!!ú₥ú!!!!!!úú!!!!!!!!₥úú₥ú!ú!!!!!ú!!", "!!!!!!!!!!!!!ú₥úúúú!!!!!!!!ú₥!!!!!!!úú!!!!!!!úúú₥úúúú!!!!!!!!", "!!!!!!!ú!!!!!!úúúú₥!!!!!!!!úú!!!!!!!ú₥ú!!!!!!ú!!ú₥úúú!!!!!!!!", "!!!!!!!ú!!!!!!úúúúúú!!!!!úú₥ú!!ú!!!!!úúú!!!!!!!!!úúúú!!!!!!!!", "!!!!!!!!!!!!!!ú₥!úú₥₥úúúú₥₥ú!!úú!!!!!ú₥úúúúúú!!!!!úú!!!!!!!!!", "!!!!!!!!!!!!!!!úúúúúú₥úúúúúú!!!!!!!!!!úúúúú₥ú!!!!úú!!!!!!!!!!", "!!!!!!!!!!!!!!!!!úúúúú₥úúúúúú!!!!!!!úúúúúú₥ú!!!!úúú!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!ú₥úúú₥₥úúúúúúú₥₥úúúúúúúú₥ú!!úú₥ú!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!úúúúúúúúú₥₥ú!úúú!!!ú₥úúúúúúúúú!!!!!!!!!!!!", "!!!!!!!!!!!ú!!!!!!!ú₥úú!!úúúúúú!!!!!!!úúúúú₥₥ú!!!!!!ú!!!!!!!!", "!!!!!!!!!!!₥ú!!!!!!!úú₥úúúú!!ú₥úúúúú!!úúúúúúúú!!!!!ú!!!!!!!!!", "!!!!!!!!!!!ú₥!!!!!!!!!ú₥₥úú!!úú₥₥ú₥úúúúú₥₥₥ú!!!!!!!ú!!!!!!!!!", "!!!!!!!!!!!!úú!!!!!!!!!úú!!!!!!úúú₥úú!!úúú!!!!!!!ú!ú!!!!!!!!!", "!!!!!!!!!!!!ú₥₥▮!!!!!!!!!!!!úúúúúúúúú!!!!!!!!úú!ú₥!!!!!!!!!!!", "!!!!!!!!!!!!!!▮▮ú!₥!!!!!!!!!!úúú!!!!!!!!!!!!!₥ú!₥▮!!!!!!!!!!!", "!!!!!!!!!!!!!!₥▮ú!₥!!ú!!!!!!!!!!!!!!!!!!!úú!!₥▮ú₥₥!!!!!!!!!!!", "!!!!!!!!!!!!!!!₥▮ú₥!₥▮!!úúú!!!!!!!!!!!!!ú₥ú!ú▮▮!úú!!!!!!!!!!!", "!!!!!!!!!!!!!!!!▮▮▮ú₥▮ú!₥▮₥!!ú₥ú!!!!!▮₥!ú▮▮!!▮▮!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!ú▮▮▮▮₥!₥▮▮₥!▮▮▮ú!ú▮▮▮▮!ú▮▮úú▮ú!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!ú▮▮▮▮ú▮▮▮ú!▮▮▮▮!₥▮▮▮▮₥▮▮▮₥▮₥!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!₥▮▮▮ú▮▮₥₥₥▮▮▮▮!ú▮▮▮▮▮▮▮₥₥▮ú!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!₥▮!▮úú▮▮▮▮▮▮₥₥▮▮▮▮▮▮▮₥ú!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!ú!!!!!!!!!!!!▮▮!▮▮▮▮▮▮▮▮▮▮▮▮úú₥!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!úú!!!!!!!!!!!!!!!₥▮▮▮▮₥₥▮₥▮▮ú!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!ú!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!úú!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!ú₥!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!úú!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!úú!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!₥₥ú!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!ú!!úúú!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!úú!!!!!!!!!!!!!!!!!!!!!!!!!!!!!ú!!!!!!!!!!!!", "!!!!!!!!!!!!ú!!!!úú!!!!!!!!!!!!!!!!!!!!!!!!!!₥₥!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!₥₥!!!!!!!!!!!!!!!!!!!!!!ú₥▮▮!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!₥₥!ú!!!!!!!!!!!!!!!!!₥₥!₥!▮₥!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!!▮▮ú!!!!!!!!!!!ú₥ú!▮▮!₥!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!!▮▮▮▮▮ú!₥ú!!úú!₥▮▮!ú₥!₥!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!!úú!₥▮₥!▮▮₥▮▮▮!ú▮▮ú!!!ú!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!!!!!ú▮ú!▮▮₥₥▮▮!!▮▮!!!!!!!!!!!!!!!!!!!!!!", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!ú!!!₥ú!!ú!!!!!!!!!!!!!!!!!!!!!!!"];
-  var larryColors = {
-    "!": __p.color(0, 0, 0),
-    "ú": __p.color(122, 0, 0),
-    "₥": __p.color(153, 0, 8),
-    "▮": __p.color(255, 110, 125)
-  };
+  // [v1.1] Larry: our own evil red face (a smoky blob with horns, slanted
+  // glowing eyes and a jagged grin), drawn with shapes instead of pixel art
   function draw2dLarry(x, y, size) {
-    var createData = larryText;
-    var colors = {
-      "!": __p.color(0, 0, 0),
-      "ú": __p.color(122, 0, 0),
-      "₥": __p.color(153, 0, 8),
-      "▮": __p.color(255, 110, 125)
-    };
-    drawHugePixelArt(x, y, size, createData, colors);
+    var u = size / 10;
+    __p.pushMatrix();
+    __p.translate(x, y);
+    __p.scale(u);
+    __p.noStroke();
+    // smoky spiky body: three layers, darkest on top
+    var layers = [[__p.color(120, 0, 0), 300, 26], [__p.color(70, 0, 0), 276, 22], [__p.color(25, 0, 0), 250, 16]];
+    for (var l = 0; l < layers.length; l++) {
+      __p.fill(layers[l][0]);
+      __p.beginShape();
+      for (var a = 0; a < 360; a += 12) {
+        var rr = layers[l][1] - (a % 24 === 0 ? 0 : layers[l][2]) - (l === 0 ? (a * 7 % 11) : 0);
+        __p.vertex(Math.cos(a * Math.PI / 180) * rr * 0.95, 10 + Math.sin(a * Math.PI / 180) * rr * 0.9);
+      }
+      __p.endShape(__p.CLOSE);
+    }
+    // horns
+    __p.fill(25, 0, 0);
+    __p.triangle(-150, -150, -95, -185, -190, -285);
+    __p.triangle(150, -150, 95, -185, 190, -285);
+    __p.fill(120, 0, 0);
+    __p.triangle(-160, -190, -135, -200, -183, -268);
+    __p.triangle(160, -190, 135, -200, 183, -268);
+    // eye glow
+    for (var g = 5; g > 0; g--) {
+      __p.fill(255, 30, 20, 26);
+      __p.ellipse(-88, -45, 70 + g * 26, 46 + g * 20);
+      __p.ellipse(88, -45, 70 + g * 26, 46 + g * 20);
+    }
+    // slanted angry eyes
+    __p.fill(255, 50, 30);
+    __p.quad(-150, -82, -32, -30, -48, -4, -142, -28);
+    __p.quad(150, -82, 32, -30, 48, -4, 142, -28);
+    __p.fill(255, 210, 150);
+    __p.quad(-108, -52, -64, -32, -70, -20, -104, -34);
+    __p.quad(108, -52, 64, -32, 70, -20, 104, -34);
+    // jagged grin
+    __p.fill(10, 0, 0);
+    __p.beginShape();
+    __p.vertex(-185, 40);
+    __p.bezierVertex(-120, 70, 120, 70, 185, 40);
+    __p.bezierVertex(150, 170, -150, 170, -185, 40);
+    __p.endShape(__p.CLOSE);
+    __p.fill(255, 110, 125);
+    for (var t = 0; t < 7; t++) {
+      var tx = -150 + t * 50;
+      __p.triangle(tx - 20, 52 + Math.abs(tx) * 0.09, tx + 20, 52 + Math.abs(tx) * 0.09, tx, 95);
+    }
+    for (var t2 = 0; t2 < 6; t2++) {
+      var bx = -125 + t2 * 50;
+      __p.triangle(bx - 18, 152 - Math.abs(bx) * 0.3, bx + 18, 152 - Math.abs(bx) * 0.3, bx, 112);
+    }
+    __p.popMatrix();
+  }
+  // [v1.1] the "Starting Small" badge: a blue seed with a little sprout
+  function drawSeedIcon(x, y, s) {
+    var u = s / 300;
+    __p.pushMatrix();
+    __p.translate(x, y);
+    __p.scale(u);
+    // sprout
+    __p.stroke(0);
+    __p.strokeWeight(10);
+    __p.noFill();
+    __p.bezier(0, -86, -6, -100, 6, -112, 0, -128);
+    __p.fill(70, 200, 60);
+    __p.beginShape();
+    __p.vertex(0, -118);
+    __p.bezierVertex(28, -150, 70, -140, 78, -128);
+    __p.bezierVertex(60, -102, 22, -100, 0, -118);
+    __p.endShape(__p.CLOSE);
+    __p.beginShape();
+    __p.vertex(-2, -104);
+    __p.bezierVertex(-26, -128, -58, -122, -64, -112);
+    __p.bezierVertex(-48, -92, -20, -92, -2, -104);
+    __p.endShape(__p.CLOSE);
+    // seed
+    __p.rotate(-14);
+    __p.strokeWeight(12);
+    __p.fill(30, 110, 255);
+    __p.beginShape();
+    __p.vertex(0, -96);
+    __p.bezierVertex(36, -60, 80, 10, 58, 70);
+    __p.bezierVertex(38, 112, -38, 112, -58, 70);
+    __p.bezierVertex(-80, 10, -36, -60, 0, -96);
+    __p.endShape(__p.CLOSE);
+    // crease and shine
+    __p.noFill();
+    __p.stroke(0, 50, 160);
+    __p.strokeWeight(8);
+    __p.bezier(4, -66, 26, -10, 24, 50, 6, 86);
+    __p.noStroke();
+    __p.fill(140, 195, 255);
+    __p.ellipse(-26, -24, 22, 54);
+    __p.ellipse(-32, 26, 12, 16);
+    __p.popMatrix();
   }
   function grassSkin(x, y, size, frame) {
     var createData = ["bcacb", "cdebe", "egdef", "feege", "edfef"];
@@ -37068,7 +37153,8 @@ function program() {
       case 3:
         // Dirt block
         __p.imageMode(__p.CENTER);
-        __p.image(imgs.grassImage, 0, -this.visualH / 2, this.visualW, this.visualH);
+        // [v1.1] a solid block: no squash/stretch
+        __p.image(imgs.grassImage, 0, -this.h / 2, this.w, this.h);
         break;
       case 4:
         // Sphere Costume 
@@ -42377,6 +42463,14 @@ function program() {
         drawIdleZapp(-200, 100, 800);
       }
     },
+    // [v1.1] our own seed (was a Khan Academy avatar)
+    seedIcon: {
+      w: __p.width / 2,
+      h: __p.height / 2,
+      mImg: function mImg() {
+        drawSeedIcon(150, 150, 300);
+      }
+    },
     stopLightIcon: {
       w: __p.width / 2,
       h: __p.height / 2,
@@ -43381,6 +43475,10 @@ function program() {
                       rowList.push(skins[rj]);
                     }
                   }
+                  // [v1.1] a skin can take another's spot in the row ("ord")
+                  rowList.sort(function (sa, sb) {
+                    return (sa.ord !== undefined ? sa.ord : sa.id) - (sb.ord !== undefined ? sb.ord : sb.id);
+                  });
                 }
                 for (var jj = 0; jj < rowList.length; jj++) {
                   var j = skins.indexOf(rowList[jj]);
