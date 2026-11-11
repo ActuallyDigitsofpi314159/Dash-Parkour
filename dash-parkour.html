@@ -26324,7 +26324,7 @@ function program() {
   }, {
     id: 17,
     name: "Dash\nBrainrot",
-    mainColor: __p.color(0, 0, 0),
+    mainColor: __p.color(255, 0, 0), // [v1.1] red, like his body
     cost: 2,
     owned: false,
     area: "X"
@@ -26599,106 +26599,7 @@ function program() {
   }
   // That took far too long to trace
 
-  // for non stop
-  function hamMan(x, y, s) {
-    __p.pushMatrix();
-    __p.translate(x, y);
-    __p.scale(s * 0.00295);
-    __p.translate(-300, -170);
-    __p.noStroke();
 
-    // The guy
-    __p.beginShape();
-    __p.vertex(289, 173);
-    __p.vertex(289, 166);
-    __p.bezierVertex(293, 148, 295, 129, 304, 122);
-    __p.bezierVertex(313, 140, 318, 149, 319, 162);
-    __p.vertex(319, 168);
-    __p.vertex(316, 171);
-    __p.vertex(313, 172);
-    __p.vertex(312, 174);
-    __p.vertex(328, 174);
-    __p.vertex(328, 168);
-    __p.bezierVertex(325, 153, 327, 143, 323, 138);
-    __p.bezierVertex(320, 127, 318, 127, 319, 122);
-    __p.bezierVertex(322, 120, 329, 116, 333, 112);
-    __p.vertex(333, 103);
-    __p.vertex(332, 101);
-    __p.vertex(339, 101);
-    __p.vertex(341, 100);
-    __p.vertex(341, 96);
-    __p.bezierVertex(337, 86, 317, 77, 314, 68);
-    __p.vertex(314, 60);
-    __p.bezierVertex(318, 46, 311, 40, 309, 32);
-    __p.vertex(309, 28);
-    __p.vertex(307, 27);
-    __p.vertex(307, 19);
-    __p.vertex(306, 18);
-    __p.vertex(307, 16);
-    __p.vertex(307, 15);
-    __p.vertex(305, 15);
-    __p.vertex(305, 13);
-    __p.vertex(306, 13);
-    __p.vertex(306, 11);
-    __p.vertex(305, 11);
-    __p.vertex(305, 9);
-    __p.vertex(302, 6);
-    __p.vertex(301, 2);
-    __p.vertex(300, 2);
-    __p.vertex(299, 5);
-    __p.vertex(299, 8);
-    __p.vertex(298, 8);
-    __p.vertex(298, 9);
-    __p.vertex(298, 10);
-    __p.vertex(298, 13);
-    __p.vertex(299, 13);
-    __p.vertex(298, 14);
-    __p.vertex(298, 15);
-    __p.vertex(296, 16);
-    __p.vertex(295, 18);
-    __p.vertex(297, 18);
-    __p.vertex(297, 19);
-    __p.vertex(298, 24);
-    __p.vertex(298, 27);
-    __p.vertex(299, 30);
-    __p.vertex(300, 31);
-    __p.vertex(301, 39);
-    __p.vertex(302, 45);
-    __p.vertex(301, 46);
-    __p.vertex(301, 45);
-    __p.vertex(301, 43);
-    __p.bezierVertex(296, 34, 287, 39, 287, 46);
-    __p.bezierVertex(288, 45, 289, 53, 293, 56);
-    __p.bezierVertex(288, 58, 287, 71, 286, 76);
-    __p.bezierVertex(286, 80, 291, 91, 291, 95);
-    __p.bezierVertex(290, 98, 289, 101, 289, 104);
-    __p.vertex(290, 109);
-    __p.bezierVertex(289, 111, 286, 116, 286, 118);
-    __p.vertex(286, 128);
-    __p.bezierVertex(284, 132, 279, 160, 278, 167);
-    __p.vertex(276, 169);
-    __p.vertex(274, 170);
-    __p.vertex(273, 171);
-    __p.vertex(271, 171);
-    __p.vertex(270, 172);
-    __p.vertex(270, 173);
-    __p.vertex(270, 174);
-    __p.vertex(289, 174);
-    __p.endShape();
-
-    // The star
-    __p.beginShape();
-    __p.vertex(162, 173);
-    __p.vertex(247, 234);
-    __p.vertex(217, 335);
-    __p.vertex(301, 271);
-    __p.vertex(385, 335);
-    __p.vertex(355, 234);
-    __p.vertex(438, 174);
-    __p.vertex(162, 173);
-    __p.endShape();
-    __p.popMatrix();
-  }
   var drawIdlePlayer = function drawIdlePlayer(x, y, s, rotation) {
     __p.pushMatrix();
     __p.translate(x, y);
@@ -27120,9 +27021,9 @@ function program() {
       class: "Worlds",
       locked: !achievementStates.greenMeansGo
     }, {
-      name: "Non-Stop",
+      name: "Unstoppable",
       img: imgs.nonStopIcon,
-      description: "Man, the man is Non-Stop!",
+      description: "Three areas down, and still going!",
       tutorial: "Complete area 3.",
       rarity: "Legendary",
       class: "Worlds",
@@ -27135,7 +27036,7 @@ function program() {
       rarity: "Mythical",
       class: "Worlds",
       locked: !achievementStates.parkourChampion,
-      shown: !achievementStates.nonStop // Hidden until Non-Stop is unlocked
+      shown: !achievementStates.nonStop // Hidden until Unstoppable is unlocked
     },
     {
       name: "Parkour Master",
@@ -27239,7 +27140,7 @@ function program() {
       rarity: "Legendary",
       class: "Obstacles",
       locked: !achievementStates.poisonous,
-      shown: !achievementStates.nonStop // Hidden until Non-Stop is unlocked
+      shown: !achievementStates.nonStop // Hidden until Unstoppable is unlocked
     }, {
       name: "Really Pointy",
       img: imgs.thornIcon,
@@ -27248,7 +27149,7 @@ function program() {
       rarity: "Legendary",
       class: "Obstacles",
       locked: !achievementStates.reallyPointy,
-      shown: !achievementStates.nonStop // Hidden until Non-Stop is unlocked
+      shown: !achievementStates.nonStop // Hidden until Unstoppable is unlocked
     },
     // General Achievements
     {
@@ -27452,7 +27353,7 @@ function program() {
     var keyMap = {
       "Starting Small": "startingSmall",
       "Green Means Go": "greenMeansGo",
-      "Non-Stop": "nonStop",
+      "Unstoppable": "nonStop",
       "Parkour Champion": "parkourChampion",
       "Lightwork": "lightwork",
       "Twenty-Two": "twentyTwo",
@@ -27510,7 +27411,7 @@ function program() {
     }
     if (areaXUnlocked) {
       skins[15].owned = true;
-      unlockAchievement("Non-Stop");
+      unlockAchievement("Unstoppable");
     }
     if (allAreasComplete) {
       skins[20].owned = true;
@@ -27525,7 +27426,7 @@ function program() {
     var keyMap = {
       "Starting Small": "startingSmall",
       "Green Means Go": "greenMeansGo",
-      "Non-Stop": "nonStop",
+      "Unstoppable": "nonStop",
       "Parkour Champion": "parkourChampion",
       "Lightwork": "lightwork",
       "Twenty-Two": "twentyTwo",
@@ -36493,61 +36394,109 @@ function program() {
     __p.fill(219, 21, 166);
     __p.ellipse(x, y - h, w / 5, w / 5);
   }
-  // [v1.1] Larry: our own evil red face (a smoky blob with horns, slanted
-  // glowing eyes and a jagged grin), drawn with shapes instead of pixel art
+  // [v1.1] Larry: our own grainy blood-red face on a black tile (hollow eyes,
+  // a wide toothy grin and dripping wisps), built from pixels in code
+  function larryHash(x, y, k) {
+    var n = Math.sin(x * 12.9898 + y * 78.233 + k * 37.719) * 43758.5453;
+    return n - Math.floor(n);
+  }
+  function larryCell(x, y) {
+    // 0 black, 1-3 reds, 4 teeth
+    var t = (x - 30) / 19;
+    var mid = 44.5 - 7 * t * t;
+    if (Math.abs(t) < 1.05) {
+      var top = mid - 3.2 + Math.abs(t) * 1.6,
+        bot = mid + 4.2 - Math.abs(t) * 2.6;
+      if (y >= top && y <= bot) {
+        // sharp teeth hanging from the top and poking up from the bottom
+        var len = (bot - top) * 0.55;
+        var up = 1 - Math.abs((x % 5) - 2.5) / 2.5,
+          dn = 1 - Math.abs(((x + 2.5) % 5) - 2.5) / 2.5;
+        return y - top < len * up || bot - y < len * dn ? 4 : 0;
+      }
+      if (y > top - 2 && y < bot + 2) {
+        return larryHash(x, y, 1) < 0.5 ? 1 : 0;
+      }
+    }
+    var dx = (x - 30) / 20,
+      dy = (y - 24) / 21;
+    var edge = 1 + (larryHash(x, y, 2) - 0.5) * 0.25;
+    if (dx * dx + dy * dy > edge) {
+      // wisps hanging off the sides and the chin
+      var col = Math.floor(x);
+      if (larryHash(col, 0, 3) < 0.22 && y > 30 && y < 36 + larryHash(col, 0, 4) * 12 && Math.abs(x - 30) > 14 && Math.abs(x - 30) < 25) {
+        return larryHash(x, y, 7) < 0.3 ? 0 : larryHash(x, y, 5) < 0.2 ? 2 : 1;
+      }
+      return 0;
+    }
+    var ex = Math.abs(x - 30) - 8.5,
+      ey = y - 22;
+    if ((ex * ex) / 30 + (ey * ey) / 46 < 1) {
+      return 0;
+    }
+    if (y > 29 && y < 35 && Math.abs(x - 30) < (y - 29) * 0.5 + 0.6) {
+      return 0;
+    }
+    var r = larryHash(x, y, 6);
+    if (r < 0.17) {
+      return 0;
+    }
+    return r < 0.5 ? 1 : r < 0.7 ? 2 : 3;
+  }
   function draw2dLarry(x, y, size) {
-    var u = size / 10;
+    var cols = [__p.color(0), __p.color(110, 0, 0), __p.color(145, 0, 10), __p.color(75, 0, 0), __p.color(255, 110, 125)];
+    __p.noStroke();
+    __p.fill(0);
+    __p.rect(x - size * 30, y - size * 30, size * 60, size * 60);
+    for (var cy = 0; cy < 60; cy++) {
+      for (var cx = 0; cx < 60; cx++) {
+        var c = larryCell(cx, cy);
+        if (c > 0) {
+          __p.fill(cols[c]);
+          __p.rect(x - size * 30 + cx * size, y - size * 30 + cy * size, size + 0.6, size + 0.6);
+        }
+      }
+    }
+  }
+  // [v1.1] the "Unstoppable" badge: Dash charging forward through a sunburst
+  function drawUnstoppableIcon(x, y, s) {
     __p.pushMatrix();
     __p.translate(x, y);
-    __p.scale(u);
+    __p.scale(s / 600);
     __p.noStroke();
-    // smoky spiky body: three layers, darkest on top
-    var layers = [[__p.color(120, 0, 0), 300, 26], [__p.color(70, 0, 0), 276, 22], [__p.color(25, 0, 0), 250, 16]];
-    for (var l = 0; l < layers.length; l++) {
-      __p.fill(layers[l][0]);
-      __p.beginShape();
-      for (var a = 0; a < 360; a += 12) {
-        var rr = layers[l][1] - (a % 24 === 0 ? 0 : layers[l][2]) - (l === 0 ? (a * 7 % 11) : 0);
-        __p.vertex(Math.cos(a * Math.PI / 180) * rr * 0.95, 10 + Math.sin(a * Math.PI / 180) * rr * 0.9);
-      }
-      __p.endShape(__p.CLOSE);
+    __p.fill(255, 120, 30);
+    __p.rect(-300, -300, 600, 600);
+    __p.fill(255, 165, 60);
+    for (var a = 0; a < 360; a += 30) {
+      var a1 = a * Math.PI / 180,
+        a2 = (a + 15) * Math.PI / 180;
+      __p.triangle(40, 0, 40 + Math.cos(a1) * 600, Math.sin(a1) * 600, 40 + Math.cos(a2) * 600, Math.sin(a2) * 600);
     }
-    // horns
-    __p.fill(25, 0, 0);
-    __p.triangle(-150, -150, -95, -185, -190, -285);
-    __p.triangle(150, -150, 95, -185, 190, -285);
-    __p.fill(120, 0, 0);
-    __p.triangle(-160, -190, -135, -200, -183, -268);
-    __p.triangle(160, -190, 135, -200, 183, -268);
-    // eye glow
-    for (var g = 5; g > 0; g--) {
-      __p.fill(255, 30, 20, 26);
-      __p.ellipse(-88, -45, 70 + g * 26, 46 + g * 20);
-      __p.ellipse(88, -45, 70 + g * 26, 46 + g * 20);
-    }
-    // slanted angry eyes
-    __p.fill(255, 50, 30);
-    __p.quad(-150, -82, -32, -30, -48, -4, -142, -28);
-    __p.quad(150, -82, 32, -30, 48, -4, 142, -28);
-    __p.fill(255, 210, 150);
-    __p.quad(-108, -52, -64, -32, -70, -20, -104, -34);
-    __p.quad(108, -52, 64, -32, 70, -20, 104, -34);
-    // jagged grin
-    __p.fill(10, 0, 0);
-    __p.beginShape();
-    __p.vertex(-185, 40);
-    __p.bezierVertex(-120, 70, 120, 70, 185, 40);
-    __p.bezierVertex(150, 170, -150, 170, -185, 40);
-    __p.endShape(__p.CLOSE);
-    __p.fill(255, 110, 125);
-    for (var t = 0; t < 7; t++) {
-      var tx = -150 + t * 50;
-      __p.triangle(tx - 20, 52 + Math.abs(tx) * 0.09, tx + 20, 52 + Math.abs(tx) * 0.09, tx, 95);
-    }
-    for (var t2 = 0; t2 < 6; t2++) {
-      var bx = -125 + t2 * 50;
-      __p.triangle(bx - 18, 152 - Math.abs(bx) * 0.3, bx + 18, 152 - Math.abs(bx) * 0.3, bx, 112);
-    }
+    // speed lines
+    __p.fill(255);
+    __p.rect(-280, -95, 140, 22, 11);
+    __p.rect(-255, -15, 140, 22, 11);
+    __p.rect(-285, 65, 130, 22, 11);
+    // Dash leaning into the run
+    __p.rotate(12);
+    __p.stroke(0);
+    __p.strokeWeight(16);
+    __p.fill(255, 0, 0);
+    __p.rect(-130, -120, 240, 240, 55);
+    __p.noStroke();
+    __p.fill(255);
+    __p.ellipse(5, -30, 66, 66);
+    __p.ellipse(80, -30, 66, 66);
+    __p.fill(0);
+    __p.ellipse(18, -28, 32, 32);
+    __p.ellipse(93, -28, 32, 32);
+    // determined brows and a grin
+    __p.stroke(0);
+    __p.strokeWeight(14);
+    __p.line(-25, -85, 35, -68);
+    __p.line(52, -68, 108, -85);
+    __p.noFill();
+    __p.arc(42, 40, 120, 70, 0, 180);
     __p.popMatrix();
   }
   // [v1.1] the "Starting Small" badge: a blue seed with a little sprout
@@ -37566,9 +37515,12 @@ function program() {
           __p.fill(255);
           __p.ellipse(fX / 2 - scaleOffset, fY, this.w / 3, this.w / 3);
           __p.ellipse(fX / 2 + scaleOffset, fY, this.w / 3, this.w / 3);
+          // [v1.1] the pupils roll around in circles as he moves
           __p.fill(0);
-          __p.ellipse(fX - scaleOffset, fY - fYMove * 0.5 + 2, this.w / 6, this.w / 6);
-          __p.ellipse(fX + scaleOffset, fY - fYMove * 0.5 - 2, this.w / 6, this.w / 6);
+          var spin = (this.x + this.y) * 0.09;
+          var orb = this.w / 13;
+          __p.ellipse(fX / 2 - scaleOffset + Math.cos(spin) * orb, fY + Math.sin(spin) * orb, this.w / 6, this.w / 6);
+          __p.ellipse(fX / 2 + scaleOffset + Math.cos(-spin * 1.3 + 2) * orb, fY + Math.sin(-spin * 1.3 + 2) * orb, this.w / 6, this.w / 6);
         }
         var mouthY = fY + h * 0.32;
         if (this.hurtFrames <= 0) {
@@ -42443,17 +42395,7 @@ function program() {
       w: __p.width,
       h: __p.height,
       mImg: function mImg() {
-        __p.background(255, 182, 143);
-        __p.fill(0, 0, 0);
-        hamMan(300, 300, 600);
-        __p.fill(255);
-        __p.textFont(__p.createFont("serif"), 35);
-        __p.textAlign(__p.CENTER, __p.CENTER);
-        __p.text("H A M I L T O N", 300, 365);
-        __p.textSize(12.5);
-        __p.fill(255, 253, 229);
-        __p.text("AN AMERICAN MUSICAL", 300, 420);
-        __p.textFont(__p.createFont("default because this is obviously not a font"));
+        drawUnstoppableIcon(300, 300, 600);
       }
     },
     electricGuyIcon: {
