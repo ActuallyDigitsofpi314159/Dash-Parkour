@@ -26297,16 +26297,15 @@ function program() {
     owned: false,
     area: "3"
   }, {
-    // [v1.1] a placeholder for a new costume (this spot used to sell a costume
-    // based on another game's character). Bought ones stay owned.
+    // [v1.1] Bubbly Dash (this spot used to sell a costume based on another
+    // game's character, then a "coming soon" slot). Bought ones stay owned.
     id: 14,
-    name: "Coming\nSoon",
-    mainColor: __p.color(255, 0, 0),
+    name: "Bubbly\nDash",
+    mainColor: __p.color(255, 120, 190),
     cost: 3,
     owned: false,
     area: "1",
-    ord: 4, // [v1.1] now in Area 1, where the Sphere Costume used to be
-    placeholder: true
+    ord: 4 // [v1.1] in Area 1, where the Sphere Costume used to be
   }, {
     id: 15,
     name: "Maze\nDash",
@@ -26366,13 +26365,11 @@ function program() {
     area: "S",
     spec: "Hundred of Many"
   }, {
-    // [v1.1] "Coming soon" slots where the Boing, 8-bit and Zapp costumes used to be
-    // sold. They can be bought and equipped (they look like the Dash skin for now),
-    // so when real skins are drawn for them, players who bought them already own
-    // them. Ownership is saved in the three unused achievement slots (no new save
-    // code layout needed).
+    // [v1.1] The three costumes sold where the Boing, 8-bit and Zapp costumes used
+    // to be ("soon" = shown in the spot of the skin it replaces). Ownership is
+    // saved in the three unused achievement slots (no new save code layout needed).
     id: 23,
-    name: "Coming\nSoon",
+    name: "Mustachioed\nDash",
     mainColor: __p.color(255, 0, 0),
     cost: 1,
     owned: false,
@@ -26382,7 +26379,7 @@ function program() {
     replaces: 6
   }, {
     id: 24,
-    name: "Coming\nSoon",
+    name: "Party\nDash",
     mainColor: __p.color(255, 0, 0),
     cost: 3,
     owned: false,
@@ -26392,8 +26389,8 @@ function program() {
     replaces: 9
   }, {
     id: 25,
-    name: "Coming\nSoon",
-    mainColor: __p.color(255, 0, 0),
+    name: "Money\nDash",
+    mainColor: __p.color(40, 165, 85),
     cost: 2,
     owned: false,
     area: "3",
@@ -27314,7 +27311,7 @@ function program() {
     if (b && b.img && !b.maskedImg) {
       ensureBadgeMasked(b, 160);
     }
-    if (b && b.maskedImg) {
+    if (b && !drawBadgeAA(b, x + 40, y + h / 2, 52) && b.maskedImg) {
       __p.imageMode(__p.CENTER);
       __p.image(b.maskedImg, x + 40, y + h / 2, 52, 52);
     }
@@ -27667,6 +27664,66 @@ function program() {
     var out = pg.get(0, 0, imgSize, imgSize);
     return out;
   }
+  // [v1.1] smooth round badges: cut the circle with an anti-aliased path at the
+  // exact number of screen pixels it will cover, shrinking the art in halves
+  // with high-quality smoothing so its edges and outlines stay clean
+  function badgeAACanvas(badge, px) {
+    badge._aa = badge._aa || {};
+    if (badge._aa[px]) {
+      return badge._aa[px];
+    }
+    var src = badge.img.sourceImg || badge.img;
+    if (!src || !src.width) {
+      return null;
+    }
+    while (src.width > px * 2) {
+      var half = document.createElement("canvas");
+      half.width = Math.ceil(src.width / 2);
+      half.height = Math.ceil(src.height / 2);
+      var hc = half.getContext("2d");
+      hc.imageSmoothingEnabled = true;
+      hc.imageSmoothingQuality = "high";
+      hc.drawImage(src, 0, 0, half.width, half.height);
+      src = half;
+    }
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = px;
+    var c = cv.getContext("2d");
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = "high";
+    c.beginPath();
+    c.arc(px / 2, px / 2, px / 2, 0, Math.PI * 2);
+    c.fillStyle = "#fff";
+    c.fill();
+    c.globalCompositeOperation = "source-in";
+    c.drawImage(src, 0, 0, px, px);
+    badge._aa[px] = cv;
+    return cv;
+  }
+  function drawBadgeAA(badge, cx, cy, size, cacheSize) {
+    if (!badge.img) {
+      return false;
+    }
+    var ctx = __p.externals.context;
+    var k = 2;
+    if (ctx.getTransform) {
+      var tr = ctx.getTransform();
+      k = Math.sqrt(tr.a * tr.a + tr.b * tr.b) || 2;
+    }
+    var px = Math.max(16, Math.min(1024, Math.ceil((cacheSize || size) * k)));
+    var cv = badgeAACanvas(badge, px);
+    if (!cv) {
+      return false;
+    }
+    var was = ctx.imageSmoothingEnabled,
+      q = ctx.imageSmoothingQuality;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(cv, cx - size / 2, cy - size / 2, size, size);
+    ctx.imageSmoothingEnabled = was;
+    ctx.imageSmoothingQuality = q;
+    return true;
+  }
   function ensureBadgeMasked(badge, baseSize) {
     if (!badge.img) {
       return;
@@ -27740,7 +27797,7 @@ function program() {
         if (badge.img && !badge.maskedImg) {
           ensureBadgeMasked(badge, Math.round(s * 4));
         }
-        if (badge.maskedImg) {
+        if (!drawBadgeAA(badge, currentX, currentY, dS / 1.1, s * 1.2 / 1.1) && badge.maskedImg) {
           __p.image(badge.maskedImg, currentX, currentY, dS / 1.1, dS / 1.1);
         }
         __p.stroke(badge.rarityColor);
@@ -27812,7 +27869,7 @@ function program() {
       arcText(badge.name, x + s * 3, y - s / 2);
       __p.imageMode(__p.CENTER);
       var imgToDraw = badge.maskedImgDetail || badge.maskedImg;
-      if (imgToDraw) {
+      if (!drawBadgeAA(badge, x - s / 2, y + s, s * 5.7) && imgToDraw) {
         __p.image(imgToDraw, x - s / 2, y + s, s * 5.7, s * 5.7);
       }
     } else {
@@ -35750,6 +35807,7 @@ function program() {
   var particles = [];
 
   // Particle class
+  var CONFETTI_COLS = [[255, 60, 90], [255, 200, 40], [60, 200, 255], [120, 230, 90], [190, 100, 255], [255, 130, 40]];
   var Particle = function Particle(x, y, vx, vy, type, timeSpeed, boss) {
     this.x = x;
     this.y = y;
@@ -35760,6 +35818,12 @@ function program() {
     this.boss = boss;
     if (this.type === "explosion") {
       this.variant = __p.round(__p.random(0.5, 4.7));
+    } else if (this.type === "confetti") {
+      // [v1.1] Party Dash kicks up confetti instead of dust
+      this.col = CONFETTI_COLS[Math.floor(__p.random(0, CONFETTI_COLS.length))];
+      this.rot = __p.random(360);
+      this.spin = __p.random(-14, 14);
+      this.flip = __p.random(360);
     } else if (this.type === "pi") {
       this.life = 0; // Starts completely transparent
       this.digit = Math.floor(__p.random(0, 10)); // Chooses a number 0-9
@@ -35788,6 +35852,15 @@ function program() {
       this.vy *= dtPow(0.98);
       this.size *= dtPow(0.98);
       this.life -= 6 * DT;
+    } else if (this.type === "confetti") {
+      this.x += this.vx * DT;
+      this.y += this.vy * DT;
+      this.vy += 0.06 * DT; // flutters down
+      this.vx *= dtPow(0.97);
+      this.vy *= dtPow(0.97);
+      this.rot += this.spin * DT;
+      this.flip += 16 * DT;
+      this.life -= 5 * DT;
     } else if (this.type === "pi") {
       var piOwner = this.boss && this.boss.x !== undefined ? this.boss : p; // [v1.1] another player's Dash in multiplayer
       var dx = piOwner.x - this.x;
@@ -36079,6 +36152,17 @@ function program() {
       if (particleVisible) {
         __p.ellipse(this.x, this.y, this.size, this.size);
       }
+    } else if (this.type === "confetti") {
+      if (particleVisible) {
+        __p.fill(this.col[0], this.col[1], this.col[2], __p.constrain(this.life * 1.6, 0, 255));
+        __p.pushMatrix();
+        __p.translate(this.x, this.y);
+        __p.rotate(this.rot);
+        // a little paper strip that flips over as it falls
+        var cfH = this.size * 0.5 * Math.cos(this.flip * Math.PI / 180);
+        __p.rect(-this.size * 0.5, -cfH / 2, this.size, cfH);
+        __p.popMatrix();
+      }
     } else {
       // Regular smoke/dust
       __p.fill(200, 200, 200, this.life);
@@ -36122,10 +36206,20 @@ function program() {
       count = __p.floor(lowParticleAcc);
       lowParticleAcc -= count;
     }
+    // [v1.1] Party Dash: his dust is confetti (a little more of it, popping upward)
+    var partyDust = type === "dust" && currentSkin === 24;
+    if (partyDust) {
+      type = "confetti";
+      count = Math.ceil(count * 1.5);
+    }
     if (true) {
       for (var i = 0; i < count; i++) {
         var vx, vy;
-        if (type === "death" || this.type === "deathG" || this.type === "deathY") {
+        if (type === "confetti") {
+          vx = __p.random(-speed, speed) * 1.2;
+          vy = __p.random(-speed * 1.4, speed * 0.3) - 0.6;
+          particles.push(new Particle(x, y, vx, vy, type, speed, boss));
+        } else if (type === "death" || this.type === "deathG" || this.type === "deathY") {
           var angle = __p.random(360);
           var force = __p.random(speed * 0.7, speed * 1.5);
           vx = __p.cos(angle) * force;
@@ -37024,6 +37118,278 @@ function program() {
       }
     }
   };
+
+  // ===================================================================
+  // [v1.1] Four costumes: Bubbly, Mustachioed, Party and Money Dash.
+  // All are drawn from the bottom-centre of the player, like drawBase, and
+  // squash and stretch with him (visualW / visualH).
+  // ===================================================================
+  // A springy value that chases "target" and overshoots (hats, bows, mustache)
+  Player.prototype.skinSpring = function (key, target, stiff, damp) {
+    var y = this[key] || 0,
+      v = this[key + "V"] || 0;
+    var step = Math.min(DT, 2);
+    v += ((target - y) * stiff - v * damp) * step;
+    y += v * step;
+    if (!(y > -30 && y < 30)) {
+      y = 0;
+      v = 0;
+    }
+    this[key] = y;
+    this[key + "V"] = v;
+    return y;
+  };
+  Player.prototype.drawBubbly = function (fX, fY, fYMove) {
+    var w = this.visualW,
+      h = this.visualH,
+      u = this.w / 40,
+      so = this.w * 0.25;
+    // her own pink, even in a multiplayer colour
+    var keepTint = dashTint;
+    dashTint = null;
+    this.drawBase(w, h, __p.color(255, 120, 190), fX, fY, fYMove);
+    dashTint = keepTint;
+    // a soft shine on the corner
+    __p.noStroke();
+    __p.fill(255, 255, 255, 70);
+    __p.ellipse(-w * 0.27, -h * 0.87, w * 0.22, h * 0.1);
+    // blush
+    __p.fill(255, 60, 130, 120);
+    __p.ellipse(fX / 2 - so * 1.45, fY + h * 0.2, this.w * 0.22, this.w * 0.13);
+    __p.ellipse(fX / 2 + so * 1.45, fY + h * 0.2, this.w * 0.22, this.w * 0.13);
+    // eyelashes: three flicks on the outer corner of each eye
+    if (!(this.hurtFrames > 0)) {
+      __p.stroke(0);
+      __p.strokeWeight(1.7 * u);
+      var er = this.w / 6;
+      for (var side = -1; side <= 1; side += 2) {
+        var ex = fX / 2 + side * so;
+        for (var l = 0; l < 3; l++) {
+          var a = (-28 - l * 27) * Math.PI / 180;
+          var c = Math.cos(a) * side,
+            sn = Math.sin(a);
+          __p.line(ex + c * er * 0.9, fY + sn * er * 0.9, ex + c * er * (1.75 - l * 0.12), fY + sn * er * (1.75 - l * 0.12));
+        }
+      }
+    }
+    // hair bow on the top-left corner, hanging off her head a little and tilted
+    // at -45 degrees (it bobs a little as she jumps and lands)
+    var bob = this.skinSpring("bowY", -__p.constrain(this.vy * 0.25, -3, 3), 0.3, 0.3) * u;
+    var bw = w * 0.3,
+      bh = h * 0.13;
+    __p.pushMatrix();
+    __p.translate(-w * 0.4, -h * 0.9 + bob);
+    __p.rotate(-45);
+    var bx = 0,
+      by = 0;
+    __p.stroke(25, 95, 160);
+    __p.strokeWeight(1.3 * u);
+    __p.fill(110, 215, 255);
+    for (var bs = -1; bs <= 1; bs += 2) {
+      __p.beginShape();
+      __p.vertex(bx, by - bh * 0.25);
+      __p.bezierVertex(bx + bs * bw * 0.5, by - bh * 1.35, bx + bs * bw * 1.05, by - bh * 1.1, bx + bs * bw, by);
+      __p.bezierVertex(bx + bs * bw * 1.05, by + bh * 1.1, bx + bs * bw * 0.5, by + bh * 1.35, bx, by + bh * 0.25);
+      __p.endShape(__p.CLOSE);
+    }
+    // folds and the knot
+    __p.line(bx - bw * 0.35, by, bx - bw * 0.7, by - bh * 0.15);
+    __p.line(bx + bw * 0.35, by, bx + bw * 0.7, by - bh * 0.15);
+    __p.fill(170, 235, 255);
+    __p.rect(bx - bw * 0.2, by - bh * 0.5, bw * 0.4, bh, 2 * u);
+    __p.popMatrix();
+  };
+  Player.prototype.drawMustache = function (fX, fY, fYMove) {
+    var w = this.visualW,
+      h = this.visualH,
+      u = this.w / 40,
+      so = this.w * 0.25;
+    // Dash underneath (he shows your colour in multiplayer)
+    this.drawBase(w, h, __p.color(255, 0, 0), fX, fY, fYMove);
+    // evil eyebrows
+    if (!(this.hurtFrames > 0)) {
+      __p.stroke(0);
+      __p.strokeWeight(2.6 * u);
+      __p.line(fX / 2 - so - 7 * u, fY - 12 * u, fX / 2 - so + 6 * u, fY - 6.5 * u);
+      __p.line(fX / 2 + so + 7 * u, fY - 12 * u, fX / 2 + so - 6 * u, fY - 6.5 * u);
+    }
+    // the mustache hangs on a spring: it lags behind jumps and wobbles on landing
+    var bounce = this.skinSpring("stacheY", -__p.constrain(this.vy * 0.55, -8, 8), 0.22, 0.16);
+    var mx = fX * 0.6,
+      my = fY + h * 0.27 + bounce * 0.45 * u;
+    var m = this.w / 40; // drawn in 40-px units
+    var tip = bounce * 0.9 - 1; // the curled tips flick the most
+    __p.noStroke();
+    __p.fill(15, 10, 10);
+    for (var side = -1; side <= 1; side += 2) {
+      __p.beginShape();
+      __p.vertex(mx, my - 2.5 * m);
+      __p.bezierVertex(mx + side * 5 * m, my - 6.5 * m, mx + side * 13 * m, my - 6 * m, mx + side * 18 * m, my + 0.5 * m);
+      __p.bezierVertex(mx + side * 21 * m, my + 4 * m, mx + side * 27 * m, my + 3 * m, mx + side * 27.5 * m, my + (-6 + tip) * m);
+      __p.bezierVertex(mx + side * 31 * m, my + (4 + tip * 0.4) * m, mx + side * 23 * m, my + 10.5 * m, mx + side * 15 * m, my + 7 * m);
+      __p.bezierVertex(mx + side * 9 * m, my + 4.5 * m, mx + side * 4 * m, my + 6 * m, mx, my + 3 * m);
+      __p.endShape(__p.CLOSE);
+    }
+    // a glossy streak on each side
+    __p.noFill();
+    __p.stroke(95, 85, 85);
+    __p.strokeWeight(1.1 * u);
+    __p.bezier(mx - 5 * m, my - 2.8 * m, mx - 9 * m, my - 4 * m, mx - 13 * m, my - 3 * m, mx - 16 * m, my + 0.5 * m);
+    __p.bezier(mx + 5 * m, my - 2.8 * m, mx + 9 * m, my - 4 * m, mx + 13 * m, my - 3 * m, mx + 16 * m, my + 0.5 * m);
+  };
+  Player.prototype.drawParty = function (fX, fY, fYMove) {
+    var w = this.visualW,
+      h = this.visualH,
+      u = this.w / 40;
+    // Dash underneath (he shows your colour in multiplayer)
+    this.drawBase(w, h, __p.color(255, 0, 0), fX, fY, fYMove);
+    // the disco ball floats over his head: it bobs, lags behind jumps and spins
+    var t = __p.frameCount;
+    var lag = this.skinSpring("ballY", -__p.constrain(this.vy * 0.6, -9, 9), 0.16, 0.2);
+    var r = 10.5 * u;
+    var cx = fX * 0.25,
+      cy = -h - 17 * u + Math.sin(t * 0.07) * 1.6 * u + lag * u;
+    // coloured light beams sweeping down from it
+    __p.noStroke();
+    for (var b = 0; b < 3; b++) {
+      var bc = CONFETTI_COLS[(b * 2 + Math.floor(t / 22)) % CONFETTI_COLS.length];
+      var ba = (90 + Math.sin(t * 0.045 + b * 2.1) * 62) * Math.PI / 180;
+      var bl = 34 * u;
+      __p.fill(bc[0], bc[1], bc[2], 42);
+      __p.triangle(cx, cy, cx + Math.cos(ba - 0.085) * bl, cy + Math.sin(ba - 0.085) * bl, cx + Math.cos(ba + 0.085) * bl, cy + Math.sin(ba + 0.085) * bl);
+    }
+    // string and cap
+    __p.stroke(70);
+    __p.strokeWeight(1.2 * u);
+    __p.line(cx, cy - r, cx, cy - r - 6 * u);
+    __p.noStroke();
+    __p.fill(70);
+    __p.rect(cx - 2.5 * u, cy - r - 1.6 * u, 5 * u, 3 * u, u);
+    // the ball
+    __p.stroke(40, 45, 70);
+    __p.strokeWeight(1.4 * u);
+    __p.fill(196, 204, 226);
+    __p.ellipse(cx, cy, r * 2, r * 2);
+    // mirror tiles: rows stay put, columns slide round as it turns
+    __p.noFill();
+    __p.stroke(105, 115, 150);
+    __p.strokeWeight(0.8 * u);
+    for (var row = -1; row <= 1; row++) {
+      var ry = row * r * 0.5,
+        hw = Math.sqrt(r * r - ry * ry);
+      __p.line(cx - hw, cy + ry, cx + hw, cy + ry);
+    }
+    for (var col = 0; col < 4; col++) {
+      var ca = ((t * 2.4 + col * 45) % 180) * Math.PI / 180;
+      __p.ellipse(cx, cy, Math.abs(Math.cos(ca)) * r * 2, r * 2);
+    }
+    // a few tiles catch the light in party colours
+    __p.noStroke();
+    for (var g = 0; g < 5; g++) {
+      var ga = (t * 2.4 + g * 72) * Math.PI / 180;
+      if (Math.cos(ga) > 0) {
+        var gc = CONFETTI_COLS[g % CONFETTI_COLS.length];
+        var gy = ((g * 37) % 5 - 2) * r * 0.3;
+        var gx = Math.sin(ga) * Math.sqrt(r * r - gy * gy) * 0.8;
+        __p.fill(gc[0], gc[1], gc[2], 235 * Math.cos(ga));
+        __p.rect(cx + gx - 1.5 * u, cy + gy - 1.5 * u, 3 * u, 3 * u, 0.6 * u);
+      }
+    }
+    __p.fill(255, 255, 255, 190);
+    __p.ellipse(cx - r * 0.38, cy - r * 0.42, r * 0.5, r * 0.34);
+    // twinkles around it
+    for (var k = 0; k < 3; k++) {
+      var tw = Math.abs(Math.sin((t * 4 + k * 60) * Math.PI / 180));
+      var ta = (k * 120 - 55 + t * 0.8) * Math.PI / 180;
+      var tx = cx + Math.cos(ta) * r * 1.65,
+        ty = cy + Math.sin(ta) * r * 1.45,
+        ts = (1.2 + tw * 3.2) * u;
+      var tc = CONFETTI_COLS[(k * 2 + 1) % CONFETTI_COLS.length];
+      __p.fill(tc[0], tc[1], tc[2], 120 + tw * 135);
+      __p.quad(tx, ty - ts, tx + ts * 0.3, ty, tx, ty + ts, tx - ts * 0.3, ty);
+      __p.quad(tx - ts, ty, tx, ty - ts * 0.3, tx + ts, ty, tx, ty + ts * 0.3);
+    }
+  };
+  Player.prototype.drawMoney = function (fX, fY, fYMove) {
+    var w = this.visualW,
+      h = this.visualH,
+      u = this.w / 40,
+      so = this.w * 0.25;
+    var hurt = this.hurtFrames > 0;
+    // money-green body with a banknote border (his own colour, even in multiplayer)
+    __p.noStroke();
+    __p.fill(40, 165, 85);
+    __p.rect(-w / 2, -h, w, h, w * 0.25);
+    __p.noFill();
+    __p.stroke(25, 120, 60);
+    __p.strokeWeight(1.4 * u);
+    __p.rect(-w / 2 + 3 * u, -h + 3 * u, w - 6 * u, h - 6 * u, w * 0.19);
+    // gold chain with a coin
+    var chY = -h * 0.2;
+    __p.stroke(255, 205, 50);
+    __p.strokeWeight(2 * u);
+    __p.noFill();
+    __p.arc(fX * 0.2, chY - 5 * u, w * 0.72, 15 * u, 12, 168);
+    __p.stroke(150, 100, 0);
+    __p.strokeWeight(1 * u);
+    __p.fill(255, 210, 60);
+    __p.ellipse(fX * 0.2, chY + 3.4 * u, 8.5 * u, 8.5 * u);
+    __p.stroke(150, 100, 0);
+    __p.strokeWeight(1.2 * u);
+    __p.line(fX * 0.2, chY + 0.8 * u, fX * 0.2, chY + 6 * u);
+    // smug grin with a gold tooth
+    var mY = fY + h * 0.31;
+    if (hurt) {
+      __p.noStroke();
+      __p.fill(0);
+      __p.ellipse(fX / 2, mY, this.w / 6, this.h / 6);
+    } else {
+      __p.stroke(0);
+      __p.strokeWeight(1.6 * u);
+      __p.fill(255);
+      __p.arc(fX / 2 + 1.5 * u, mY - 2 * u, 19 * u, 13 * u, 0, 180);
+      __p.line(fX / 2 - 8 * u, mY - 2 * u, fX / 2 + 11 * u, mY - 2 * u);
+      __p.noStroke();
+      __p.fill(255, 200, 40);
+      __p.rect(fX / 2 + 2.6 * u, mY - 1.2 * u, 3.6 * u, 3.8 * u, 0, 0, 1.2 * u, 1.2 * u);
+    }
+    // sunglasses: dark lenses, gold rims, a glint that slides as he moves
+    var gx = fX * 0.8,
+      gy = fY + fYMove * 0.25;
+    var lw = 15.5 * u,
+      lh = 11 * u;
+    __p.stroke(255, 205, 50);
+    __p.strokeWeight(1.6 * u);
+    __p.line(gx - so - lw / 2, gy - lh * 0.3, -w / 2 + 0.5 * u, gy - lh * 0.45);
+    __p.line(gx + so + lw / 2, gy - lh * 0.3, w / 2 - 0.5 * u, gy - lh * 0.45);
+    __p.noFill();
+    __p.arc(gx, gy - lh * 0.12, so * 2 - lw + 3 * u, 5 * u, 180, 360);
+    __p.fill(18, 18, 28);
+    __p.rect(gx - so - lw / 2, gy - lh / 2, lw, lh, 3 * u, 3 * u, 6.5 * u, 6.5 * u);
+    __p.rect(gx + so - lw / 2, gy - lh / 2, lw, lh, 3 * u, 3 * u, 6.5 * u, 6.5 * u);
+    __p.stroke(255, 255, 255, 190);
+    __p.strokeWeight(1.5 * u);
+    var gl = __p.constrain(fX * 0.25, -2 * u, 2 * u);
+    for (var ls = -1; ls <= 1; ls += 2) {
+      var lx = gx + ls * so + gl;
+      __p.line(lx - 4.2 * u, gy + 1.2 * u, lx - 0.6 * u, gy - 3 * u);
+      __p.line(lx - 1 * u, gy + 2 * u, lx + 1.2 * u, gy - 0.6 * u);
+    }
+    // top hat: it lifts off a little when he falls and settles with a bounce
+    var hatY = -h + this.skinSpring("hatY", -__p.constrain(this.vy * 0.45, -6, 10), 0.25, 0.22) * u;
+    var hx = fX * 0.3;
+    var hw = __p.lerp(this.w, w, 0.4);
+    __p.stroke(0);
+    __p.strokeWeight(1.5 * u);
+    __p.fill(28, 28, 34);
+    __p.rect(hx - hw * 0.31, hatY - 19 * u, hw * 0.62, 19 * u, 2 * u, 2 * u, 0, 0);
+    __p.rect(hx - hw * 0.5, hatY - 3 * u, hw, 4.5 * u, 2 * u);
+    __p.noStroke();
+    __p.fill(255, 205, 50);
+    __p.rect(hx - hw * 0.31 + 0.7 * u, hatY - 8.2 * u, hw * 0.62 - 1.4 * u, 4.4 * u);
+    __p.fill(255, 255, 255, 45);
+    __p.rect(hx - hw * 0.31 + 2 * u, hatY - 17.5 * u, 2.6 * u, 8 * u, 1.3 * u);
+  };
   var masterXScroll;
   Player.prototype.draw = function () {
     if (this.spawning || this.dead) {
@@ -37445,7 +37811,20 @@ function program() {
         __p.popMatrix();
         break;
       case 14:
-        // [v1.1] placeholder costume: looks like the normal Dash for now
+        // [v1.1] Bubbly Dash: pink, with blush, eyelashes and a bow
+        this.drawBubbly(faceX, faceY, faceYMove);
+        break;
+      case 23:
+        // [v1.1] Mustachioed Dash: a big evil mustache with some bounce
+        this.drawMustache(faceX, faceY, faceYMove);
+        break;
+      case 24:
+        // [v1.1] Party Dash: a disco ball over his head (his dust is confetti)
+        this.drawParty(faceX, faceY, faceYMove);
+        break;
+      case 25:
+        // [v1.1] Money Dash: top hat, gold-rimmed shades and a gold tooth
+        this.drawMoney(faceX, faceY, faceYMove);
         break;
       case 15:
         boss3Graphic(0, -this.h / 2, this.w);
@@ -38261,7 +38640,7 @@ function program() {
     this.moveTimer = 0;
     this.moving = false;
     this.vx = 0;
-    spawnParticles(this.x, this.y + 50, 10, "dust", 2);
+    spawnParticles(this.x, this.y + 50, 10, "smoke", 2); // (same grey puff as "dust", but never Party Dash confetti)
     if (this.moveCount >= this.maxMoves) {
       if (this.printDebug) {
         __p.println("Movement phase complete.");
@@ -43440,17 +43819,8 @@ function program() {
                         count++;
                         continue;
                       }
-                      __p.noStroke();
-                      __p.fill(0, 0, 0, 25);
-                      __p.rect(x + 10, displayY(y) - 10, 60, 60, 14);
-                      __p.stroke(0, 0, 0, 110);
-                      __p.strokeWeight(3);
-                      arcAlign(__p.CENTER);
-                      arcSize(26);
-                      arcText("?", x + 40, displayY(y) + 22);
-                      __p.strokeWeight(1.5);
-                      arcSize(8);
-                      arcText("Coming soon", x + 40, displayY(y) + 42);
+                      __p.imageMode(__p.CENTER);
+                      __p.image(skinCache[skins[soonIdx].id], x + 40, displayY(y) + 20);
                       if (skins[soonIdx].owned) {
                         equipButton(x, displayY(y + 60), 80, skins[soonIdx].id, soonIdx);
                       } else {
@@ -43461,28 +43831,6 @@ function program() {
                     }
                     if (skins[j].soon) {
                       continue; // drawn in the spot of the skin it replaces
-                    }
-
-                    if (skins[j].placeholder) {
-                      // [v1.1] a "coming soon" costume in its own spot
-                      __p.noStroke();
-                      __p.fill(0, 0, 0, 25);
-                      __p.rect(x + 10, displayY(y) - 10, 60, 60, 14);
-                      __p.stroke(0, 0, 0, 110);
-                      __p.strokeWeight(3);
-                      arcAlign(__p.CENTER);
-                      arcSize(26);
-                      arcText("?", x + 40, displayY(y) + 22);
-                      __p.strokeWeight(1.5);
-                      arcSize(8);
-                      arcText("Coming soon", x + 40, displayY(y) + 42);
-                      if (skins[j].owned) {
-                        equipButton(x, displayY(y + 60), 80, skins[j].id, j);
-                      } else {
-                        buyButton(x, displayY(y + 60), 80, skins[j], j);
-                      }
-                      count++;
-                      continue;
                     }
 
                     // --- THE OPTIMIZATION BLOWOUT ---
@@ -48058,6 +48406,8 @@ function program() {
   var MP_COLOR_NAMES = ["Red", "Blue", "Yellow", "Green", "Orange", "Purple", "Pink", "Cyan"];
   var MP_BASE_SKINS = {
     0: true,
+    23: true, // [v1.1] Mustachioed Dash
+    24: true, // [v1.1] Party Dash
     2: true,
     4: true,
     8: true,
