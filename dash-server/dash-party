@@ -5,6 +5,8 @@
 #   dash-party errors     just the problems
 #   dash-party keys       the admin keys for /kick and /ban (keep private!)
 #   dash-party bans       who is banned
+#   dash-party history    the last 50 parties: who made them, who came and went
+#   dash-party history N  everything that happened in party number N
 #   dash-party unban NAME let someone back in
 #   dash-party restart    restart the server and the tunnel
 #   dash-party fix        run the watchdog's checks and fixes now
@@ -50,7 +52,55 @@ dashboard() {
   local errs; errs="$(journalctl -u dash-party -u dash-tunnel --since '-6h' -p err --no-pager -q -o short 2>/dev/null | tail -n 5)"
   if [ -n "$errs" ]; then printf '%s\n' "$errs" | cut -c1-150 | sed 's/^/  /'; else echo "  ${G}none in the last 6 hours${N}"; fi
   echo
-  echo "${D}dash-party log | errors | keys | bans | unban NAME | restart | fix | update${N}"
+  echo "${D}dash-party log | errors | history | keys | bans | unban NAME | restart | fix | update${N}"
+}
+
+# the last 50 parties, from the server's history.json (newest first)
+HISTORY_JQ=$(cat <<'JQ'
+def dur: (. / 1000 | floor) as $s | if $s < 60 then "\($s)s" elif $s < 3600 then "\($s / 60 | floor)m" elif $s < 86400 then "\($s / 3600 | floor)h \($s % 3600 / 60 | floor)m" else "\($s / 86400 | floor)d \($s % 86400 / 3600 | floor)h" end;
+def tm: . / 1000 | floor | strflocaltime("%a %b %d %H:%M");
+def clock: . / 1000 | floor | strflocaltime("%b %d %H:%M:%S");
+def plural($w): if . == 1 then "1 \($w)" else "\(.) \($w)s" end;
+def what: {made: "made the party", join: "joined", leave: "left", start: "started playing", stop: "back to the lobby",
+  wrongpass: "wrong passcode", full: "turned away (full)", banned: "turned away (banned)", kick: "kicked", ban: "banned", end: "party ended"}[.kind] // .kind;
+def summary($i):
+  . as $r | (if .ended > 0 then .ended else now * 1000 end) as $end |
+  ([.events[] | select(.kind == "leave")] | length) as $left |
+  "\($B)\($i + 1 | tostring | if length < 2 then " " + . else . end). \(.name)\($N)  by \($B)\(.host)\($N)  " +
+  (if .ended > 0 then "\($D)closed\($N)" else "\($G)open, \(.n)/\(.max) now\($N)" end) +
+  (if .priv then "  \($Y)private\($N)" else "" end) + "  \($D)#\(.id)\($N)\n" +
+  "    \(.made | tm), up for \($B)\($end - .made | dur)\($N), most at once \(.peak)/\(.max), playing \(.playMs | dur)\n" +
+  "    " + (if (.players | length) > 0 then "joined: \(.players | join(", "))" + (if $left > 0 then "  \($D)(\($left) left)\($N)" else "" end) else "\($D)nobody joined\($N)" end) + "\n" +
+  ([ (if .tries > 0 then (.tries | plural("join attempt")) else empty end),
+     (if .wrongPass > 0 then (.wrongPass | plural("wrong passcode")) else empty end),
+     (if .full > 0 then "\(.full) turned away (full)" else empty end),
+     (if .bannedTries > 0 then "\($R)\(.bannedTries) banned player tried\($N)" else empty end),
+     (if .kicks > 0 then "\($Y)\(.kicks | plural("kick"))\($N)" else empty end),
+     (if .bans > 0 then "\($R)\(.bans | plural("ban"))\($N)" else empty end)
+   ] | if length > 0 then "    \(join(", "))\n" else "" end) +
+  (if .ended > 0 then "    \($D)ended: \(.end), \(.ended | tm)\($N)\n" else "" end);
+def detail($i):
+  summary($i) + "    \($D)host address id: \(.hostId)  (same id = same internet connection)\($N)\n\n" +
+  (if (.trimmed // 0) > 0 then "    \($D)(\(.trimmed) older events not kept)\($N)\n" else "" end) +
+  ([.events[] | "    \(.t | clock)  \(what | . + (" " * ([22 - length, 1] | max)))\(.name)"] | join("\n")) + "\n";
+.rooms as $rooms |
+if $pick == "" then
+  "\($B)Last \($rooms | length) parties\($N) \($D)(newest first. dash-party history NUMBER for the full timeline)\($N)\n",
+  ($rooms | to_entries[] | .key as $k | .value | summary($k))
+else
+  ($pick | tonumber - 1) as $i |
+  if $i < 0 or $i >= ($rooms | length) then "There's no party number \($pick). There are \($rooms | length)." else ($rooms[$i] | detail($i)) end
+end
+JQ
+)
+history() {
+  local pick="${1:-}" h
+  if [ -n "$pick" ] && ! [[ "$pick" =~ ^[0-9]+$ ]]; then echo "Use: dash-party history  or  dash-party history NUMBER"; exit 1; fi
+  h="$(S cat "$DATA/history.json" 2>/dev/null)"
+  if [ -z "$h" ]; then echo "No party history yet. It starts filling in once someone makes a party."; exit 0; fi
+  local out
+  out="$(printf '%s' "$h" | jq -r --arg B "$B" --arg D "$D" --arg R "$R" --arg G "$G" --arg Y "$Y" --arg N "$N" --arg pick "$pick" "$HISTORY_JQ")" || { echo "${R}Couldn't read the party history.${N}"; exit 1; }
+  if [ -t 1 ] && [ -z "$pick" ]; then printf '%s\n' "$out" | less -RFX; else printf '%s\n' "$out"; fi
 }
 
 case "${1:-}" in
@@ -65,6 +115,7 @@ case "${1:-}" in
   keys)
     echo "${Y}${B}Keep these private.${N} Give Kineto his key in a private message. Never post them."
     echo; S cat "$ETC/admin-keys.txt" ;;
+  history) history "${2:-}" ;;
   bans) S cat "$DATA/bans.json" 2>/dev/null | jq -r '.[] | "\(.at)  \(.name)  (by \(.by))"' 2>/dev/null || echo "Nobody is banned." ;;
   unban)
     [ -z "${2:-}" ] && { echo "Use: dash-party unban NAME"; exit 1; }
@@ -73,5 +124,5 @@ case "${1:-}" in
   restart) S systemctl restart dash-party dash-tunnel && echo "${G}Restarted.${N}" ;;
   fix) S /opt/dash-party/dash-watchdog; echo "Done. $(S tail -n 3 "$DATA/watchdog.log")" ;;
   update) curl -fsSL "https://raw.githubusercontent.com/ActuallyDigitsofpi314159/Dash-Parkour/main/dash-server/setup.sh" | bash ;;
-  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

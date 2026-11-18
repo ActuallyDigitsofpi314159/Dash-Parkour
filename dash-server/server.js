@@ -126,7 +126,7 @@ const adminTries = new Map(); // wrong admin keys: at most 5 a minute per addres
 // ---------------- tidy up ----------------
 setInterval(() => {
   const now = Date.now();
-  for (const [pid, p] of parties) if (now - p.beat > PARTY_TTL) dropParty(pid);
+  for (const [pid, p] of parties) if (now - p.beat > PARTY_TTL) dropParty(pid, "host stopped answering");
   for (const [rid, r] of requests) if (now - r.seen > REQUEST_TTL || !parties.has(r.party)) requests.delete(rid);
   for (const [ip, h] of hits) if (now - h.t > 60000) hits.delete(ip);
   for (const [ip, t] of adminTries) if (now - t.t > 60000) adminTries.delete(ip);
@@ -138,9 +138,89 @@ setInterval(() => {
   } catch (e) {}
 }, 10000).unref();
 
-function dropParty(pid) {
+// ---------------- room history (dash-party history) ----------------
+// The last 50 parties, open and closed, with who made them, who came and went
+// and how long they lasted. Kept in DATA_DIR/history.json so a restart keeps it.
+const HISTORY_FILE = path.join(DATA_DIR, "history.json");
+const HISTORY_MAX = 50;
+const EVENTS_MAX = 80; // timeline entries kept per party
+let history = []; // finished parties, newest first
+{
+  const old = readJson(HISTORY_FILE, null);
+  if (old && Array.isArray(old.rooms)) {
+    // parties still open when the server stopped ended with it
+    history = old.rooms.slice(0, HISTORY_MAX).map((h) => (h.ended ? h : Object.assign(h, { ended: old.at || Date.now(), end: "server restarted", n: 0 })));
+  }
+}
+let historyDirty = true;
+function hEvent(p, kind, name) {
+  const h = p.hist;
+  h.events.push({ t: Date.now(), kind, name: name || "" });
+  if (h.events.length > EVENTS_MAX) {
+    h.events.splice(1, 1); // keep the first entry ("made") and the newest ones
+    h.trimmed = (h.trimmed || 0) + 1;
+  }
+  historyDirty = true;
+}
+function newHistory(p, ip) {
+  p.hist = { id: p.id, name: p.name, host: p.host, hostId: ipKey(ip).slice(0, 8), priv: p.priv, max: p.max, made: p.made, ended: 0, end: "", n: 1, peak: 1, playMs: 0, players: [], tries: 0, wrongPass: 0, full: 0, bannedTries: 0, kicks: 0, bans: 0, events: [] };
+  p.wasPlaying = false;
+  hEvent(p, "made", p.host);
+}
+// the host's check-in: who joined and left since the last one
+function hRoster(p, roster) {
+  const h = p.hist;
+  const key = (x) => x.rid || "slot" + x.slot + ":" + x.name;
+  const before = new Map((p.lastRoster || []).map((x) => [key(x), x]));
+  const now = new Map(roster.map((x) => [key(x), x]));
+  for (const [k, x] of now) {
+    if (before.has(k)) continue;
+    hEvent(p, "join", x.name);
+    if (x.name && !h.players.includes(x.name) && h.players.length < 40) h.players.push(x.name);
+  }
+  for (const [k, x] of before) if (!now.has(k)) hEvent(p, "leave", x.name);
+  p.lastRoster = roster;
+}
+function hBeat(p, now) {
+  const h = p.hist;
+  if (p.playing && p.lastBeat) h.playMs += Math.min(now - p.lastBeat, PARTY_TTL);
+  if (p.playing !== p.wasPlaying) hEvent(p, p.playing ? "start" : "stop", "");
+  p.wasPlaying = p.playing;
+  p.lastBeat = now;
+  if (h.n !== p.n) historyDirty = true;
+  h.n = p.n;
+  h.peak = Math.max(h.peak, p.n);
+}
+function writeHistory() {
+  if (!historyDirty) return;
+  historyDirty = false;
+  const open = [...parties.values()].sort((a, b) => b.made - a.made).map((p) => p.hist);
+  try {
+    writeJson(HISTORY_FILE, { at: Date.now(), rooms: open.concat(history).slice(0, HISTORY_MAX) });
+  } catch (e) {}
+}
+setInterval(writeHistory, 5000).unref();
+
+function dropParty(pid, why) {
+  const p = parties.get(pid);
   parties.delete(pid);
   for (const [rid, r] of requests) if (r.party === pid) requests.delete(rid);
+  if (p && p.hist) {
+    p.hist.ended = Date.now();
+    p.hist.end = why || "closed";
+    hEvent(p, "end", p.hist.end);
+    history.unshift(p.hist);
+    if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+  }
+}
+// save the history on a normal stop (systemctl stop / restart)
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, () => {
+    for (const pid of [...parties.keys()]) dropParty(pid, "server restarted");
+    historyDirty = true;
+    writeHistory();
+    process.exit(0);
+  });
 }
 const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max: p.max, playing: p.playing, host: p.host });
 
@@ -368,6 +448,7 @@ async function handle(req, res) {
     const max = Math.max(2, Math.min(8, Math.round(Number(body.max) || 4)));
     const p = { id: id(6), token: id(18), name, priv, salt: id(9), pass: "", max, n: 1, playing: false, host: clean(body.host, 16) || "Host", hostIp: ip, hostDev: bdev, roster: [], kicks: [], made: Date.now(), beat: Date.now() };
     p.pass = priv ? hashPass(p.salt, pass) : "";
+    newHistory(p, ip);
     parties.set(p.id, p);
     stats.made++;
     log("party made", p.id, JSON.stringify(p.name), priv ? "(private)" : "");
@@ -381,14 +462,28 @@ async function handle(req, res) {
   if (!p) return fail(res, 404, action === "join" ? "That party has closed." : "That party is no longer listed.");
 
   if (action === "join") {
-    if (isBanned(ip, bdev)) return fail(res, 403, "You can't join multiplayer games right now.", { banned: true });
-    if (p.priv && !sameText(hashPass(p.salt, String(body.pass || "").slice(0, 24)), p.pass)) return fail(res, 403, "Wrong passcode.");
+    const jname = clean(body.name, 16) || "Player";
+    p.hist.tries++;
+    if (isBanned(ip, bdev)) {
+      p.hist.bannedTries++;
+      hEvent(p, "banned", jname);
+      return fail(res, 403, "You can't join multiplayer games right now.", { banned: true });
+    }
+    if (p.priv && !sameText(hashPass(p.salt, String(body.pass || "").slice(0, 24)), p.pass)) {
+      p.hist.wrongPass++;
+      hEvent(p, "wrongpass", jname);
+      return fail(res, 403, "Wrong passcode.");
+    }
     let waiting = 0;
     for (const r of requests.values()) if (r.party === p.id && !r.done) waiting++;
-    if (p.n >= p.max) return fail(res, 409, "That party is full.");
+    if (p.n >= p.max) {
+      p.hist.full++;
+      hEvent(p, "full", jname);
+      return fail(res, 409, "That party is full.");
+    }
     if (waiting >= 8) return fail(res, 429, "Lots of players are joining this party right now. Try again in a moment.");
     const rid = id(12);
-    requests.set(rid, { rid, party: p.id, name: clean(body.name, 16) || "Player", ip, dev: bdev, offer: "", answer: "", given: false, done: false, seen: Date.now() });
+    requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, offer: "", answer: "", given: false, done: false, seen: Date.now() });
     stats.joins++;
     return send(res, 200, { rid });
   }
@@ -397,13 +492,13 @@ async function handle(req, res) {
   if (!sameText(body.token || "", p.token)) return fail(res, 403, "Not your party.");
 
   if (action === "close") {
-    dropParty(p.id);
+    dropParty(p.id, "host closed it");
     log("party closed", p.id);
     return send(res, 200, { ok: true });
   }
   if (action === "beat") {
     if (p.modClosed || isBanned(p.hostIp, p.hostDev)) {
-      dropParty(p.id);
+      dropParty(p.id, "closed by a moderator");
       return fail(res, 403, "A moderator closed this party.", { closed: true });
     }
     p.beat = Date.now();
@@ -412,7 +507,9 @@ async function handle(req, res) {
     // who is in the party: [{ slot, name, rid }] (rid = how they joined)
     if (Array.isArray(body.roster)) {
       p.roster = body.roster.slice(0, 8).map((x) => ({ slot: Math.round(Number(x && x.slot)) || 0, name: clean(x && x.name, 16), rid: String((x && x.rid) || "").slice(0, 40) }));
+      hRoster(p, p.roster);
     }
+    hBeat(p, p.beat);
     const out = { requests: [], answers: [], kicks: p.kicks.splice(0) };
     for (const r of requests.values()) {
       if (r.party !== p.id || r.done) continue;
@@ -476,7 +573,12 @@ function adminAction(res, who, body) {
     bans.push({ id: id(5), name: found.name, ips: ipList.filter(Boolean).map(ipKey), devs: devList.filter(Boolean), at: new Date().toISOString(), by: who.name });
     writeJson(BANS_FILE, bans);
     stats.bans++;
-  } else stats.kicks++;
+    p.hist.bans++;
+  } else {
+    stats.kicks++;
+    p.hist.kicks++;
+  }
+  hEvent(p, action, found.name + " (by " + clean(who.name, 24) + ")");
   log("ADMIN", who.name, action, JSON.stringify(found.name), "in", p.id);
   return send(res, 200, { ok: true, text: (action === "ban" ? "Banned " : "Kicked ") + found.name + (action === "ban" ? " from all multiplayer games." : ".") });
 }

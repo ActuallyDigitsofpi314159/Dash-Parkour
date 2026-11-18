@@ -92,6 +92,8 @@ Other commands:
 | `dash-party log` | everything as it happens |
 | `dash-party errors` | just the problems |
 | `dash-party keys` | the admin keys for /kick and /ban |
+| `dash-party history` | the last 50 parties: who made them, how long they were up, who joined and left, wrong passcodes, kicks and bans |
+| `dash-party history N` | the full timeline of party number N from that list |
 | `dash-party bans` / `dash-party unban NAME` | see bans, let someone back in |
 | `dash-party restart` | restart the server and the tunnel |
 | `dash-party fix` | run the watchdog's checks and fixes now |
@@ -210,7 +212,7 @@ can't leak them. Don't copy them into it.
 |---|---|
 | `/opt/dash-party/server.js` | the server |
 | `/opt/dash-party/repo/` | your GitHub repo (the website) |
-| `/var/lib/dash-party/` | admin key hashes, bans, status, watchdog log |
+| `/var/lib/dash-party/` | admin key hashes, bans, status, party history, watchdog log |
 | `/etc/dash-party/` | tunnel settings and credentials, admin keys copy |
 | `/etc/systemd/system/dash-party.service`, `dash-tunnel.service`, `dash-watchdog.timer` | what starts at boot |
 
