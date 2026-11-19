@@ -143,7 +143,12 @@ sudo mkdir -p "$APP" "$DATA" "$ETC"
 sudo chown "$SVC_USER:$SVC_USER" "$DATA"; sudo chmod 700 "$DATA"
 sudo chown root:"$SVC_USER" "$ETC"; sudo chmod 750 "$ETC"
 if [ -d "$APP/repo/.git" ]; then
-  if try 3 "Updating from GitHub" sudo -u "$SVC_USER" git -C "$APP/repo" pull --ff-only; then ok "Updated from GitHub"; else warn "Couldn't update from GitHub (using the copy already on the Pi)"; fi
+  # (fetch + reset, like the watchdog: always matches GitHub exactly, even when
+  # "git pull --ff-only" would refuse)
+  if try 3 "Updating from GitHub" sudo -u "$SVC_USER" git -C "$APP/repo" fetch -q --depth 1 origin "$REPO_BRANCH" &&
+     sudo -u "$SVC_USER" git -C "$APP/repo" reset -q --hard FETCH_HEAD >>"$LOG" 2>&1; then
+    ok "Updated from GitHub ($(sudo -u "$SVC_USER" git -C "$APP/repo" rev-parse --short HEAD 2>/dev/null))"
+  else warn "Couldn't update from GitHub (using the copy already on the Pi)"; fi
 else
   sudo rm -rf "$APP/repo"; sudo mkdir -p "$APP/repo"; sudo chown "$SVC_USER:$SVC_USER" "$APP/repo"
   if try 5 "Downloading from GitHub" sudo -u "$SVC_USER" git clone --depth 1 -b "$REPO_BRANCH" "$REPO_URL" "$APP/repo"; then ok "Downloaded $REPO_URL"; else bad "Couldn't download the repo from GitHub"; fi
@@ -311,7 +316,10 @@ AccuracySec=15
 WantedBy=timers.target
 EOF
 sudo systemctl daemon-reload
-sudo systemctl enable --now dash-party.service >>"$LOG" 2>&1 && ok "Party server running" || bad "The party server didn't start (see: dash-party log)"
+# (restart, not just "enable --now": an already-running server would keep the
+# old server.js in memory, so updates wouldn't take effect)
+sudo systemctl enable dash-party.service >>"$LOG" 2>&1
+sudo systemctl restart dash-party.service >>"$LOG" 2>&1 && ok "Party server running (newest version)" || bad "The party server didn't start (see: dash-party log)"
 if sudo test -s "$ETC/tunnel.json"; then
   sudo systemctl enable dash-tunnel.service >>"$LOG" 2>&1
   sudo systemctl restart dash-tunnel.service >>"$LOG" 2>&1 && ok "Tunnel running" || bad "The tunnel didn't start (see: dash-party log)"
