@@ -95,6 +95,7 @@ Other commands:
 | `dash-party history` | the last 50 parties: who made them, how long they were up, who joined and left, wrong passcodes, kicks and bans |
 | `dash-party history N` | the full timeline of party number N from that list |
 | `dash-party bans` / `dash-party unban NAME` | see bans, let someone back in |
+| `dash-party notify on` | a phone notice (ntfy app) whenever someone makes a party; it prints the topic to subscribe to. `notify test` sends one, `notify off` stops them |
 | `dash-party restart` | restart the server and the tunnel |
 | `dash-party fix` | run the watchdog's checks and fixes now |
 | `dash-party update` | get the newest setup from GitHub and run it again |

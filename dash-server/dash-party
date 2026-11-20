@@ -8,6 +8,7 @@
 #   dash-party history    the last 50 parties: who made them, who came and went
 #   dash-party history N  everything that happened in party number N
 #   dash-party unban NAME let someone back in
+#   dash-party notify     phone notices when a party is made (on | off | test)
 #   dash-party restart    restart the server and the tunnel
 #   dash-party fix        run the watchdog's checks and fixes now
 #   dash-party update     get the newest version from GitHub and set it up again
@@ -52,7 +53,7 @@ dashboard() {
   local errs; errs="$(journalctl -u dash-party -u dash-tunnel --since '-6h' -p err --no-pager -q -o short 2>/dev/null | tail -n 5)"
   if [ -n "$errs" ]; then printf '%s\n' "$errs" | cut -c1-150 | sed 's/^/  /'; else echo "  ${G}none in the last 6 hours${N}"; fi
   echo
-  echo "${D}dash-party log | errors | history | keys | bans | unban NAME | restart | fix | update${N}"
+  echo "${D}dash-party log | errors | history | keys | bans | unban NAME | notify | restart | fix | update${N}"
 }
 
 # the last 50 parties, from the server's history.json (newest first)
@@ -62,7 +63,7 @@ def tm: . / 1000 | floor | strflocaltime("%a %b %d %H:%M");
 def clock: . / 1000 | floor | strflocaltime("%b %d %H:%M:%S");
 def plural($w): if . == 1 then "1 \($w)" else "\(.) \($w)s" end;
 def what: {made: "made the party", join: "joined", leave: "left", start: "started playing", stop: "back to the lobby",
-  wrongpass: "wrong passcode", full: "turned away (full)", banned: "turned away (banned)", kick: "kicked", ban: "banned", end: "party ended"}[.kind] // .kind;
+  adminjoin: "moderator joined", wrongpass: "wrong passcode", full: "turned away (full)", banned: "turned away (banned)", kick: "kicked", ban: "banned", end: "party ended"}[.kind] // .kind;
 def summary($i):
   . as $r | (if .ended > 0 then .ended else now * 1000 end) as $end |
   ([.events[] | select(.kind == "leave")] | length) as $left |
@@ -103,6 +104,44 @@ history() {
   if [ -t 1 ] && [ -z "$pick" ]; then printf '%s\n' "$out" | less -RFX; else printf '%s\n' "$out"; fi
 }
 
+# [v1.3] phone notices (ntfy) when someone makes a party
+notify() {
+  local f="$DATA/notify.json" cur topic srv
+  cur="$(S cat "$f" 2>/dev/null)"
+  topic="$(printf '%s' "$cur" | jq -r '.topic // empty' 2>/dev/null)"
+  srv="$(printf '%s' "$cur" | jq -r '.server // "https://ntfy.sh"' 2>/dev/null)"; [ -z "$srv" ] && srv="https://ntfy.sh"
+  case "${1:-}" in
+    on)
+      if [ -z "$topic" ]; then topic="dash-party-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"; fi
+      printf '{"topic":"%s","server":"%s"}\n' "$topic" "$srv" | S tee "$f.tmp" >/dev/null &&
+        S sh -c "mv '$f.tmp' '$f' && chown dashparty:dashparty '$f' && chmod 600 '$f'" || { echo "${R}Couldn't save the setting.${N}"; exit 1; }
+      echo "${G}Party notices are on.${N} (the server picks this up within 5 seconds)"
+      echo
+      echo "On your phone:"
+      echo "  1. Install the ${B}ntfy${N} app (App Store or Google Play)."
+      echo "  2. Tap ${B}+${N} (Subscribe to topic) and type this topic exactly:"
+      echo
+      echo "       ${B}${C}$topic${N}"
+      echo
+      echo "  3. Run ${B}dash-party notify test${N} to check it works."
+      echo
+      echo "${D}Keep the topic private: anyone who knows it gets the notices too.${N}" ;;
+    off)
+      S rm -f "$f" && echo "Party notices are off." ;;
+    test)
+      [ -z "$topic" ] && { echo "Notices are off. Turn them on with: dash-party notify on"; exit 1; }
+      if curl -fsS -m 10 -H "Title: DASH party server" -H "Tags: video_game" -d "Test notice: you'll get one like this when someone makes a party." "$srv/$topic" >/dev/null; then
+        echo "${G}Sent.${N} It should be on your phone in a few seconds."
+      else
+        echo "${R}Couldn't reach $srv.${N}"; exit 1
+      fi ;;
+    "")
+      if [ -n "$topic" ]; then echo "Party notices are ${G}on${N}. Topic: ${B}$topic${N} on $srv"; echo "${D}dash-party notify test | off${N}"
+      else echo "Party notices are off. Turn them on with: ${B}dash-party notify on${N}"; fi ;;
+    *) echo "Use: dash-party notify [on | off | test]"; exit 1 ;;
+  esac
+}
+
 case "${1:-}" in
   ""|status)
     S true >/dev/null
@@ -116,6 +155,7 @@ case "${1:-}" in
     echo "${Y}${B}Keep these private.${N} Give Kineto his key in a private message. Never post them."
     echo; S cat "$ETC/admin-keys.txt" ;;
   history) history "${2:-}" ;;
+  notify) notify "${2:-}" ;;
   bans) S cat "$DATA/bans.json" 2>/dev/null | jq -r '.[] | "\(.at)  \(.name)  (by \(.by))"' 2>/dev/null || echo "Nobody is banned." ;;
   unban)
     [ -z "${2:-}" ] && { echo "Use: dash-party unban NAME"; exit 1; }
@@ -124,5 +164,5 @@ case "${1:-}" in
   restart) S systemctl restart dash-party dash-tunnel && echo "${G}Restarted.${N}" ;;
   fix) S /opt/dash-party/dash-watchdog; echo "Done. $(S tail -n 3 "$DATA/watchdog.log")" ;;
   update) curl -fsSL "https://raw.githubusercontent.com/ActuallyDigitsofpi314159/Dash-Parkour/main/dash-server/setup.sh" | bash ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

@@ -34,7 +34,7 @@ const MAX_CODE = 6000;
 
 // [v1.1] The addresses, from the setup (or PARTY_HOST / SITE_DOMAIN). The party
 // address only shows a status page (and the API); the game is on the website,
-// at /dashparkour.
+// at /dash-parkour/ ([v1.3] it used to be /dashparkour, which still redirects).
 const SETUP_CONF = {};
 try {
   for (const line of fs.readFileSync(process.env.SETUP_CONF || "/etc/dash-party/setup.conf", "utf8").split("\n")) {
@@ -44,9 +44,14 @@ try {
 } catch (e) {}
 const SITE_DOMAIN = (process.env.SITE_DOMAIN || SETUP_CONF.DOMAIN || "digitsandkineto.com").toLowerCase();
 const PARTY_HOST = (process.env.PARTY_HOST || SETUP_CONF.PARTY_HOST || "party." + SITE_DOMAIN).toLowerCase();
-const GAME_PATH = "/dashparkour";
+const GAME_PATH = "/dash-parkour/";
+const OLD_GAME_PATH = "/dashparkour"; // [v1.3] old links still work (they redirect)
 // [v1.1] the full (non-Khan-Academy) build: no size cap and one loading screen fewer
 const GAME_FILES = ["dash-parkour.html", "dash-parkour.ka.html"];
+// [v1.3] up to 12 players in a party; moderators (admin keys) can join on top of that
+const MAX_PLAYERS = 12;
+const MAX_IN_PARTY = MAX_PLAYERS + 4;
+const LIVE_MS = 6000; // a joiner who hasn't asked for this long has stopped waiting
 
 const parties = new Map(); // id -> party
 const requests = new Map(); // rid -> join request
@@ -109,6 +114,66 @@ function adminFor(key) {
   const h = sha(String(key));
   for (const a of admins) if (a && a.hash && sameText(a.hash, h)) return a;
   return null;
+}
+// [v1.3] Same Wi-Fi: two players behind the same home connection share a public
+// address (IPv4), or the same /64 network (IPv6). Then the game links them with
+// local addresses, which works on networks that block the usual way.
+function netKey(ip) {
+  let s = String(ip || "").toLowerCase();
+  if (s.startsWith("::ffff:")) s = s.slice(7);
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(s)) return "4:" + s;
+  if (!s.includes(":")) return "";
+  // expand "::" and keep the first 4 groups
+  const [head, tail] = s.split("::");
+  const a = head ? head.split(":") : [];
+  const b = tail !== undefined && tail ? tail.split(":") : [];
+  const groups = tail === undefined ? a : a.concat(new Array(Math.max(0, 8 - a.length - b.length)).fill("0"), b);
+  return "6:" + groups.slice(0, 4).map((g) => parseInt(g || "0", 16)).join(":");
+}
+const sameNet = (a, b) => {
+  const x = netKey(a);
+  return !!x && x === netKey(b);
+};
+
+// ---------------- [v1.3] phone notice when a party is made (ntfy) ----------------
+// DATA_DIR/notify.json: { "topic": "...", "server": "https://ntfy.sh" } (made by
+// "dash-party notify on"). Subscribe to the same topic in the ntfy app.
+const NOTIFY_FILE = path.join(DATA_DIR, "notify.json");
+let notifyConf = readJson(NOTIFY_FILE, null);
+fs.watchFile(NOTIFY_FILE, { interval: 5000 }, () => {
+  notifyConf = readJson(NOTIFY_FILE, null);
+  log("notify settings reloaded:", notifyConf && notifyConf.topic ? "on" : "off");
+});
+const notified = new Map(); // host+party name -> time (a party listed again after a restart isn't news)
+function notifyParty(p) {
+  const c = notifyConf;
+  if (!c || !c.topic || !/^[\w-]{8,64}$/.test(c.topic)) return;
+  const now = Date.now();
+  for (const [k, t] of notified) if (now - t > 10 * 60 * 1000) notified.delete(k);
+  const k = ipKey(p.hostIp) + "\u0000" + p.name.toLowerCase();
+  if (notified.has(k)) return;
+  notified.set(k, now);
+  let u;
+  try {
+    u = new URL("/" + c.topic, c.server || "https://ntfy.sh");
+  } catch (e) {
+    return;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return;
+  const ascii = (s) => s.replace(/[^\x20-\x7e]/g, "?"); // headers must be plain text
+  const body = p.host + " made \"" + p.name + "\" (" + (p.priv ? "private" : "public") + ", up to " + p.max + " players). Open DASH Parkour > Multiplayer to join.";
+  const req = require(u.protocol === "https:" ? "https" : "http").request(u, {
+    method: "POST",
+    timeout: 8000,
+    headers: { Title: ascii("DASH party: " + p.name), Tags: "video_game", Click: "https://" + SITE_DOMAIN + GAME_PATH, "Content-Type": "text/plain; charset=utf-8", "Content-Length": Buffer.byteLength(body) },
+  });
+  req.on("response", (res) => {
+    if (res.statusCode >= 300) log("notify: ntfy said", res.statusCode);
+    res.resume();
+  });
+  req.on("timeout", () => req.destroy(new Error("timed out")));
+  req.on("error", (e) => log("notify: couldn't reach ntfy:", e.message));
+  req.end(body);
 }
 
 // ---------------- rate limit (requests per 10 s, per address) ----------------
@@ -364,8 +429,12 @@ async function handle(req, res) {
       res.writeHead(302, { Location: "https://" + SITE_DOMAIN + GAME_PATH, "Cache-Control": "no-store" });
       return res.end();
     }
-    // the website: the game at /dashparkour
-    if (p0.toLowerCase() === GAME_PATH) {
+    // the website: the game at /dash-parkour/ (old /dashparkour links redirect there)
+    if (p0.toLowerCase() === OLD_GAME_PATH) {
+      res.writeHead(301, { Location: GAME_PATH + url.search, "Cache-Control": "public, max-age=3600" });
+      return res.end();
+    }
+    if (p0.toLowerCase() === GAME_PATH.replace(/\/$/, "")) {
       const tryFile = (i) => {
         if (i >= GAME_FILES.length) return fail(res, 404, "The game isn't on the server yet.");
         const file = path.join(SITE_DIR, GAME_FILES[i]);
@@ -398,7 +467,9 @@ async function handle(req, res) {
     if (!r || !parties.has(r.party)) return send(res, 200, { state: "gone" });
     r.seen = Date.now();
     const p = parties.get(r.party);
-    return send(res, 200, r.offer ? { state: "offer", offer: r.offer } : { state: "waiting", playing: p.playing });
+    // [v1.3] same: on the host's Wi-Fi (the game then links them with local addresses)
+    // hostAway: the host's game hasn't checked in for a while (tab hidden, asleep...)
+    return send(res, 200, r.offer ? { state: "offer", offer: r.offer, same: r.same } : { state: "waiting", playing: p.playing, same: r.same, hostAway: Date.now() - p.beat > LIVE_MS });
   }
 
   if (req.method !== "POST") return fail(res, 404, "Not found.");
@@ -445,13 +516,14 @@ async function handle(req, res) {
     const priv = !!body.priv;
     const pass = String(body.pass || "").slice(0, 24);
     if (priv && !pass) return fail(res, 400, "A private party needs a passcode.");
-    const max = Math.max(2, Math.min(8, Math.round(Number(body.max) || 4)));
+    const max = Math.max(2, Math.min(MAX_PLAYERS, Math.round(Number(body.max) || 4)));
     const p = { id: id(6), token: id(18), name, priv, salt: id(9), pass: "", max, n: 1, playing: false, host: clean(body.host, 16) || "Host", hostIp: ip, hostDev: bdev, roster: [], kicks: [], made: Date.now(), beat: Date.now() };
     p.pass = priv ? hashPass(p.salt, pass) : "";
     newHistory(p, ip);
     parties.set(p.id, p);
     stats.made++;
     log("party made", p.id, JSON.stringify(p.name), priv ? "(private)" : "");
+    notifyParty(p);
     return send(res, 200, { id: p.id, token: p.token });
   }
 
@@ -464,6 +536,29 @@ async function handle(req, res) {
   if (action === "join") {
     const jname = clean(body.name, 16) || "Player";
     p.hist.tries++;
+    let waiting = 0;
+    for (const r of requests.values()) if (r.party === p.id && !r.done) waiting++;
+    // [v1.3] moderators (Digitsofpi and Kineto) join any party at any time: private,
+    // full or not. Their admin key is checked here, so nobody else can.
+    if (body.key) {
+      const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+      if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+      const who = adminFor(body.key);
+      if (!who) {
+        t.n++;
+        adminTries.set(ip, t);
+        log("ADMIN: wrong key (join) from", ipKey(ip).slice(0, 8));
+        return fail(res, 403, "That admin key isn't right.", { badKey: true });
+      }
+      if (p.n >= MAX_IN_PARTY) return fail(res, 409, "That party is completely full.");
+      if (waiting >= MAX_IN_PARTY) return fail(res, 429, "Lots of players are joining this party right now. Try again in a moment.");
+      const rid = id(12);
+      requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: true, same: sameNet(ip, p.hostIp), offer: "", answer: "", given: false, done: false, seen: Date.now() });
+      stats.joins++;
+      hEvent(p, "adminjoin", jname + " (" + clean(who.name, 24) + ")");
+      log("ADMIN", who.name, "joining", p.id);
+      return send(res, 200, { rid });
+    }
     if (isBanned(ip, bdev)) {
       p.hist.bannedTries++;
       hEvent(p, "banned", jname);
@@ -474,16 +569,14 @@ async function handle(req, res) {
       hEvent(p, "wrongpass", jname);
       return fail(res, 403, "Wrong passcode.");
     }
-    let waiting = 0;
-    for (const r of requests.values()) if (r.party === p.id && !r.done) waiting++;
     if (p.n >= p.max) {
       p.hist.full++;
       hEvent(p, "full", jname);
       return fail(res, 409, "That party is full.");
     }
-    if (waiting >= 8) return fail(res, 429, "Lots of players are joining this party right now. Try again in a moment.");
+    if (waiting >= MAX_PLAYERS) return fail(res, 429, "Lots of players are joining this party right now. Try again in a moment.");
     const rid = id(12);
-    requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, offer: "", answer: "", given: false, done: false, seen: Date.now() });
+    requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: false, same: sameNet(ip, p.hostIp), offer: "", answer: "", given: false, done: false, seen: Date.now() });
     stats.joins++;
     return send(res, 200, { rid });
   }
@@ -502,19 +595,24 @@ async function handle(req, res) {
       return fail(res, 403, "A moderator closed this party.", { closed: true });
     }
     p.beat = Date.now();
-    p.n = Math.max(1, Math.min(p.max, Math.round(Number(body.n) || 1)));
+    p.n = Math.max(1, Math.min(MAX_IN_PARTY, Math.round(Number(body.n) || 1)));
     p.playing = !!body.playing;
     // who is in the party: [{ slot, name, rid }] (rid = how they joined)
     if (Array.isArray(body.roster)) {
-      p.roster = body.roster.slice(0, 8).map((x) => ({ slot: Math.round(Number(x && x.slot)) || 0, name: clean(x && x.name, 16), rid: String((x && x.rid) || "").slice(0, 40) }));
+      p.roster = body.roster.slice(0, MAX_IN_PARTY).map((x) => ({ slot: Math.round(Number(x && x.slot)) || 0, name: clean(x && x.name, 16), rid: String((x && x.rid) || "").slice(0, 40) }));
       hRoster(p, p.roster);
     }
     hBeat(p, p.beat);
-    const out = { requests: [], answers: [], kicks: p.kicks.splice(0) };
+    // [v1.3] live: the joiners still waiting, so the host's game drops the ones who left
+    // at once instead of waiting on them (that's what left people stuck at "waiting
+    // for the host"). One who has the host's code is busy making a reply, not asking.
+    const now = Date.now();
+    const out = { requests: [], answers: [], kicks: p.kicks.splice(0), live: [] };
     for (const r of requests.values()) {
       if (r.party !== p.id || r.done) continue;
-      if (isBanned(r.ip, r.dev)) continue;
-      if (!r.offer) out.requests.push({ rid: r.rid, name: r.name });
+      if (!r.admin && isBanned(r.ip, r.dev)) continue;
+      if (now - r.seen < LIVE_MS || (r.offer && now - r.offerAt < 25000)) out.live.push(r.rid);
+      if (!r.offer) out.requests.push({ rid: r.rid, name: r.name, admin: !!r.admin, same: !!r.same });
       else if (r.answer && !r.given) {
         out.answers.push({ rid: r.rid, code: r.answer });
         r.given = true;
@@ -530,6 +628,7 @@ async function handle(req, res) {
     const code = String(body.code || "");
     if (!code || code.length > MAX_CODE) return fail(res, 400, "Bad connection code.");
     r.offer = code;
+    r.offerAt = Date.now();
     return send(res, 200, { ok: true });
   }
   return fail(res, 404, "Not found.");
