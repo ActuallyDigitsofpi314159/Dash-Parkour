@@ -61,13 +61,14 @@ const stats = { made: 0, joins: 0, kicks: 0, bans: 0, errors: 0 };
 const id = (bytes) => crypto.randomBytes(bytes).toString("base64").replace(/[+/=]/g, (c) => ({ "+": "-", "/": "_", "=": "" }[c]));
 const sha = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
 const hashPass = (salt, pass) => sha(salt + "\u0000" + pass);
-const clean = (s, max) => String(s == null ? "" : s).replace(/[\u0000-\u001f<>"'\\`]/g, "").replace(/\s+/g, " ").trim().slice(0, max);
+// [v1.4] ' is kept: "Kineto's party" used to be listed as "Kinetos party"
+const clean = (s, max) => String(s == null ? "" : s).replace(/[\u0000-\u001f<>"\\`]/g, "").replace(/\s+/g, " ").trim().slice(0, max);
 const cleanDev = (s) => String(s || "").replace(/[^\w-]/g, "").slice(0, 40);
 const sameText = (a, b) => {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
-const norm = (n) => clean(n, 16).toLowerCase();
+const norm = (n) => clean(String(n == null ? "" : n).replace(/[\u2018\u2019]/g, "'"), 16).toLowerCase(); // (either apostrophe matches)
 
 function log(...a) {
   if (!process.env.QUIET) console.log(new Date().toISOString(), ...a);
@@ -110,7 +111,7 @@ function isBanned(ip, dev) {
   return null;
 }
 function adminFor(key) {
-  if (!key || String(key).length < 20) return null;
+  if (!key || String(key).length < 8) return null; // [v1.4] keys can be chosen (dash-party setkey): 8+ characters
   const h = sha(String(key));
   for (const a of admins) if (a && a.hash && sameText(a.hash, h)) return a;
   return null;
@@ -160,7 +161,7 @@ function notifyParty(p) {
     return;
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return;
-  const ascii = (s) => s.replace(/[^\x20-\x7e]/g, "?"); // headers must be plain text
+  const ascii = (s) => s.replace(/[\u2018\u2019]/g, "'").replace(/[^\x20-\x7e]/g, "?"); // headers must be plain text
   const body = p.host + " made \"" + p.name + "\" (" + (p.priv ? "private" : "public") + ", up to " + p.max + " players). Open DASH Parkour > Multiplayer to join.";
   const req = require(u.protocol === "https:" ? "https" : "http").request(u, {
     method: "POST",

@@ -183,7 +183,7 @@ Kineto:     $K2
 
 How to use: in a server-mode game, type /kick NAME or /ban NAME in chat (while
 signed in as your admin name). The first time, the game asks for your key.
-To make new keys: sudo rm $DATA/admins.json and run the setup again.
+To choose your own key: dash-party setkey digitsofpi (or kineto).
 EOF
   chmod 600 "$KEYFILE"; umask 022
   sudo install -m 600 -o root -g root "$KEYFILE" "$ETC/admin-keys.txt"

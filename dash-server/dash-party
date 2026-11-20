@@ -4,6 +4,7 @@
 #   dash-party log        everything as it happens (Ctrl+C to leave)
 #   dash-party errors     just the problems
 #   dash-party keys       the admin keys for /kick and /ban (keep private!)
+#   dash-party setkey NAME  choose your own admin key (NAME: digitsofpi or kineto)
 #   dash-party bans       who is banned
 #   dash-party history    the last 50 parties: who made them, who came and went
 #   dash-party history N  everything that happened in party number N
@@ -53,7 +54,7 @@ dashboard() {
   local errs; errs="$(journalctl -u dash-party -u dash-tunnel --since '-6h' -p err --no-pager -q -o short 2>/dev/null | tail -n 5)"
   if [ -n "$errs" ]; then printf '%s\n' "$errs" | cut -c1-150 | sed 's/^/  /'; else echo "  ${G}none in the last 6 hours${N}"; fi
   echo
-  echo "${D}dash-party log | errors | history | keys | bans | unban NAME | notify | restart | fix | update${N}"
+  echo "${D}dash-party log | errors | history | keys | setkey NAME | bans | unban NAME | notify | restart | fix | update${N}"
 }
 
 # the last 50 parties, from the server's history.json (newest first)
@@ -142,6 +143,36 @@ notify() {
   esac
 }
 
+# [v1.4] choose your own admin key instead of the long random one. Only its hash
+# is kept (in admins.json); the server picks up the change within a few seconds.
+setkey() {
+  local who label k1 k2 h tmp
+  who="$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')"
+  case "$who" in
+    digitsofpi) label=Digitsofpi ;;
+    kineto) label=Kineto ;;
+    *) echo "Use: dash-party setkey digitsofpi   (or: dash-party setkey kineto)"; exit 1 ;;
+  esac
+  echo "Choose the admin key for ${B}$label${N}: at least 8 characters, something you'll remember."
+  echo "${D}Spaces are ignored. Nothing shows while you type.${N}"
+  read -r -s -p "New key: " k1; echo
+  read -r -s -p "Type it again: " k2; echo
+  k1="$(printf '%s' "$k1" | tr -d '[:space:]')"; k2="$(printf '%s' "$k2" | tr -d '[:space:]')"
+  [ "$k1" = "$k2" ] || { echo "${R}Those don't match.${N} Nothing changed."; exit 1; }
+  [ "${#k1}" -ge 8 ] || { echo "${R}That's too short${N} (8 characters or more). Nothing changed."; exit 1; }
+  h="$(printf '%s' "$k1" | sha256sum | cut -d' ' -f1)"
+  tmp="$(mktemp)"
+  { S cat "$DATA/admins.json" 2>/dev/null || echo '[]'; } | jq --arg n "$who" --arg h "$h" \
+    'if any(.[]; .name == $n) then map(if .name == $n then .hash = $h else . end) else . + [{name: $n, hash: $h}] end' >"$tmp" \
+    || { rm -f "$tmp"; echo "${R}Couldn't read the admin list.${N} Nothing changed."; exit 1; }
+  S install -m 600 -o dashparty -g dashparty "$tmp" "$DATA/admins.json" || { rm -f "$tmp"; echo "${R}Couldn't save it.${N}"; exit 1; }
+  rm -f "$tmp"
+  # the old random key stops working: say so in the list dash-party keys shows
+  S sed -i -E "s/^$label:.*/$label: (chosen with dash-party setkey on $(date '+%Y-%m-%d'), not stored)/" "$ETC/admin-keys.txt" 2>/dev/null
+  echo "${G}Done.${N} $label's new key works within a few seconds. The game forgets the old"
+  echo "key the next time the server refuses it, then asks for the new one."
+}
+
 case "${1:-}" in
   ""|status)
     S true >/dev/null
@@ -154,6 +185,7 @@ case "${1:-}" in
   keys)
     echo "${Y}${B}Keep these private.${N} Give Kineto his key in a private message. Never post them."
     echo; S cat "$ETC/admin-keys.txt" ;;
+  setkey) setkey "${2:-}" ;;
   history) history "${2:-}" ;;
   notify) notify "${2:-}" ;;
   bans) S cat "$DATA/bans.json" 2>/dev/null | jq -r '.[] | "\(.at)  \(.name)  (by \(.by))"' 2>/dev/null || echo "Nobody is banned." ;;
