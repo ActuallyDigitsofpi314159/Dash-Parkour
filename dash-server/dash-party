@@ -8,6 +8,7 @@
 #   dash-party bans       who is banned
 #   dash-party history    the last 50 parties: who made them, who came and went
 #   dash-party history N  everything that happened in party number N
+#   dash-party stats      how the game is doing: players online, per day, peaks, busy hours
 #   dash-party unban NAME let someone back in
 #   dash-party notify     phone notices when a party is made (on | off | test)
 #   dash-party restart    restart the server and the tunnel
@@ -21,6 +22,33 @@ B=$'\e[1m'; D=$'\e[2m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; N=$'
 S() { sudo -n "$@" 2>/dev/null || sudo "$@"; }
 yes_no() { if [ "$1" = ok ]; then printf '%s●%s %s' "$G" "$N" "$2"; elif [ "$1" = warn ]; then printf '%s●%s %s' "$Y" "$N" "$2"; else printf '%s●%s %s' "$R" "$N" "$2"; fi; }
 ago() { local s=$(( $(date +%s) - ${1:-0} )); if [ "$s" -lt 120 ]; then echo "${s}s ago"; elif [ "$s" -lt 7200 ]; then echo "$((s / 60))m ago"; else echo "$((s / 3600))h ago"; fi; }
+
+# [v1.5] how the game is doing (every game on the website checks in, not only multiplayer)
+stats() {
+  local f="$DATA/stats.json" st
+  if ! S test -r "$f"; then echo "No stats yet: they start a minute after the server updates."; return; fi
+  st="$(S cat "$DATA/status.json" 2>/dev/null)"
+  echo "${B}${R}DASH${N}${B} PARKOUR: how the game is doing${N}"
+  echo
+  echo "  Playing right now:  ${B}$(echo "$st" | jq -r '.online.n // 0')${N}  ${D}($(echo "$st" | jq -r '.online.mp // 0') in multiplayer)${N}"
+  S cat "$f" | jq -r '
+    def when: if . > 0 then (./1000 | strflocaltime("%a %b %-d, %-I:%M %p")) else "never" end;
+    "  Most at once ever:  \u001b[1m\(.peak.n)\u001b[0m  (\(.peak.at | when))",
+    "  Most in multiplayer at once: \(.mpPeak.n)  (\(.mpPeak.at | when))",
+    "  Different players since \(.since/1000 | strflocaltime("%b %-d")): \u001b[1m\(.devices | length)\u001b[0m",
+    "",
+    "  Day          players  new  multiplayer  most at once  parties  joins",
+    (.days | to_entries | sort_by(.key) | .[-14:] | reverse[] |
+      "  \(.key)   \(.value.players | tostring | (" " * (7 - length)) + .)  \(.value.newPlayers | tostring | (" " * (3 - length)) + .)  \(.value.mpPlayers | tostring | (" " * (11 - length)) + .)  \(.value.peak | tostring | (" " * (12 - length)) + .)  \(.value.parties | tostring | (" " * (7 - length)) + .)  \(.value.joins | tostring | (" " * (5 - length)) + .)"),
+    "",
+    "  Busiest hours (average players online, Pi time):",
+    ( [range(0;24)] as $h | ([.hourSum, .hourN] | transpose | map(if .[1] > 0 then .[0] / .[1] else 0 end)) as $avg |
+      ($avg | max) as $m |
+      $h[] | . as $i | "   \(if $i < 10 then "0" else "" end)\($i):00  \("#" * (if $m > 0 then ($avg[$i] / $m * 40 | floor) else 0 end)) \($avg[$i] * 10 | round / 10)" )
+  '
+  echo
+  echo "${D}(Each device is counted by a random id the game makes; no names or addresses are kept.)${N}"
+}
 
 dashboard() {
   local st wd
@@ -41,6 +69,7 @@ dashboard() {
     parties="$(printf '%s' "$st" | jq -r .parties)"; players="$(printf '%s' "$st" | jq -r .players)"; up="$(printf '%s' "$st" | jq -r .up)"
     bans="$(printf '%s' "$st" | jq -r .bans)"; made="$(printf '%s' "$st" | jq -r .stats.made)"; joins="$(printf '%s' "$st" | jq -r .stats.joins)"
     echo "  ${B}$parties${N} parties now, ${B}$players${N} players   ${D}| since start: $made parties, $joins joins | up $((up / 3600))h $(((up % 3600) / 60))m | $bans banned${N}"
+    echo "  ${B}$(echo "$st" | jq -r '.online.n // 0')${N} playing DASH Parkour right now ${D}($(echo "$st" | jq -r '.online.mp // 0') in multiplayer, $(echo "$st" | jq -r '.online.game // 0') in a level) | dash-party stats for more${N}"
   else
     echo "  ${D}(no numbers yet)${N}"
   fi
@@ -187,6 +216,7 @@ case "${1:-}" in
     echo; S cat "$ETC/admin-keys.txt" ;;
   setkey) setkey "${2:-}" ;;
   history) history "${2:-}" ;;
+  stats) stats ;;
   notify) notify "${2:-}" ;;
   bans) S cat "$DATA/bans.json" 2>/dev/null | jq -r '.[] | "\(.at)  \(.name)  (by \(.by))"' 2>/dev/null || echo "Nobody is banned." ;;
   unban)

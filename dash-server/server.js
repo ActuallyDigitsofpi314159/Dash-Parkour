@@ -200,7 +200,7 @@ setInterval(() => {
 // a status file for the dashboard (dash-party)
 setInterval(() => {
   try {
-    writeJson(path.join(DATA_DIR, "status.json"), { at: Date.now(), parties: parties.size, players: [...parties.values()].reduce((a, p) => a + p.n, 0), up: Math.round((Date.now() - startedAt) / 1000), stats, bans: bans.length, admins: admins.length });
+    writeJson(path.join(DATA_DIR, "status.json"), { at: Date.now(), online: onlineNow(), parties: parties.size, players: [...parties.values()].reduce((a, p) => a + p.n, 0), up: Math.round((Date.now() - startedAt) / 1000), stats, bans: bans.length, admins: admins.length });
   } catch (e) {}
 }, 10000).unref();
 
@@ -288,6 +288,99 @@ for (const sig of ["SIGTERM", "SIGINT"]) {
     process.exit(0);
   });
 }
+// ---------------- [v1.5] player stats (dash-party stats) ----------------
+// Every game on the website says hello every 15 s (multiplayer or not), with its
+// random device id (stored hashed), which screen it's on and whether it's in a
+// party. From that: who is online now, peaks, players per day, new players and
+// the busiest hours. Kept in DATA_DIR/stats.json. No names or addresses.
+const STATS_FILE = path.join(DATA_DIR, "stats.json");
+const ONLINE_MS = 45000; // seen in the last 45 s = online
+const online = new Map(); // device hash -> { seen, mp, game }
+let pstats = readJson(STATS_FILE, null);
+if (!pstats || typeof pstats !== "object" || !pstats.days) {
+  pstats = { since: Date.now(), devices: {}, days: {}, hourSum: new Array(24).fill(0), hourN: new Array(24).fill(0), peak: { n: 0, at: 0 }, mpPeak: { n: 0, at: 0 }, hellos: 0 };
+}
+const dayKey = (t) => {
+  const d = new Date(t);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+};
+function statDay(t) {
+  const k = dayKey(t);
+  let d = pstats.days[k];
+  if (!d) {
+    d = pstats.days[k] = { players: 0, newPlayers: 0, mpPlayers: 0, peak: 0, mpPeak: 0, parties: 0, joins: 0, seen: {}, mpSeen: {} };
+    // keep 120 days
+    const keys = Object.keys(pstats.days).sort();
+    while (keys.length > 120) delete pstats.days[keys.shift()];
+  }
+  return d;
+}
+function statHello(dev, mp, game) {
+  if (!dev) return;
+  const now = Date.now();
+  const h = sha("dash-dev\u0000" + dev).slice(0, 16);
+  online.set(h, { seen: now, mp: !!mp, game: !!game });
+  pstats.hellos++;
+  const d = statDay(now);
+  if (!d.seen[h]) {
+    d.seen[h] = 1;
+    d.players++;
+    if (!pstats.devices[h]) {
+      pstats.devices[h] = dayKey(now);
+      d.newPlayers++;
+    }
+  }
+  if (mp && !d.mpSeen[h]) {
+    d.mpSeen[h] = 1;
+    d.mpPlayers++;
+  }
+}
+function onlineNow() {
+  const now = Date.now();
+  let n = 0, mp = 0, game = 0;
+  for (const [k, o] of online) {
+    if (now - o.seen > ONLINE_MS) {
+      online.delete(k);
+      continue;
+    }
+    n++;
+    if (o.mp) mp++;
+    if (o.game) game++;
+  }
+  return { n, mp, game };
+}
+// once a minute: peaks and the busy-hours average, then save
+setInterval(() => {
+  const now = Date.now();
+  const o = onlineNow();
+  const d = statDay(now);
+  d.peak = Math.max(d.peak, o.n);
+  d.mpPeak = Math.max(d.mpPeak, o.mp);
+  if (o.n > pstats.peak.n) pstats.peak = { n: o.n, at: now };
+  if (o.mp > pstats.mpPeak.n) pstats.mpPeak = { n: o.mp, at: now };
+  const hr = new Date(now).getHours();
+  pstats.hourSum[hr] += o.n;
+  pstats.hourN[hr]++;
+  try {
+    writeJson(STATS_FILE, pstats);
+  } catch (e) {}
+}, 60000).unref();
+function statsSummary() {
+  const o = onlineNow();
+  const days = Object.keys(pstats.days).sort().slice(-30).map((k) => {
+    const d = pstats.days[k];
+    return { day: k, players: d.players, newPlayers: d.newPlayers, mpPlayers: d.mpPlayers, peak: d.peak, mpPeak: d.mpPeak, parties: d.parties, joins: d.joins };
+  });
+  return { now: o, peak: pstats.peak, mpPeak: pstats.mpPeak, totalPlayers: Object.keys(pstats.devices).length, since: pstats.since, days, hours: pstats.hourSum.map((v, i) => (pstats.hourN[i] ? Math.round((v / pstats.hourN[i]) * 10) / 10 : 0)) };
+}
+
+// ---------------- [v1.5] developer invites ----------------
+// Digitsofpi or Kineto (with their admin key) invite every player online to the
+// party they are in. Everyone's next hello carries the invite for 2 minutes, with
+// a pass that lets them into that party even if it is private.
+let invite = null; // { id, from, fromDev, party, name, token, until }
+const INVITE_MS = 120000;
+
 const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max: p.max, playing: p.playing, host: p.host });
 
 // ---------------- HTTP helpers ----------------
@@ -443,6 +536,11 @@ async function handle(req, res) {
       };
       return tryFile(0);
     }
+    // [v1.5] the game's own files (audio/...) sit next to dash-parkour.html at the
+    // top of the repo; the page asks for them under /dash-parkour/
+    if (p0.toLowerCase().startsWith(GAME_PATH) && p0.length > GAME_PATH.length) {
+      return serveSite(req, res, url.pathname.slice(GAME_PATH.length - 1));
+    }
     return serveSite(req, res, url.pathname);
   }
   if (req.method === "GET" && p0 === "/api/health") {
@@ -481,6 +579,36 @@ async function handle(req, res) {
     return fail(res, 400, "Bad request.");
   }
   const bdev = cleanDev(body.dev);
+
+  // [v1.5] every game, every 15 s: counted for the stats; gets a developer's invite
+  if (p0 === "/api/hello") {
+    statHello(bdev, body.mp, body.game);
+    const out = { online: onlineNow().n };
+    if (invite && Date.now() < invite.until && invite.fromDev !== bdev && parties.has(invite.party) && !isBanned(ip, bdev)) {
+      out.invite = { id: invite.id, from: invite.from, party: invite.party, name: invite.name, token: invite.token };
+    }
+    return send(res, 200, out);
+  }
+  // [v1.5] the stats, for Digitsofpi and Kineto (admin key)
+  if (p0 === "/api/stats" || p0 === "/api/invite") {
+    const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+    if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+    const who = adminFor(body.key);
+    if (!who) {
+      t.n++;
+      adminTries.set(ip, t);
+      return fail(res, 403, "That admin key isn't right.", { badKey: true });
+    }
+    if (p0 === "/api/stats") return send(res, 200, statsSummary());
+    const ip2 = parties.get(String(body.party || ""));
+    if (!ip2) return fail(res, 404, "Make or join a party first, then invite everyone to it.");
+    ip2.inviteToken = id(12);
+    ip2.inviteUntil = Date.now() + INVITE_MS;
+    invite = { id: id(6), from: clean(body.from, 16) || clean(who.name, 16), fromDev: bdev, party: ip2.id, name: ip2.name, token: ip2.inviteToken, until: ip2.inviteUntil };
+    hEvent(ip2, "invite", invite.from);
+    log("INVITE from", who.name, "to", ip2.id);
+    return send(res, 200, { ok: true, online: onlineNow().n, text: "Invited everyone online (" + Math.max(0, onlineNow().n - 1) + " other players) to " + ip2.name + "." });
+  }
 
   // joiner's answer code
   m = /^\/api\/join\/([\w-]{8,40})\/answer$/.exec(p0);
@@ -523,6 +651,7 @@ async function handle(req, res) {
     newHistory(p, ip);
     parties.set(p.id, p);
     stats.made++;
+    statDay(Date.now()).parties++;
     log("party made", p.id, JSON.stringify(p.name), priv ? "(private)" : "");
     notifyParty(p);
     return send(res, 200, { id: p.id, token: p.token });
@@ -556,6 +685,7 @@ async function handle(req, res) {
       const rid = id(12);
       requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: true, same: sameNet(ip, p.hostIp), offer: "", answer: "", given: false, done: false, seen: Date.now() });
       stats.joins++;
+    statDay(Date.now()).joins++;
       hEvent(p, "adminjoin", jname + " (" + clean(who.name, 24) + ")");
       log("ADMIN", who.name, "joining", p.id);
       return send(res, 200, { rid });
@@ -565,7 +695,8 @@ async function handle(req, res) {
       hEvent(p, "banned", jname);
       return fail(res, 403, "You can't join multiplayer games right now.", { banned: true });
     }
-    if (p.priv && !sameText(hashPass(p.salt, String(body.pass || "").slice(0, 24)), p.pass)) {
+    const invited = !!body.invite && !!p.inviteToken && Date.now() < p.inviteUntil && sameText(String(body.invite), p.inviteToken); // [v1.5] a developer's invite
+    if (p.priv && !invited && !sameText(hashPass(p.salt, String(body.pass || "").slice(0, 24)), p.pass)) {
       p.hist.wrongPass++;
       hEvent(p, "wrongpass", jname);
       return fail(res, 403, "Wrong passcode.");
@@ -579,6 +710,7 @@ async function handle(req, res) {
     const rid = id(12);
     requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: false, same: sameNet(ip, p.hostIp), offer: "", answer: "", given: false, done: false, seen: Date.now() });
     stats.joins++;
+    statDay(Date.now()).joins++;
     return send(res, 200, { rid });
   }
 

@@ -5,6 +5,8 @@ A parkour platformer by Digitsofpi and Kineto, with multiplayer.
 | File | What it is |
 |---|---|
 | `dash-parkour.html` | the game, easy to edit. Open it in a browser to play. This is also the website version |
+| `audio/` | the soundtrack and sound effects, made live in the browser (the game loads these three files) |
+| `assets/no-zoom.js` | stops pinch-zoom on phones (the game loads it too) |
 | `compress.py` | `python3 compress.py dash-parkour.html` makes the small `dash-parkour.ka.html` |
 | `dash-parkour.ka.html` | the small file for Khan Academy (it fits KA's size limit) |
 | `dash-parkour-save-editor.html` | see and change everything in a save code |

@@ -95,6 +95,7 @@ Other commands:
 | `dash-party setkey NAME` | choose your own admin key instead of the long random one (`NAME` is `digitsofpi` or `kineto`; 8 characters or more, spaces are ignored). Works within a few seconds; the game asks for the new key the next time the old one is refused |
 | `dash-party history` | the last 50 parties: who made them, how long they were up, who joined and left, wrong passcodes, kicks and bans |
 | `dash-party history N` | the full timeline of party number N from that list |
+| `dash-party stats` | how the game is doing: players online now, the most at once, players and new players per day, multiplayer use, parties and joins, and the busiest hours. Every game on the website checks in (not only multiplayer); only a random device id is kept, never names or addresses |
 | `dash-party bans` / `dash-party unban NAME` | see bans, let someone back in |
 | `dash-party notify on` | a phone notice (ntfy app) whenever someone makes a party; it prints the topic to subscribe to. `notify test` sends one, `notify off` stops them |
 | `dash-party restart` | restart the server and the tunnel |
@@ -219,3 +220,13 @@ can't leak them. Don't copy them into it.
 | `/etc/systemd/system/dash-party.service`, `dash-tunnel.service`, `dash-watchdog.timer` | what starts at boot |
 
 </details>
+
+## Developer invites
+
+Digitsofpi and Kineto (with their admin key) see an **INVITE EVERYONE** button
+on the Multiplayer screen while they are in a party. Every player on the
+website (in multiplayer or not) gets a notice within about 15 seconds:
+"Kineto, a developer of this game, invited you to play with him!", with JOIN
+and a close button. The invite lasts 2 minutes and lets players into the party
+even if it is private.
+
