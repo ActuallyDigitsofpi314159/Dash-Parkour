@@ -221,6 +221,25 @@ can't leak them. Don't copy them into it.
 
 </details>
 
+## Relay for players who can't link directly (TURN)
+
+Games link to each other directly. Some networks (phone data, school and work
+Wi-Fi, strict routers) block that, and those joins stop at "Almost there". With a
+free Cloudflare TURN key the server hands games short-lived relay logins
+(`GET /api/ice`); they still link directly when they can and only go through
+Cloudflare's relay when that fails.
+
+1. Cloudflare dashboard > **Realtime** > **TURN Server** > **Create**. Note the
+   **Turn Token ID** and the **API Token** (shown once).
+2. On the Pi: `dash-party turn set` and paste both. It is kept in
+   `/var/lib/dash-party/turn.json` (only the server can read it), not in setup.conf,
+   so running setup.sh again keeps it.
+3. `dash-party turn` says whether it works. No restart needed.
+   `dash-party turn off` removes it.
+
+Relay addresses are only sent to games that can read them (older versions reject a
+code that has them), so mixed versions keep working without the relay.
+
 ## Joins that don't link up
 
 `dash-party stats` ends with **Joins that never linked up (last 7 days), and why**.

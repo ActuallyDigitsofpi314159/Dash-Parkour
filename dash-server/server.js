@@ -18,6 +18,7 @@
 
 "use strict";
 const http = require("http");
+const https = require("https");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -429,6 +430,83 @@ function partyHashes(p) {
 }
 const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max: p.max, playing: p.playing, host: p.host });
 
+// ---------------- [v1.5] relay (TURN) for players who can't link directly ----------------
+// With a Cloudflare TURN key (dash-party turn set, kept in DATA_DIR/turn.json; or
+// TURN_KEY_ID / TURN_KEY_TOKEN in the environment), games get short-lived relay
+// logins from /api/ice. Players still link directly when they can; the relay is only
+// used when that fails (phone data, school and work networks, strict routers).
+// Without a key the games work as before. The file is read again whenever the
+// logins are renewed, so a new key works without a restart.
+const TURN_FILE = path.join(DATA_DIR, "turn.json");
+function turnKey() {
+  let id = process.env.TURN_KEY_ID || "",
+    token = process.env.TURN_KEY_TOKEN || "";
+  try {
+    const j = JSON.parse(fs.readFileSync(TURN_FILE, "utf8"));
+    if (j && j.id && j.token) {
+      id = String(j.id);
+      token = String(j.token);
+    }
+  } catch (e) {}
+  return { id: id.trim(), token: token.trim() };
+}
+const TURN_TTL = 6 * 3600; // seconds each login works for
+let iceCache = null; // { servers, until }
+let iceBusy = null;
+function cloudflareIce(key) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ ttl: TURN_TTL });
+    const req = https.request(
+      { method: "POST", host: "rtc.live.cloudflare.com", path: "/v1/turn/keys/" + encodeURIComponent(key.id) + "/credentials/generate-ice-servers", headers: { Authorization: "Bearer " + key.token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }, timeout: 8000 },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error("Cloudflare said " + res.statusCode));
+            const j = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            let list = j.iceServers;
+            if (list && !Array.isArray(list)) list = [list];
+            // (browsers can't use port 53, and Cloudflare's own STUN is enough next to Google's)
+            const servers = (list || []).map((x) => ({ urls: [].concat(x.urls || []).filter((u) => !/:53(\?|$)/.test(u)), username: x.username, credential: x.credential })).filter((x) => x.urls.length);
+            if (!servers.length) return reject(new Error("no ICE servers in the answer"));
+            resolve(servers);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error("timed out")));
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+function getIce() {
+  if (iceCache && Date.now() < iceCache.until) return Promise.resolve(iceCache.servers);
+  const key = turnKey();
+  if (!key.id || !key.token) {
+    iceCache = { servers: [], until: Date.now() + 60 * 1000 }; // (looked at again in a minute)
+    return Promise.resolve([]);
+  }
+  if (!iceBusy) {
+    iceBusy = cloudflareIce(key)
+      .then((servers) => {
+        iceCache = { servers, until: Date.now() + 60 * 60 * 1000 }; // (one login for everyone, renewed hourly)
+        return servers;
+      }, (e) => {
+        log("TURN: couldn't get relay logins:", e.message);
+        iceCache = { servers: iceCache ? iceCache.servers : [], until: Date.now() + 2 * 60 * 1000 };
+        return iceCache.servers;
+      })
+      .then((x) => {
+        iceBusy = null;
+        return x;
+      });
+  }
+  return iceBusy;
+}
+
 // ---------------- HTTP helpers ----------------
 const API_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -589,6 +667,9 @@ async function handle(req, res) {
     }
     return serveSite(req, res, url.pathname);
   }
+  if (req.method === "GET" && p0 === "/api/ice") {
+    return getIce().then((servers) => send(res, 200, { iceServers: servers }));
+  }
   if (req.method === "GET" && p0 === "/api/health") {
     return send(res, 200, { ok: true, game: "DASH Parkour party server", parties: parties.size, uptime: Math.round(process.uptime()) });
   }
@@ -615,7 +696,8 @@ async function handle(req, res) {
     const p = parties.get(r.party);
     // [v1.3] same: on the host's Wi-Fi (the game then links them with local addresses)
     // hostAway: the host's game hasn't checked in for a while (tab hidden, asleep...)
-    return send(res, 200, r.offer ? { state: "offer", offer: r.offer, same: r.same } : { state: "waiting", playing: p.playing, same: r.same, hostAway: Date.now() - p.beat > LIVE_MS });
+    // hrl: [v1.5] the host's game reads relay addresses
+    return send(res, 200, r.offer ? { state: "offer", offer: r.offer, same: r.same, hrl: !!p.relay } : { state: "waiting", playing: p.playing, same: r.same, hostAway: Date.now() - p.beat > LIVE_MS, hrl: !!p.relay });
   }
 
   if (req.method !== "POST") return fail(res, 404, "Not found.");
@@ -650,7 +732,7 @@ async function handle(req, res) {
   // side had and how far the link got). Counted per day for dash-party stats.
   if (p0 === "/api/joinlog") {
     const why = clean(body.why, 20) || "?";
-    const tag = [why, "ice:" + clean(body.ice, 30), body.mePub ? "me:pub" : "me:nopub", body.hostPub ? "host:pub" : "host:nopub", body.same ? "samenet" : "", body.mic ? "mic" : ""].filter(Boolean).join(" ");
+    const tag = [why, "ice:" + clean(body.ice, 30), body.mePub ? "me:pub" : "me:nopub", body.hostPub ? "host:pub" : "host:nopub", body.same ? "samenet" : "", body.mic ? "mic" : "", body.meRelay ? "me:relay" : "", body.hostRelay ? "host:relay" : ""].filter(Boolean).join(" ");
     const d = statDay(Date.now());
     d.linkFails = (d.linkFails || 0) + 1;
     d.failWhy = d.failWhy || {};
@@ -824,7 +906,7 @@ async function handle(req, res) {
       if (p.n >= MAX_IN_PARTY) return fail(res, 409, "That party is completely full.");
       if (waiting >= MAX_IN_PARTY) return fail(res, 429, "Lots of players are joining this party right now. Try again in a moment.");
       const rid = id(12);
-      requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: true, same: sameNet(ip, p.hostIp), offer: "", answer: "", given: false, done: false, seen: Date.now() });
+      requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: true, same: sameNet(ip, p.hostIp), rl: !!body.rl, offer: "", answer: "", given: false, done: false, seen: Date.now() });
       stats.joins++;
     statDay(Date.now()).joins++;
       hEvent(p, "adminjoin", jname + " (" + clean(who.name, 24) + ")");
@@ -854,7 +936,7 @@ async function handle(req, res) {
     }
     if (waiting >= MAX_PLAYERS) return fail(res, 429, "Lots of players are joining this party right now. Try again in a moment.");
     const rid = id(12);
-    requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: false, same: sameNet(ip, p.hostIp), offer: "", answer: "", given: false, done: false, seen: Date.now() });
+    requests.set(rid, { rid, party: p.id, name: jname, ip, dev: bdev, admin: false, same: sameNet(ip, p.hostIp), rl: !!body.rl, offer: "", answer: "", given: false, done: false, seen: Date.now() });
     stats.joins++;
     statDay(Date.now()).joins++;
     return send(res, 200, { rid });
@@ -874,6 +956,7 @@ async function handle(req, res) {
       return fail(res, 403, "A moderator closed this party.", { closed: true });
     }
     p.beat = Date.now();
+    p.relay = !!body.rl; // [v1.5] reads relay addresses
     p.n = Math.max(1, Math.min(MAX_IN_PARTY, Math.round(Number(body.n) || 1)));
     p.playing = !!body.playing;
     // who is in the party: [{ slot, name, rid }] (rid = how they joined)
@@ -907,7 +990,7 @@ async function handle(req, res) {
       if (r.party !== p.id || r.done || r.dropped) continue;
       if (!r.admin && isBanned(r.ip, r.dev)) continue;
       if (now - r.seen < LIVE_MS || (r.offer && now - r.offerAt < 25000)) out.live.push(r.rid);
-      if (!r.offer) out.requests.push({ rid: r.rid, name: r.name, admin: !!r.admin, same: !!r.same });
+      if (!r.offer) out.requests.push({ rid: r.rid, name: r.name, admin: !!r.admin, same: !!r.same, rl: !!r.rl });
       else if (r.answer && (acks ? now - r.answerAt < 30000 : !r.given)) {
         out.answers.push({ rid: r.rid, code: r.answer });
         r.given = true;
