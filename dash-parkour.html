@@ -23002,6 +23002,7 @@ function program() {
   var cFrames = 0;
   var cRectY = [600, -70];
   var cutsceneName = "intro";
+  var introWait = 45; // [v1.5] frames of stillness before the intro starts
   var ctOpacity = 0;
   var ctOpacity2 = 255;
   var cutsceneY = [0, 0, 0];
@@ -37175,10 +37176,59 @@ function program() {
     if (slit) c.ellipse(x, y, r * 0.18, r * 0.72, 0, 0, Math.PI * 2); else c.arc(x, y, r * 0.26, 0, Math.PI * 2);
     c.fill();
   }
+  // [v1.5] Larry's hurt face (in the 600 square around his centre): eyes squeezed shut
+  // into creases, pained brows, and a pale flash over his head; the mouth is already
+  // wide open (the mouth frames) and he flinches.
+  function larryHurtFace(c, R) {
+    var cy = -8;
+    // pale flash
+    c.save();
+    larryHeadPath(c, 0, cy, R);
+    c.clip();
+    c.fillStyle = 'rgba(255,220,220,0.22)';
+    c.fillRect(-R * 1.2, cy - R * 1.2, R * 2.4, R * 2.4);
+    c.restore();
+    // shut lids over the sockets
+    var lid = function (x, y, rx, ry, rot) {
+      var g = c.createRadialGradient(x, y - ry * 0.3, 0, x, y, Math.max(rx, ry) * 1.1);
+      g.addColorStop(0, '#a8222c'); g.addColorStop(0.7, '#7d0a13'); g.addColorStop(1, 'rgba(90,0,8,0.6)');
+      c.fillStyle = g;
+      c.beginPath(); c.ellipse(x, y, rx * 1.05, ry * 1.05, rot, 0, Math.PI * 2); c.fill();
+    };
+    var eLx = -0.35 * R, eLy = cy - 0.16 * R, eRx = 0.33 * R, eRy = cy - 0.07 * R;
+    lid(eLx, eLy, 0.26 * R, 0.21 * R, -0.15);
+    lid(eRx, eRy, 0.17 * R, 0.14 * R, 0.2);
+    // creases: > and <
+    c.strokeStyle = '#1a0003'; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.lineWidth = R * 0.05;
+    c.beginPath(); c.moveTo(eLx - 0.15 * R, eLy - 0.1 * R); c.lineTo(eLx + 0.11 * R, eLy); c.lineTo(eLx - 0.15 * R, eLy + 0.1 * R); c.stroke();
+    c.lineWidth = R * 0.04;
+    c.beginPath(); c.moveTo(eRx + 0.1 * R, eRy - 0.07 * R); c.lineTo(eRx - 0.08 * R, eRy); c.lineTo(eRx + 0.1 * R, eRy + 0.07 * R); c.stroke();
+    // pained brows, pulled up in the middle
+    c.lineWidth = R * 0.045;
+    c.beginPath(); c.moveTo(eLx - 0.26 * R, eLy - 0.17 * R); c.lineTo(eLx + 0.16 * R, eLy - 0.3 * R); c.stroke();
+    c.beginPath(); c.moveTo(eRx + 0.2 * R, eRy - 0.13 * R); c.lineTo(eRx - 0.12 * R, eRy - 0.25 * R); c.stroke();
+    // a bead of sweat
+    c.fillStyle = 'rgba(200,235,255,0.85)';
+    c.beginPath(); c.moveTo(0.62 * R, cy - 0.58 * R); c.quadraticCurveTo(0.7 * R, cy - 0.42 * R, 0.62 * R, cy - 0.38 * R); c.quadraticCurveTo(0.54 * R, cy - 0.42 * R, 0.62 * R, cy - 0.58 * R); c.fill();
+  }
   // pl: the Dash being drawn; w, h: its squashed size. Origin: its bottom centre.
+  // The title screen and the shop draw Dash with a new object every frame, so those
+  // share one steady animation state; a Dash drawn again (the player, other players)
+  // gets its own from its second frame on.
+  var larryShared = { seed: 0 };
   function drawLarrySkin(pl, w, h) {
     var c = __p.externals.context;
-    var t = __p.millis() / 1000 + (pl.larrySeed || (pl.larrySeed = Math.random() * 10));
+    var st = pl.larryState;
+    if (!st) {
+      if (pl.larryDrawn) {
+        st = pl.larryState = { seed: Math.random() * 10 };
+      } else {
+        pl.larryDrawn = true;
+        st = larryShared;
+      }
+    }
+    var t = __p.millis() / 1000 + st.seed;
     // where the mouth wants to be
     var air = Math.abs(pl.vy || 0);
     var target = 0.08 + 0.06 * Math.sin(t * 1.7); // idle: slightly parted, breathing
@@ -37191,35 +37241,44 @@ function program() {
     if (pl.hurtFrames > 0 || pl.health <= 0) {
       target = 1;
     }
-    var mo = pl.larryMouth === undefined ? target : pl.larryMouth;
-    pl.larryMouth = mo + (target - mo) * dtLerp(target > mo ? 0.35 : 0.12); // (snaps open, eases shut)
+    var mo = st.mouth === undefined ? target : st.mouth;
+    st.mouth = mo + (target - mo) * dtLerp(target > mo ? 0.35 : 0.12); // (snaps open, eases shut)
     // eyes follow the movement; when standing still they wander (and dart now and then)
     var lx = __p.constrain((pl.vx || 0) / 6, -1, 1),
       ly = __p.constrain((pl.vy || 0) / 12, -1, 1);
     if (Math.abs(pl.vx || 0) < 0.5 && air < 1) {
       lx = Math.sin(t * 0.9) * 0.6 + (Math.sin(t * 3.1) > 0.95 ? 0.4 : 0);
       ly = Math.cos(t * 1.3) * 0.35;
+      if (pl.idleT > 600) {
+        lx = pl.idleLX; // [v1.5] (idle: the same looking around as every Dash)
+        ly = pl.idleLY;
+      }
     }
-    pl.larryLX = pl.larryLX === undefined ? lx : pl.larryLX + (lx - pl.larryLX) * dtLerp(0.2);
-    pl.larryLY = pl.larryLY === undefined ? ly : pl.larryLY + (ly - pl.larryLY) * dtLerp(0.2);
+    st.lx = st.lx === undefined ? lx : st.lx + (lx - st.lx) * dtLerp(0.2);
+    st.ly = st.ly === undefined ? ly : st.ly + (ly - st.ly) * dtLerp(0.2);
     var breathe = 1 + 0.025 * Math.sin(t * 2.2);
     var dw = w * (2 - breathe),
       dh = h * breathe;
+    var hurt = pl.hurtFrames > 0 || pl.health <= 0;
     c.save();
-    c.translate(0, -dh / 2);
+    c.translate(hurt ? Math.sin(__p.millis() * 0.09) * w * 0.04 : 0, -dh / 2); // (a flinch when hurt)
     c.scale(dw / 600, dh / 600);
-    var fr = larryFrame(pl.larryMouth);
+    var fr = larryFrame(st.mouth);
     if (fr) {
       c.drawImage(fr, -300, -300, 600, 600);
     }
     // the live eyes (same spots as in draw2dLarry, around 300, 292)
     var R = 262,
-      ex = pl.larryLX,
-      ey = pl.larryLY,
+      ex = st.lx,
+      ey = st.ly,
       glow = 0.85 + 0.15 * Math.sin(t * 5.3);
-    c.globalAlpha *= glow;
-    larryIrisLive(c, -0.35 * R + ex * 0.08 * R, -8 - 0.16 * R + ey * 0.05 * R, 0.12 * R, true);
-    larryIrisLive(c, 0.33 * R + ex * 0.05 * R, -8 - 0.07 * R + ey * 0.03 * R, 0.07 * R, false);
+    if (hurt) {
+      larryHurtFace(c, R);
+    } else {
+      c.globalAlpha *= glow;
+      larryIrisLive(c, -0.35 * R + ex * 0.08 * R, -8 - 0.16 * R + ey * 0.05 * R, 0.12 * R, true);
+      larryIrisLive(c, 0.33 * R + ex * 0.05 * R, -8 - 0.07 * R + ey * 0.03 * R, 0.07 * R, false);
+    }
     c.restore();
   }
   // [v1.1] the "Unstoppable" badge: Dash charging forward through a sunburst
@@ -38133,6 +38192,28 @@ function program() {
     var faceX = __p.constrain(this.vx * 0.7, -scaleOffset, scaleOffset);
     var faceYMove = __p.constrain(this.vy * 0.3, -this.h * 0.25, this.h * 0.25);
     var faceY = -this.visualH * 0.65 + faceYMove;
+    // [v1.5] Idle: after about 10 s standing still, Dash looks around (left, right, up).
+    // Every skin whose eyes follow faceX / faceY does it; a few others pick it up below.
+    var still = __p.abs(this.vx || 0) < 0.15 && __p.abs(this.vy || 0) < 0.6 && !this.paralyzed && !this.frozen;
+    this.idleT = still ? (this.idleT || 0) + DT : 0;
+    var ilx = 0,
+      ily = 0;
+    if (this.idleT > 600) {
+      var cyc = (this.idleT - 600) % 420;
+      var IDLE_LOOKS = [[-1, 0, 80], [0, 0, 40], [1, 0, 80], [0, 0, 40], [0.7, -0.9, 70], [-0.6, -0.6, 60], [0, 0, 50]];
+      for (var il = 0; il < IDLE_LOOKS.length; il++) {
+        if (cyc < IDLE_LOOKS[il][2]) {
+          ilx = IDLE_LOOKS[il][0];
+          ily = IDLE_LOOKS[il][1];
+          break;
+        }
+        cyc -= IDLE_LOOKS[il][2];
+      }
+    }
+    this.idleLX = __p.lerp(this.idleLX || 0, ilx, dtLerp(0.12));
+    this.idleLY = __p.lerp(this.idleLY || 0, ily, dtLerp(0.12));
+    faceX += this.idleLX * scaleOffset * 0.9;
+    faceY += this.idleLY * this.h * 0.1;
 
     // Get current skin data safely
     var sData = skins[currentSkin] || {
@@ -38218,8 +38299,10 @@ function program() {
         __p.ellipse(-this.w / 4.5, -this.h / 7, this.w / 3, this.h / 3);
         __p.ellipse(this.w / 4.5, -this.h / 7, this.w / 3, this.h / 3);
         __p.fill(0);
-        __p.ellipse(-this.w / 4.5, -this.h / 7, this.w / 6, this.h / 6);
-        __p.ellipse(this.w / 4.5, -this.h / 7, this.w / 6, this.h / 6);
+        var spx = (this.idleLX || 0) * this.w / 14,
+          spy = (this.idleLY || 0) * this.h / 14; // [v1.5] (idle: looking around)
+        __p.ellipse(-this.w / 4.5 + spx, -this.h / 7 + spy, this.w / 6, this.h / 6);
+        __p.ellipse(this.w / 4.5 + spx, -this.h / 7 + spy, this.w / 6, this.h / 6);
         __p.noFill();
         __p.stroke(0);
         __p.strokeWeight(this.w / 20);
@@ -38333,6 +38416,9 @@ function program() {
         // [v5] activeSprite could still be the empty placeholder before the first
         // level (the title showed no skin after loading a save); fall back to the real image
         var pixImg = activeSprite && activeSprite.width ? activeSprite : imgs.pixelSkinStraight;
+        if (this.idleT > 600 && __p.abs(this.idleLX || 0) > 0.5) {
+          pixImg = this.idleLX < 0 ? imgs.pixelSkinLeft : imgs.pixelSkinRight; // [v1.5] idle: looking around
+        }
         var pixTinted = dashTint !== null ? tintedSprite(pixImg, dashTint) : null;
         // [v1.5] turned (flips, spins, cutscenes): smooth edges instead of jagged ones
         var pixAA = pixelSpriteTurned() ? pixelSpriteAA(pixTinted || pixImg) : null;
@@ -47661,7 +47747,16 @@ function program() {
           }
         }
         if (cutsceneIs) {
-          cFrames += DT;
+          // [v1.5] the intro waits until the save code screen and loading are done (it
+          // used to play behind them, so you joined it partway through), then a short beat
+          if (cutsceneName === "intro" && cFrames < 1 && (window.__dashBootHold || loading)) {
+            introWait = 45;
+          }
+          if (cutsceneName === "intro" && introWait > 0) {
+            introWait -= DT;
+          } else {
+            cFrames += DT;
+          }
           // [BUGFIX] Screen shakes inside cutscene scenes translate without restoring,
           // which also shook the black cinematic bars. Contain them.
           __p.pushMatrix();
