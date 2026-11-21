@@ -295,7 +295,16 @@ for (const sig of ["SIGTERM", "SIGINT"]) {
 // the busiest hours. Kept in DATA_DIR/stats.json. No names or addresses.
 const STATS_FILE = path.join(DATA_DIR, "stats.json");
 const ONLINE_MS = 45000; // seen in the last 45 s = online
-const online = new Map(); // device hash -> { seen, mp, game }
+const online = new Map(); // device hash -> { seen, mp, game, name, inv, pid, banned }
+// [v1.5] player invites: online players are shown by a random public id (pid), never
+// by their device id (that one is what bans use).
+const pidToDev = new Map(); // pid -> device hash
+const inbox = new Map(); // device hash -> [invite] (handed over with the next hello)
+const pinvLast = new Map(); // "from>to" -> when (one invite per player every 15 s)
+const pinvSent = new Map(); // from -> [times] (at most 12 a minute)
+const PINV_GAP = 15000;
+const PINV_MS = 120000;
+const devHash = (dev) => sha("dash-dev\u0000" + dev).slice(0, 16);
 let pstats = readJson(STATS_FILE, null);
 if (!pstats || typeof pstats !== "object" || !pstats.days) {
   pstats = { since: Date.now(), devices: {}, days: {}, hourSum: new Array(24).fill(0), hourN: new Array(24).fill(0), peak: { n: 0, at: 0 }, mpPeak: { n: 0, at: 0 }, hellos: 0 };
@@ -315,11 +324,18 @@ function statDay(t) {
   }
   return d;
 }
-function statHello(dev, mp, game) {
-  if (!dev) return;
+function statHello(dev, mp, game, extra) {
+  if (!dev) return "";
   const now = Date.now();
-  const h = sha("dash-dev\u0000" + dev).slice(0, 16);
-  online.set(h, { seen: now, mp: !!mp, game: !!game });
+  const h = devHash(dev);
+  const was = online.get(h);
+  let pid = was && was.pid;
+  if (!pid) {
+    pid = id(6);
+    pidToDev.set(pid, h);
+  }
+  extra = extra || {};
+  online.set(h, { seen: now, mp: !!mp, game: !!game, name: extra.name || "", inv: extra.inv !== false, pid, banned: !!extra.banned });
   pstats.hellos++;
   const d = statDay(now);
   if (!d.seen[h]) {
@@ -334,6 +350,7 @@ function statHello(dev, mp, game) {
     d.mpSeen[h] = 1;
     d.mpPlayers++;
   }
+  return h;
 }
 function onlineNow() {
   const now = Date.now();
@@ -341,6 +358,8 @@ function onlineNow() {
   for (const [k, o] of online) {
     if (now - o.seen > ONLINE_MS) {
       online.delete(k);
+      pidToDev.delete(o.pid);
+      inbox.delete(k);
       continue;
     }
     n++;
@@ -352,6 +371,12 @@ function onlineNow() {
 // once a minute: peaks and the busy-hours average, then save
 setInterval(() => {
   const now = Date.now();
+  for (const [k, t] of pinvLast) if (now - t > PINV_GAP) pinvLast.delete(k);
+  for (const [k, a] of pinvSent) {
+    const keep = a.filter((t) => now - t < 60000);
+    if (keep.length) pinvSent.set(k, keep);
+    else pinvSent.delete(k);
+  }
   const o = onlineNow();
   const d = statDay(now);
   d.peak = Math.max(d.peak, o.n);
@@ -381,6 +406,16 @@ function statsSummary() {
 let invite = null; // { id, from, fromDev, party, name, token, until }
 const INVITE_MS = 120000;
 
+// [v1.5] is this device in the party (its host, or a player the host let in)?
+function inParty(p, dev) {
+  if (!dev) return false;
+  if (p.hostDev === dev) return true;
+  for (const x of p.roster) {
+    const r = x.rid && requests.get(x.rid);
+    if (r && r.party === p.id && r.dev === dev) return true;
+  }
+  return false;
+}
 const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max: p.max, playing: p.playing, host: p.host });
 
 // ---------------- HTTP helpers ----------------
@@ -582,12 +617,84 @@ async function handle(req, res) {
 
   // [v1.5] every game, every 15 s: counted for the stats; gets a developer's invite
   if (p0 === "/api/hello") {
-    statHello(bdev, body.mp, body.game);
+    const banned = !!isBanned(ip, bdev);
+    // [v1.5] name: the multiplayer name (for the invite list); inv: 0 = no invites from players
+    const h = statHello(bdev, body.mp, body.game, { name: clean(body.name, 16), inv: body.inv !== 0 && body.inv !== false, banned });
     const out = { online: onlineNow().n };
-    if (invite && Date.now() < invite.until && invite.fromDev !== bdev && parties.has(invite.party) && !isBanned(ip, bdev)) {
+    if (invite && Date.now() < invite.until && invite.fromDev !== bdev && parties.has(invite.party) && !banned) {
       out.invite = { id: invite.id, from: invite.from, party: invite.party, name: invite.name, token: invite.token };
     }
+    // [v1.5] invites from players (handed over once)
+    const box = h && inbox.get(h);
+    if (box) {
+      inbox.delete(h);
+      const now = Date.now();
+      const live = banned ? [] : box.filter((v) => now < v.until && parties.has(v.party));
+      if (live.length) out.pinvites = live.map((v) => ({ id: v.id, from: v.from, dev: v.dev, party: v.party, name: v.name, token: v.token }));
+    }
     return send(res, 200, out);
+  }
+  // [v1.5] who is online (for the invite screen): players with a name who take invites
+  if (p0 === "/api/online") {
+    const me = bdev ? devHash(bdev) : "";
+    const q = norm(body.q);
+    const now = Date.now();
+    const list = [];
+    for (const [k, o] of online) {
+      if (k === me || now - o.seen > ONLINE_MS || !o.name || !o.inv || o.banned) continue;
+      if (q && !norm(o.name).includes(q)) continue;
+      list.push({ id: o.pid, name: o.name, mp: o.mp, game: o.game, starts: q ? norm(o.name).startsWith(q) : false });
+    }
+    list.sort((a, b) => b.starts - a.starts || a.name.localeCompare(b.name));
+    return send(res, 200, { players: list.slice(0, 60).map((x) => ({ id: x.id, name: x.name, mp: x.mp, game: x.game })), online: onlineNow().n });
+  }
+  // [v1.5] invite one player to the party you are in (any player; 15 s per player)
+  if (p0 === "/api/pinvite") {
+    if (!bdev) return fail(res, 400, "Bad request.");
+    if (isBanned(ip, bdev)) return fail(res, 403, "You can't invite players right now.", { banned: true });
+    let who = null;
+    if (body.key) {
+      const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+      if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+      who = adminFor(body.key);
+      if (!who) {
+        t.n++;
+        adminTries.set(ip, t);
+        return fail(res, 403, "That admin key isn't right.", { badKey: true });
+      }
+    }
+    const pp = parties.get(String(body.party || ""));
+    if (!pp) return fail(res, 404, "Make or join a party first, then invite players to it.");
+    if (!who && !inParty(pp, bdev)) return fail(res, 403, "You can only invite players to a party you are in.");
+    const from = devHash(bdev);
+    const to = pidToDev.get(String(body.to || ""));
+    const target = to && online.get(to);
+    if (!target || Date.now() - target.seen > ONLINE_MS) return fail(res, 404, "That player isn't online any more.");
+    if (to === from) return fail(res, 400, "That's you!");
+    // (a developer's invite gets through even when the player turned invites off)
+    if (!who && !target.inv) return fail(res, 403, clean(target.name, 16) + " isn't taking invites.");
+    const now = Date.now();
+    const pair = from + ">" + to;
+    if (now - (pinvLast.get(pair) || 0) < PINV_GAP) {
+      return fail(res, 429, "You just invited " + clean(target.name, 16) + ". Wait a few seconds.", { wait: Math.ceil((PINV_GAP - (now - pinvLast.get(pair))) / 1000) });
+    }
+    const sent = (pinvSent.get(from) || []).filter((t) => now - t < 60000);
+    if (!who && sent.length >= 12) return fail(res, 429, "That's a lot of invites. Wait a minute.");
+    sent.push(now);
+    pinvSent.set(from, sent);
+    pinvLast.set(pair, now);
+    // a pass for this one invite: lets them in without the passcode (a player in the
+    // party invited them), for 2 minutes
+    if (!pp.pinv) pp.pinv = new Map();
+    for (const [tk, until] of pp.pinv) if (now > until) pp.pinv.delete(tk);
+    const token = id(12);
+    pp.pinv.set(token, now + PINV_MS);
+    const box = inbox.get(to) || [];
+    // (one invite per party in the box: the newest)
+    const v = { id: id(6), from: clean(body.from, 16) || (who ? clean(who.name, 16) : "A player"), dev: !!who, party: pp.id, name: pp.name, token, until: now + PINV_MS };
+    inbox.set(to, box.filter((x) => x.party !== pp.id).concat(v).slice(-5));
+    hEvent(pp, "invite", v.from + " -> " + clean(target.name, 16));
+    return send(res, 200, { ok: true, text: "Invited " + clean(target.name, 16) + "!" });
   }
   // [v1.5] the stats, for Digitsofpi and Kineto (admin key)
   if (p0 === "/api/stats" || p0 === "/api/invite") {
@@ -695,7 +802,12 @@ async function handle(req, res) {
       hEvent(p, "banned", jname);
       return fail(res, 403, "You can't join multiplayer games right now.", { banned: true });
     }
-    const invited = !!body.invite && !!p.inviteToken && Date.now() < p.inviteUntil && sameText(String(body.invite), p.inviteToken); // [v1.5] a developer's invite
+    const invTok = String(body.invite || "");
+    let invited = !!invTok && !!p.inviteToken && Date.now() < p.inviteUntil && sameText(invTok, p.inviteToken); // [v1.5] a developer's invite
+    // [v1.5] or a player's invite (good for 2 minutes, so a retried join still gets in)
+    if (!invited && invTok && p.pinv && p.pinv.has(invTok) && Date.now() < p.pinv.get(invTok)) {
+      invited = true;
+    }
     if (p.priv && !invited && !sameText(hashPass(p.salt, String(body.pass || "").slice(0, 24)), p.pass)) {
       p.hist.wrongPass++;
       hEvent(p, "wrongpass", jname);

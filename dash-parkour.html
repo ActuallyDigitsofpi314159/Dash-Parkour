@@ -23702,8 +23702,32 @@ function program() {
   var tranEndY = 1110;
   var transitionY = tranStartY;
   var transitionActive = false;
-  var transitionSpeed = 17.5;
+  var transitionSpeed = 21; // [v1.5] a little faster (was 17.5)
   var sceneToTransition = '';
+  // [v1.5] With Scene Transitions off, the screens cross-fade through black (twice as
+  // fast as the wipe) instead of swapping on the next frame.
+  var FADE_MID_Y = (tranStartY + tranEndY) / 2;
+  // [v1.5] The press that changes the scene is held back from the new scene until it
+  // is let go. Buttons react to a held mouse, so the new screen's button under the
+  // pointer fired too (Settings opened straight into Audio when transitions were off).
+  var sceneHold = false,
+    sceneHoldSig = "";
+  var sceneHoldTick = function sceneHoldTick() {
+    var sig = scene + "|" + worldSubScreen;
+    if (sig !== sceneHoldSig) {
+      sceneHoldSig = sig;
+      if (__p.__mousePressed) {
+        sceneHold = true;
+      }
+    }
+    if (sceneHold) {
+      if (__p.__mousePressed) {
+        __p.mouseIsPressed = false; // (this frame only: Processing sets it again every frame)
+      } else {
+        sceneHold = false;
+      }
+    }
+  };
   var transition = function transition(x, y, scene) {
     // [WIDE] stretch the wipe sideways so it still covers the whole screen
     if (widePad > 0) {
@@ -25287,26 +25311,79 @@ function program() {
     __p.popMatrix();
     __p.fill(c);
   };
+  // [v1.5] a brighter shopping bag: pink with a folded lip, a side panel, gold rope
+  // handles, a star badge and a twinkle
   var drawShoppingBag = function drawShoppingBag(x, y, s) {
     __p.pushMatrix();
-    __p.translate(x, y);
-
-    // Bag
-    __p.stroke(80);
-    __p.strokeWeight(s * 0.04);
-    __p.fill(245);
-    __p.rect(-s * 0.27, -s * 0.20, s * 0.54, s * 0.48, s * 0.07);
-
-    // Opening
-    __p.stroke(180);
-    __p.strokeWeight(s * 0.02);
-    __p.line(-s * 0.17, -s * 0.12, s * 0.17, -s * 0.12);
-
-    // Handle
+    __p.translate(x, y + s * 0.02);
+    __p.rotate(-6);
+    var ow = s * 0.028; // outline
+    // shadow
+    __p.noStroke();
+    __p.fill(0, 0, 0, 45);
+    __p.ellipse(s * 0.02, s * 0.3, s * 0.5, s * 0.07);
+    // back handle (behind the bag)
     __p.noFill();
-    __p.stroke(100);
-    __p.strokeWeight(s * 0.04);
-    __p.arc(0, -s * 0.2, s * 0.26, s * 0.24, 180, 360);
+    __p.stroke(40, 20, 0);
+    __p.strokeWeight(s * 0.06);
+    __p.arc(s * 0.08, -s * 0.19, s * 0.2, s * 0.24, 180, 360);
+    __p.stroke(205, 145, 25);
+    __p.strokeWeight(s * 0.03);
+    __p.arc(s * 0.08, -s * 0.19, s * 0.2, s * 0.24, 180, 360);
+    // side panel
+    __p.stroke(40, 0, 15);
+    __p.strokeWeight(ow);
+    __p.strokeJoin(__p.ROUND);
+    __p.fill(200, 30, 85);
+    __p.quad(s * 0.16, -s * 0.15, s * 0.27, -s * 0.2, s * 0.27, s * 0.22, s * 0.16, s * 0.28);
+    // front
+    __p.fill(255, 75, 125);
+    __p.rect(-s * 0.26, -s * 0.15, s * 0.42, s * 0.43, s * 0.03);
+    // folded lip
+    __p.fill(255, 150, 180);
+    __p.rect(-s * 0.26, -s * 0.15, s * 0.42, s * 0.07, s * 0.02);
+    // front handle
+    __p.noFill();
+    __p.stroke(40, 20, 0);
+    __p.strokeWeight(s * 0.06);
+    __p.arc(-s * 0.05, -s * 0.12, s * 0.22, s * 0.26, 180, 360);
+    __p.stroke(255, 205, 50);
+    __p.strokeWeight(s * 0.03);
+    __p.arc(-s * 0.05, -s * 0.12, s * 0.22, s * 0.26, 180, 360);
+    // rivets where the handle meets the bag
+    __p.noStroke();
+    __p.fill(255, 225, 120);
+    __p.ellipse(-s * 0.16, -s * 0.115, s * 0.04, s * 0.04);
+    __p.ellipse(s * 0.06, -s * 0.115, s * 0.04, s * 0.04);
+    // star badge
+    var bx = -s * 0.05,
+      by = s * 0.09;
+    __p.stroke(40, 0, 15);
+    __p.strokeWeight(ow * 0.8);
+    __p.fill(255);
+    __p.ellipse(bx, by, s * 0.25, s * 0.25);
+    __p.fill(255, 200, 30);
+    __p.strokeWeight(ow * 0.6);
+    __p.beginShape();
+    for (var i = 0; i < 10; i++) {
+      var ang = -90 + i * 36,
+        rr = i % 2 ? s * 0.042 : s * 0.095;
+      __p.vertex(bx + __p.cos(ang) * rr, by + __p.sin(ang) * rr);
+    }
+    __p.endShape(__p.CLOSE);
+    // shine down the front
+    __p.noStroke();
+    __p.fill(255, 255, 255, 70);
+    __p.rect(-s * 0.225, -s * 0.06, s * 0.035, s * 0.3, s * 0.02);
+    // twinkle
+    var tw = (Math.sin(__p.millis() / 260) + 1) / 2;
+    var sx = s * 0.25,
+      sy = -s * 0.27,
+      sr = s * (0.05 + tw * 0.035);
+    __p.fill(255, 255, 210, 160 + tw * 95);
+    __p.quad(sx, sy - sr, sx + sr * 0.25, sy, sx, sy + sr, sx - sr * 0.25, sy);
+    __p.quad(sx - sr, sy, sx, sy - sr * 0.25, sx + sr, sy, sx, sy + sr * 0.25);
+    __p.strokeJoin(__p.MITER);
     __p.popMatrix();
   };
 
@@ -25851,6 +25928,11 @@ function program() {
       defaultValue: true,
       desc: "On: send and see chat messages in multiplayer.\n\nOff: no chat from or to other players, and they show up as Player 2, Player 3 and so on instead of their names."
     }, {
+      label: "Receive Invites",
+      key: "mpInvites",
+      defaultValue: true,
+      desc: "On: other players can invite you to their party. Their invite pops up with a JOIN button.\n\nOff: you aren't on other players' invite lists and their invites don't reach you. Invites from the game's developers still come through.\n\nKept on this device."
+    }, {
       label: "Mobile Controls",
       key: "mobileControls",
       defaultValue: false,
@@ -25906,7 +25988,7 @@ function program() {
     }, {
       label: "Music Volume",
       key: "musicVolume",
-      defaultValue: 70,
+      defaultValue: 100,
       slider: {
         min: 0,
         max: 100,
@@ -25916,7 +25998,7 @@ function program() {
     }, {
       label: "Effects Volume",
       key: "sfxVolume",
-      defaultValue: 70,
+      defaultValue: 100,
       slider: {
         min: 0,
         max: 100,
@@ -27051,17 +27133,34 @@ function program() {
     }
   })();
   // [v1.5] the volume sliders: per device too (the save code layout stays the same)
+  // [v1.5] The scale was shifted down: 100% now plays as loud as the old 70% did (the
+  // old default was too loud). Sliders saved on the old scale are converted once.
+  var DASH_VOL_FULL = 0.7; // the loudness of 100%
   (function () {
     var rd = function (k, d) {
       try {
-        var v = parseInt(window.localStorage.getItem("dashparkour-" + k), 10);
-        return v >= 0 && v <= 100 ? v : d;
+        var ls = window.localStorage;
+        var v = parseInt(ls.getItem("dashparkour-" + k + "2"), 10);
+        if (v >= 0 && v <= 100) {
+          return v;
+        }
+        var old = parseInt(ls.getItem("dashparkour-" + k), 10);
+        if (old >= 0 && old <= 100) {
+          return Math.min(100, Math.round(old / DASH_VOL_FULL / 5) * 5); // same loudness, new scale
+        }
+        return d;
       } catch (e) {
         return d;
       }
     };
-    settings.musicVolume = rd("musicVolume", 70);
-    settings.sfxVolume = rd("sfxVolume", 70);
+    settings.musicVolume = rd("musicVolume", 100);
+    settings.sfxVolume = rd("sfxVolume", 100);
+    // [v1.5] Receive Invites (from other players), per device as well
+    try {
+      settings.mpInvites = window.localStorage.getItem("dashparkour-invites") !== "0";
+    } catch (e) {
+      settings.mpInvites = true;
+    }
   })();
   for (var KeyV in SAVE_TEMPLATE_11) {
     if (SAVE_TEMPLATE_11.hasOwnProperty(KeyV)) {
@@ -29905,7 +30004,7 @@ function program() {
     return checkCollision(player, zappBox);
   };
   function Thorn(x, y, s, r, speed) {
-    Enemy.call(this, x, y, s, r, speed);
+    Enemy.call(this, x, y, s || 50, r, speed); // [v1.5] (a thorn with no size never moved)
   }
   Thorn.prototype = Object.create(Enemy.prototype);
   Thorn.prototype.constructor = Thorn;
@@ -30634,19 +30733,19 @@ function program() {
     }, {
       type: 'spike',
       x: 4400,
-      y: 72,
+      y: 78,
       amount: 5,
       r: 0
     }, {
       type: 'spike',
       x: 4650,
-      y: 72,
+      y: 78,
       amount: 2,
       r: 0
     }, {
       type: 'spike',
       x: 4850,
-      y: 72,
+      y: 78,
       amount: 3,
       r: 0
     }, {
@@ -30989,7 +31088,7 @@ function program() {
     }, {
       type: 'spike',
       x: 3110,
-      y: -1096,
+      y: -1091,
       r: 0,
       amount: 4
     }, {
@@ -31045,7 +31144,7 @@ function program() {
     }, {
       type: 'spike',
       x: 700,
-      y: -1180,
+      y: -1178,
       r: 0,
       amount: 1
     }, {
@@ -31187,7 +31286,7 @@ function program() {
     }, {
       type: 'spike',
       x: 3760,
-      y: 404,
+      y: 409,
       r: 0,
       amount: 4
     }, {
@@ -31571,7 +31670,7 @@ function program() {
     }, {
       type: 'spike',
       x: 8250,
-      y: 309,
+      y: 312,
       r: 10,
       amount: 4
     }, {
@@ -31599,13 +31698,13 @@ function program() {
     }, {
       type: 'spike',
       x: 8700,
-      y: 356,
+      y: 361,
       r: 0,
       amount: 3
     }, {
       type: 'spike',
       x: 8950,
-      y: 356,
+      y: 361,
       r: 0,
       amount: 5
     }, {
@@ -33066,7 +33165,7 @@ function program() {
     }, {
       type: 'spike',
       x: 7100,
-      y: 412,
+      y: 414,
       r: 0,
       amount: 2
     }, {
@@ -34511,9 +34610,12 @@ function program() {
     }
   }, {
     objects: [{
-      x: 1000,
+      // [v1.5] reaches far to the left (was x 1000, w 2500: it began at -250), so
+      // ECH0, who starts off-screen behind Dash, has ground to run on instead of
+      // falling into the void where only his wall was left to see
+      x: 250,
       y: 600,
-      w: 2500,
+      w: 4000,
       h: 200,
       r: 0
     }, {
@@ -34766,14 +34868,7 @@ function program() {
       h: 600,
       r: 0
     }, {
-      type: 'zapp',
-      x: 16000,
-      y: 240,
-      s: 90,
-      r: 150,
-      speed: 3.0,
-      variant: 'X'
-    }, {
+      // [v1.5] (an X-Zapp patrolled here: getting past him in the ECH0 race was luck)
       type: 'trampoline',
       x: 16130,
       y: 392,
@@ -35010,7 +35105,7 @@ function program() {
       }, {
         type: 'spike',
         x: 3110,
-        y: -1096,
+        y: -1091,
         r: 0,
         amount: 3
       }, {
@@ -35262,7 +35357,8 @@ function program() {
         x: 8000,
         y: 470,
         r: 300,
-        speed: 3
+        speed: 3,
+        s: 50 // [v1.5] (it had no size, so it never moved)
       }, {
         type: 'hyperbelt',
         x: 7680,
@@ -36936,7 +37032,8 @@ function program() {
     }
     c.closePath();
   }
-  function draw2dLarry(c, cx, cy, R, m) {
+  function draw2dLarry(c, cx, cy, R, m, o) {
+    o = o || {};
     var TAU = Math.PI * 2, hash = larryHash, i;
     var lerp = function (a, b, t) { return a + (b - a) * t; };
     var qpt = function (a, b, cc, t) { var u = 1 - t; return [u * u * a[0] + 2 * u * t * cc[0] + t * t * b[0], u * u * a[1] + 2 * u * t * cc[1] + t * t * b[1]]; };
@@ -37012,8 +37109,10 @@ function program() {
       if (slit) c.ellipse(x, y, r * 0.18, r * 0.72, 0, 0, TAU); else c.arc(x, y, r * 0.26, 0, TAU);
       c.fill();
     };
-    iris(eL.x, eL.y, 0.12 * R, true);
-    iris(eR.x, eR.y, 0.07 * R, false);
+    if (!o.noIrises) { // (the animated skin draws them live, so they can look around)
+      iris(eL.x, eL.y, 0.12 * R, true);
+      iris(eR.x, eR.y, 0.07 * R, false);
+    }
     // sagging lid
     c.strokeStyle = '#4a0007'; c.lineWidth = R * 0.03;
     c.beginPath(); c.ellipse(eL.x, eL.y + 0.04 * R, 0.25 * R, 0.2 * R, -0.15, 0.25 * Math.PI, 0.8 * Math.PI); c.stroke();
@@ -37042,6 +37141,85 @@ function program() {
     c.restore();
     c.strokeStyle = '#2a0004'; c.lineWidth = R * 0.03;
     c.beginPath(); c.moveTo(mL[0], mL[1]); c.quadraticCurveTo(cU[0], cU[1], mR[0], mR[1]); c.quadraticCurveTo(cD[0], cD[1], mL[0], mL[1]); c.stroke();
+    if (o.drool && m > 0.2) { // drool (as in Maze Man 2)
+      var dp = qpt(mL, mR, cD, 0.68);
+      c.strokeStyle = 'rgba(255,170,180,0.45)'; c.lineWidth = R * 0.018;
+      c.beginPath(); c.moveTo(dp[0], dp[1]); c.lineTo(dp[0] + R * 0.01, dp[1] + R * 0.22 * m); c.stroke();
+    }
+    c.restore();
+  }
+  // [v1.5] The Scary Larry skin is alive, animated the way Maze Man 2 animates him: the
+  // mouth chomps every few seconds and gapes when he jumps, falls or gets hurt, the
+  // glowing eyes look where he is going, and he breathes and squashes like Dash.
+  // The head is baked once per mouth position (small canvases); the eyes are drawn live.
+  var LARRY_MOUTHS = 8, LARRY_PX = 160, larryFrames = [];
+  function larryFrame(m) {
+    var k = Math.max(0, Math.min(LARRY_MOUTHS - 1, Math.round(m * (LARRY_MOUTHS - 1))));
+    if (!larryFrames[k] && typeof document !== "undefined") {
+      var cv = document.createElement("canvas");
+      cv.width = cv.height = LARRY_PX;
+      var g = cv.getContext("2d");
+      // (the same layout as the old picture: a 600 square with Larry at 300, 292, radius 262)
+      g.scale(LARRY_PX / 600, LARRY_PX / 600);
+      draw2dLarry(g, 300, 292, 262, k / (LARRY_MOUTHS - 1), { noIrises: true, drool: true });
+      larryFrames[k] = cv;
+    }
+    return larryFrames[k];
+  }
+  function larryIrisLive(c, x, y, r, slit) {
+    var g = c.createRadialGradient(x, y, 0, x, y, r * 1.6);
+    g.addColorStop(0, '#fffbe0'); g.addColorStop(0.3, '#ffd23a'); g.addColorStop(0.55, '#ff7a00'); g.addColorStop(1, 'rgba(255,60,0,0)');
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r * 1.6, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#000';
+    c.beginPath();
+    if (slit) c.ellipse(x, y, r * 0.18, r * 0.72, 0, 0, Math.PI * 2); else c.arc(x, y, r * 0.26, 0, Math.PI * 2);
+    c.fill();
+  }
+  // pl: the Dash being drawn; w, h: its squashed size. Origin: its bottom centre.
+  function drawLarrySkin(pl, w, h) {
+    var c = __p.externals.context;
+    var t = __p.millis() / 1000 + (pl.larrySeed || (pl.larrySeed = Math.random() * 10));
+    // where the mouth wants to be
+    var air = Math.abs(pl.vy || 0);
+    var target = 0.08 + 0.06 * Math.sin(t * 1.7); // idle: slightly parted, breathing
+    if (Math.sin(t * 0.9) > 0.86) {
+      target = 0.9; // the chomp
+    }
+    if (air > 2) {
+      target = Math.max(target, Math.min(0.75, 0.25 + air / 30));
+    }
+    if (pl.hurtFrames > 0 || pl.health <= 0) {
+      target = 1;
+    }
+    var mo = pl.larryMouth === undefined ? target : pl.larryMouth;
+    pl.larryMouth = mo + (target - mo) * dtLerp(target > mo ? 0.35 : 0.12); // (snaps open, eases shut)
+    // eyes follow the movement; when standing still they wander (and dart now and then)
+    var lx = __p.constrain((pl.vx || 0) / 6, -1, 1),
+      ly = __p.constrain((pl.vy || 0) / 12, -1, 1);
+    if (Math.abs(pl.vx || 0) < 0.5 && air < 1) {
+      lx = Math.sin(t * 0.9) * 0.6 + (Math.sin(t * 3.1) > 0.95 ? 0.4 : 0);
+      ly = Math.cos(t * 1.3) * 0.35;
+    }
+    pl.larryLX = pl.larryLX === undefined ? lx : pl.larryLX + (lx - pl.larryLX) * dtLerp(0.2);
+    pl.larryLY = pl.larryLY === undefined ? ly : pl.larryLY + (ly - pl.larryLY) * dtLerp(0.2);
+    var breathe = 1 + 0.025 * Math.sin(t * 2.2);
+    var dw = w * (2 - breathe),
+      dh = h * breathe;
+    c.save();
+    c.translate(0, -dh / 2);
+    c.scale(dw / 600, dh / 600);
+    var fr = larryFrame(pl.larryMouth);
+    if (fr) {
+      c.drawImage(fr, -300, -300, 600, 600);
+    }
+    // the live eyes (same spots as in draw2dLarry, around 300, 292)
+    var R = 262,
+      ex = pl.larryLX,
+      ey = pl.larryLY,
+      glow = 0.85 + 0.15 * Math.sin(t * 5.3);
+    c.globalAlpha *= glow;
+    larryIrisLive(c, -0.35 * R + ex * 0.08 * R, -8 - 0.16 * R + ey * 0.05 * R, 0.12 * R, true);
+    larryIrisLive(c, 0.33 * R + ex * 0.05 * R, -8 - 0.07 * R + ey * 0.03 * R, 0.07 * R, false);
     c.restore();
   }
   // [v1.1] the "Unstoppable" badge: Dash charging forward through a sunburst
@@ -38088,8 +38266,7 @@ function program() {
 
       // No DK Converter was used. It was entirely traced by hand (trust)
       case 7:
-        __p.imageMode(__p.CENTER);
-        __p.image(imgs.larry, 0, -this.h / 2, this.w, this.h);
+        drawLarrySkin(this, this.visualW, this.visualH); // [v1.5] animated (was the still picture)
         break;
       case 8:
         // Warrior Skin 
@@ -41858,7 +42035,7 @@ function program() {
     // Interaction
     if (hovered) {
       __p.cursor(__p.HAND);
-      if (__p.mouseIsPressed && !transitionActive && mpUnlock() >= (worldSubScreen - 1) * 4 + level && mpMayStart()) {
+      if (__p.mouseIsPressed && !transitionActive && mpUnlock() >= (worldSubScreen - 1) * 4 + level && mpMayStart((worldSubScreen - 1) * 4 + level - 1, worldSubScreen)) {
         transitionActive = true;
         sceneButtonFrames = 0;
         sceneToTransition = "game";
@@ -43877,6 +44054,7 @@ function program() {
       window.dashPauseSfx(gamePaused); // [v1.1] game sounds freeze with the game (not music)
     }
     SIMT = __p.frameCount;
+    sceneHoldTick(); // [v1.5]
     updateScaling();
     window.__dashUncapped = settings.particles === false; // [v5] the V-Sync setting
     var wantRes = __p.constrain((settings.renderScale || 100) / 100, 0.5, 1);
@@ -44237,8 +44415,16 @@ function program() {
                 __p.noStroke();
                 __p.rect(cardX, yS, cardW, 60, 12);
                 __p.stroke(getC("text"));
+                // [v1.5] long labels shrink to fit beside their control ("Effects Volume" ran
+                // into its slider)
+                var lblMax = (items[j].slider ? swX - (items[j].sw.w - items[j].sw.h * 2) : swX) - 12 - (cardX + 22);
+                var lblS = 11;
+                while (lblS > 6 && arcMeasureLine(items[j].label, lblS) > lblMax) {
+                  lblS -= 0.5;
+                }
+                arcSize(lblS);
+                arcText(items[j].label, cardX + 22, yS + 30 - (11 - lblS) * 0.25); // (kept centred)
                 arcSize(11);
-                arcText(items[j].label, cardX + 22, yS + 30);
                 items[j].sw.draw(swX, swY);
               }
               if (activeSub === "General") {
@@ -44546,8 +44732,7 @@ function program() {
             __p.noStroke();
             __p.rect(-widePad - 10, 90, 290 + widePad, 12, 10);
             __p.stroke(0);
-            arcSize(20);
-            arcText("x" + vouchers, 480, 60);
+            voucherCountText(480, 60, 100);
             lvlVoucher(420, 45, 100);
             backButton(40 - widePad, 40, 50);
 
@@ -44665,11 +44850,10 @@ function program() {
               backButton(50 - widePad, 40, 60);
               if (lvlUnlock > 1) {
                 __p.stroke(0);
-                arcSize(20);
-                arcText('x' + vouchers, 200 - widePad, 40);
+                voucherCountText(200 - widePad, 40, 58); // (shrinks to stay inside the corner panel)
                 lvlVoucher(150 - widePad, 30, 80);
               }
-              mpMapButton(widePad >= 45 ? 46 - widePad : 32, 128, widePad >= 45 ? 62 : 44); // (smaller on square screens, clear of the Area ONE title) // [MP] two-Dash multiplayer button
+              mpMapButton(widePad >= 45 ? 54 - widePad : 37, 136, widePad >= 45 ? 62 : 44); // (smaller on square screens, clear of the Area ONE title) // [MP] two-Dash multiplayer button
             } else {
               worldBackground(-__p.frameCount / 3, 0, worldSubScreen);
               arcSize(26);
@@ -44747,8 +44931,7 @@ function program() {
                 if (worldSubScreen === 4) {
                   __p.stroke(255);
                 }
-                arcSize(20);
-                arcText('x' + vouchers, 200, 40);
+                voucherCountText(200, 40, 58);
                 lvlVoucher(150, 30, 80);
                 __p.popMatrix();
               }
@@ -44995,7 +45178,8 @@ function program() {
                 20150];
                 // [v1.5] starts further back, off-screen even on a wide screen (he could be
                 // seen popping in at the edge); he is faster than Dash, so he catches up
-                ECH0 = new FakeAI(-150 - __p.max(0, widePad) - 250, 200, jumpTriggers);
+                // (kept on the first floor, which ends at x -1750, even on a very wide screen)
+                ECH0 = new FakeAI(__p.max(-1700, -150 - __p.max(0, widePad) - 250), 200, jumpTriggers);
               } else {
                 ECH0 = null;
               }
@@ -49080,12 +49264,23 @@ function program() {
             transitionActive = false;
           }
         } else if (transitionActive) {
-          scene = sceneToTransition;
-          worldSubScreen = worldSubScreenTo;
-          resetStats(); // reset everything
-          mpSceneChanged(); // [MP]
-          transitionActive = false;
-          transitionY = tranStartY;
+          // [v1.5] a simple fade through black (Scene Transitions off)
+          transitionY += transitionSpeed * DT; // (twice the wipe's speed)
+          if (dtPassUp(transitionY, FADE_MID_Y, transitionSpeed * 2)) {
+            scene = sceneToTransition;
+            worldSubScreen = worldSubScreenTo;
+            resetStats(); // reset everything
+            mpSceneChanged(); // [MP]
+          }
+          var fadeK = __p.constrain((transitionY - tranStartY) / (tranEndY - tranStartY), 0, 1);
+          var fadeA = 255 * __p.constrain(1 - __p.abs(fadeK * 2 - 1) * 1.15 + 0.15, 0, 1); // (fully black for a moment at the middle)
+          __p.noStroke();
+          __p.fill(0, fadeA);
+          __p.rect(-10 - widePad, -10, wideW + 20, 620);
+          if (transitionY >= tranEndY) {
+            transitionActive = false;
+            transitionY = tranStartY;
+          }
         }
         fadeIntoGame -= fadeIntoGameac * dtSum(1.2);
         fadeIntoGameac *= dtPow(1.2);
@@ -49106,6 +49301,10 @@ function program() {
 
   // input
   __p.mouseClicked = function mouseClicked() {
+    if (sceneHold) {
+      sceneHold = false; // [v1.5] the release of the press that changed the scene
+      return;
+    }
     var setX = currentX * wideW / 600; // [WIDE] same page layout as the settings screen
     if (currentPage === "Menu") {
       var i = 0;
@@ -49145,6 +49344,12 @@ function program() {
             try {
               window.localStorage.setItem("dashparkour-mobile", settings.mobileControls ? "1" : "0");
             } catch (e) {}
+          }
+          if (items[j].key === "mpInvites") {
+            try {
+              window.localStorage.setItem("dashparkour-invites", settings.mpInvites ? "1" : "0");
+            } catch (e) {}
+            SRV.helloAt = 0; // (tell the server now: off takes you off the invite lists)
           }
         }
       }
@@ -50228,11 +50433,24 @@ function program() {
   var mpEarnedBoss = function mpEarnedBoss() {
     return !MP.active || mpCount() < 2 || MP.myHits > 0;
   };
-  // Only the host may start a level.
-  var mpMayStart = function mpMayStart() {
+  // Only the host may start a level. [v1.5] Digitsofpi and Kineto can choose one even
+  // when they aren't the host: the host's game starts it for everyone.
+  var mpMayStart = function mpMayStart(lv, w) {
     if (MP.active && !MP.isHost) {
       if (MP.click) {
-        mpChatLine("", "Only the host can start levels - you'll follow them in.", -1);
+        if (admOn() && lv !== undefined && MP.links[0]) {
+          if (!MP.admLvAt || Date.now() - MP.admLvAt > 1500) {
+            MP.admLvAt = Date.now();
+            mpSendRaw(MP.links[0], {
+              t: "admlv",
+              lv: lv,
+              w: w
+            });
+            mpChatLine("", "Starting that level for everyone (developer).", -1);
+          }
+        } else {
+          mpChatLine("", "Only the host can start levels - you'll follow them in.", -1);
+        }
       }
       return false;
     }
@@ -50315,6 +50533,10 @@ function program() {
     MP.gates = {};
     MP.gateSent = {};
     MP.finished = false;
+    // [v1.5] no name yet: ask for one first
+    if (scene === "Multiplayer" && !MP.active && !MP.join && !String(MP.fields.name || "").replace(/\s+/g, "") && !(MP.modal && MP.modal.nameAsk)) {
+      mpAskName();
+    }
     if (!MP.active) {
       return;
     }
@@ -50738,6 +50960,21 @@ function program() {
         return;
       case "wld":
         mpApplyWorld(m); // [v1.1] Linked: the host's enemies and boss
+        return;
+      case "admlv":
+        // [v1.5] a developer in the party chose a level: start it for everyone
+        pl = MP.players[fromId];
+        if (MP.isHost && pl && pl.st && pl.st.adm && !transitionActive && typeof m.lv === "number" && m.lv >= 0 && m.lv < levels.length && m.w >= 1 && m.w <= 4) {
+          currentLevel = m.lv;
+          world = m.w;
+          worldSubScreen = m.w;
+          worldSubScreenTo = m.w;
+          sceneButtonFrames = 0;
+          sceneToTransition = "game";
+          transitionActive = true;
+          transitionY = tranStartY;
+          mpChatLine("", mpShownName(pl) + " (developer) chose the level.", -1);
+        }
         return;
       case "strike":
         if (m.ses === MP.session && m.lv === currentLevel && scene === "game") {
@@ -51675,11 +51912,11 @@ function program() {
     // things noticed from one frame to the next
     window.__dashSfxOn = settings.soundEffects !== false;
     // [v1.5] the volume sliders
-    var mv = typeof settings.musicVolume === "number" ? settings.musicVolume : 70,
-      sv = typeof settings.sfxVolume === "number" ? settings.sfxVolume : 70;
-    window.__dashSfxVol = sv / 100;
+    var mv = typeof settings.musicVolume === "number" ? settings.musicVolume : 100,
+      sv = typeof settings.sfxVolume === "number" ? settings.sfxVolume : 100;
+    window.__dashSfxVol = sv / 100 * DASH_VOL_FULL;
     if (window.DashAudio && window.DashAudio.setVolume) {
-      window.DashAudio.setVolume(mv / 100, sv / 100);
+      window.DashAudio.setVolume(mv / 100 * DASH_VOL_FULL, sv / 100 * DASH_VOL_FULL);
     }
     if (dashSnd.mv !== mv || dashSnd.sv !== sv) {
       if (dashSnd.sv !== undefined && dashSnd.sv !== sv) {
@@ -51688,8 +51925,8 @@ function program() {
       dashSnd.mv = mv;
       dashSnd.sv = sv;
       try {
-        window.localStorage.setItem("dashparkour-musicVolume", String(mv));
-        window.localStorage.setItem("dashparkour-sfxVolume", String(sv));
+        window.localStorage.setItem("dashparkour-musicVolume2", String(mv)); // (new scale)
+        window.localStorage.setItem("dashparkour-sfxVolume2", String(sv));
       } catch (e) {}
     }
     // low graphics = probably a slower device: the music engine drops its heaviest extras too
@@ -52318,9 +52555,21 @@ function program() {
     __p.ellipse(x - s * 0.17, y - s * 0.12, s * 0.14, s * 0.14);
     __p.ellipse(x + s * 0.23, y - s * 0.12, s * 0.14, s * 0.14);
   };
+  // [v1.5] "x12" beside the voucher: shrinks to fit maxW, so two- and three-digit counts
+  // stay inside their panel (it ran out of the corner panel from 10 vouchers on)
+  function voucherCountText(x, y, maxW) {
+    var str = "x" + vouchers,
+      s = 20;
+    while (s > 9 && arcMeasureLine(str, s) > maxW) {
+      s -= 1;
+    }
+    arcSize(s);
+    arcText(str, x, y - (20 - s) * 0.25); // (glyphs reach from y - s to y + s / 2: kept centred)
+    arcSize(20);
+  }
   // The world-map button: a red and a blue Dash (the multiplayer logo).
   var mpMapButton = function mpMapButton(x, y, s) {
-    s *= 1.3; // [v1.5] bigger, with a glow and its full name, so it's easy to find
+    s *= 1.45; // [v1.5] bigger, with a glow and its full name, so it's easy to find
     var hov = __p.dist(worldMouseX, worldMouseY, x, y) < s / 2;
     buttonStates.mp = buttonStates.mp === undefined ? s : animateButton(buttonStates.mp, s, hov);
     var cs = buttonStates.mp;
@@ -52351,9 +52600,10 @@ function program() {
       var ow = __p.textWidth(on) + 14;
       __p.noStroke();
       __p.fill(0, 170, 90);
-      // (above the button on wide screens; beside it on square ones, clear of the AREA title)
-      var bx = widePad >= 45 ? x : x + cs / 2 + ow / 2 + 6,
-        by = widePad >= 45 ? y - cs / 2 - 11 : y;
+      // (below the MULTIPLAYER label, where it can't be cut off by the corner panel;
+      // kept on screen when the button sits near the left edge)
+      var bx = __p.max(x, -widePad + ow / 2 + 4),
+        by = y + cs / 2 + 30;
       __p.rect(bx - ow / 2, by - 9, ow, 18, 9);
       __p.fill(255);
       __p.textAlign(__p.CENTER, __p.CENTER);
@@ -52512,11 +52762,47 @@ function program() {
   var mpLabel = function mpLabel(str, x, y, size) {
     mpArcLine(str, x, y, (size || 17) * 0.58, 20);
   };
+  // [v1.5] Menu animations: panels and dialogs pop in (grow a little past full size and
+  // settle, fading in), and the Multiplayer screens slide in instead of snapping.
+  // mpPop(id, cx, cy) ... mpPopEnd(): a panel drawn between them pops in the first
+  // time it shows (or when it shows again after being gone).
+  var mpPopStack = [];
+  var mpPop = function mpPop(id, cx, cy) {
+    var A = MP.pops || (MP.pops = {});
+    var now = __p.millis();
+    var a = A[id];
+    if (!a || now - a.last > 150) {
+      a = A[id] = {
+        at: now
+      };
+    }
+    a.last = now;
+    var k = __p.constrain((now - a.at) / 240, 0, 1);
+    var c1 = 1.70158,
+      back = 1 + (c1 + 1) * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); // (ease out, a small overshoot)
+    var sc = 0.82 + 0.18 * back;
+    var ctx = __p.externals.context;
+    mpPopStack.push(ctx.globalAlpha);
+    __p.pushMatrix();
+    __p.translate(cx, cy);
+    __p.scale(sc);
+    __p.translate(-cx, -cy);
+    ctx.globalAlpha = mpPopStack[mpPopStack.length - 1] * __p.constrain(k * 1.8, 0, 1);
+    return k;
+  };
+  var mpPopEnd = function mpPopEnd() {
+    __p.popMatrix();
+    __p.externals.context.globalAlpha = mpPopStack.length ? mpPopStack.pop() : 1;
+  };
   var mpDrawModal = function mpDrawModal() {
     var M = MP.modal;
+    if (!M.popId) {
+      M.popId = "modal" + Math.random(); // (each new dialog pops in)
+    }
     __p.noStroke();
-    __p.fill(0, 0, 0, 150);
+    __p.fill(0, 0, 0, 150 * __p.constrain((__p.millis() - (MP.pops && MP.pops[M.popId] ? MP.pops[M.popId].at : __p.millis())) / 160, 0, 1));
     __p.rect(-widePad - 10, -10, wideW + 20, 620);
+    mpPop(M.popId, 300, 300);
     __p.stroke(0);
     __p.strokeWeight(6);
     __p.fill(255);
@@ -52528,7 +52814,7 @@ function program() {
         MP.focus = M.field; // ready to type
         M.focused = true;
       }
-      mpField(M.field, 115, 318, 370, 44, "passcode", false, true);
+      mpField(M.field, 115, 318, 370, 44, M.placeholder || "passcode", false, M.masked !== false);
     }
     if (mpButton(115, 384, 175, 46, M.yes, __p.color(0, 160, 90))) {
       if (!M.keep) {
@@ -52543,26 +52829,248 @@ function program() {
         M.onNo();
       }
     }
+    mpPopEnd();
+  };
+  // [v1.5] Before the Multiplayer screen: what's your name? (It can still be changed
+  // on the screen itself.)
+  var mpAskName = function mpAskName() {
+    MP.fields.name = String(MP.fields.name || "");
+    MP.focus = null;
+    MP.modal = {
+      title: "What's your name?",
+      text: "Other players see this name in parties, in chat and on the invite list. You can change it later on the Multiplayer screen.",
+      field: "name",
+      placeholder: "Type a name...",
+      masked: false,
+      yes: "OK",
+      no: "Back",
+      keep: true,
+      nameAsk: true,
+      onYes: function () {
+        var nm = String(MP.fields.name || "").replace(/^\s+|\s+$/g, "");
+        if (!nm) {
+          mpToast("Type a name first.");
+          MP.focus = "name";
+          return;
+        }
+        MP.fields.name = nm;
+        try {
+          window.localStorage.setItem("dashparkour-mp-name", nm);
+        } catch (e) {}
+        MP.modal = null;
+        MP.focus = null;
+        SRV.helloAt = 0; // (the invite list shows the new name)
+      },
+      onNo: function () {
+        MP.focus = null;
+        if (!transitionActive) {
+          transitionActive = true;
+          sceneToTransition = "Play";
+          worldSubScreenTo = 0;
+        }
+      }
+    };
+  };
+  // ---- [v1.5] INVITE PLAYERS: everyone online who takes invites, with a search ----
+  var mpInvParty = function mpInvParty() {
+    return SRV.party ? SRV.party.id : MP.active ? SRV.joinedParty || "" : "";
+  };
+  var mpInvRefresh = function mpInvRefresh(force) {
+    var I = MP.invPanel;
+    if (!I || I.busy || !force && Date.now() - I.at < 5000) {
+      return;
+    }
+    I.busy = true;
+    I.at = Date.now();
+    var q = MP.fields.invq || "";
+    srvFetch("POST", "/api/online", {
+      dev: SRV.dev,
+      q: srvTxt(q)
+    }).then(function (r) {
+      I.busy = false;
+      I.list = r.players || [];
+      I.err = "";
+      I.loaded = true;
+      I.q = q;
+    }, function (e) {
+      I.busy = false;
+      I.err = /^not found/i.test(e.message) ? "This party server can't send invites yet (it needs the newest server update)." : e.message;
+      I.loaded = true;
+    });
+  };
+  var mpInvSend = function mpInvSend(pl) {
+    var party = mpInvParty();
+    if (!party) {
+      mpToast("Make or join a party first, then invite players to it.");
+      return;
+    }
+    SRV.invSent = SRV.invSent || {};
+    SRV.invSent[pl.id] = Date.now();
+    var body = {
+      dev: SRV.dev,
+      party: party,
+      to: pl.id,
+      from: srvTxt(MP.fields.name || "Player")
+    };
+    if (admOn() && SRV.modKey) {
+      body.key = SRV.modKey; // (a developer's invite gets through Receive Invites: off)
+    }
+    srvFetch("POST", "/api/pinvite", body).then(function (r) {
+      mpToast(r.text || "Invited " + cleanText(pl.name) + "!");
+    }, function (e) {
+      if (e && /wait a few/i.test(e.message)) {
+        return; // (the button already counts down)
+      }
+      SRV.invSent[pl.id] = 0;
+      mpToast(e.message);
+    });
+  };
+  var mpDrawInvPanel = function mpDrawInvPanel() {
+    var I = MP.invPanel;
+    var click = MP.click;
+    __p.noStroke();
+    __p.fill(0, 0, 0, 140);
+    __p.rect(-widePad - 10, 94, wideW + 20, 520);
+    mpPop("invPanel", 300, 320);
+    var x = 60,
+      y = 112,
+      w = 480,
+      h = 470;
+    __p.stroke(0);
+    __p.strokeWeight(6);
+    __p.fill(255);
+    __p.rect(x, y, w, h, 24);
+    mpArcLine("INVITE PLAYERS", 300, y + 16, 12, __p.color(0, 120, 255), __p.CENTER);
+    // search (as you type, a moment after the last key)
+    mpField("invq", x + 24, y + 58, w - 48, 40, "Search players...");
+    if (MP.fields.invq !== I.typed) {
+      I.typed = MP.fields.invq;
+      I.typedAt = Date.now();
+    }
+    if (I.typedAt && Date.now() - I.typedAt > 350 && (MP.fields.invq || "") !== I.q) {
+      I.typedAt = 0;
+      mpInvRefresh(true);
+    }
+    mpInvRefresh(false); // (and every 5 s)
+    var ly = y + 112,
+      rh = 46,
+      maxRows = admOn() ? 6 : 7;
+    var list = I.list || [];
+    if (I.err) {
+      mpParagraph(I.err, x + 24, ly + 6, w - 48, 14, __p.color(200, 40, 0));
+    } else if (!list.length) {
+      __p.noStroke();
+      __p.fill(240);
+      __p.rect(x + 24, ly, w - 48, 96, 14);
+      mpArcLine(!I.loaded ? "Looking for players..." : MP.fields.invq ? "No players with that name." : "No one else is online right now.", 300, ly + 26, 7.5, 70, __p.CENTER);
+      if (I.loaded && !MP.fields.invq) {
+        mpArcLine("Players who turned off Receive Invites aren't listed.", 300, ly + 58, 5.5, 120, __p.CENTER);
+      }
+    }
+    SRV.invSent = SRV.invSent || {};
+    for (var i = 0; i < list.length && i < maxRows; i++) {
+      var pl = list[i],
+        ry = ly + i * rh;
+      __p.noStroke();
+      __p.fill(i % 2 ? 245 : 235);
+      __p.rect(x + 24, ry, w - 48, rh - 6, 10);
+      __p.fill(20);
+      __p.textFont(mpSans, 16);
+      __p.textAlign(__p.LEFT, __p.CENTER);
+      var nm = cleanText(pl.name);
+      while (__p.textWidth(nm) > w - 220 && nm.length > 1) {
+        nm = nm.slice(0, -1);
+      }
+      __p.text(nm, x + 40, ry + (rh - 6) / 2 - 6);
+      __p.fill(120);
+      __p.textSize(11);
+      __p.text(pl.mp ? "in a party" : pl.game ? "playing a level" : "in the menus", x + 40, ry + (rh - 6) / 2 + 10);
+      var since = Date.now() - (SRV.invSent[pl.id] || 0);
+      var wait = since < 15000;
+      var lab = since < 2000 ? "INVITED!" : wait ? "WAIT " + __p.ceil((15000 - since) / 1000) : "INVITE";
+      MP.click = click;
+      if (mpButton(x + w - 24 - 120, ry + 4, 116, rh - 14, lab, since < 2000 ? __p.color(0, 170, 90) : __p.color(0, 120, 255), !wait)) {
+        mpInvSend(pl);
+        click = false;
+      }
+    }
+    if (list.length > maxRows) {
+      mpArcLine("+" + (list.length - maxRows) + " more: search for a name", 300, ly + maxRows * rh + 2, 5.5, 110, __p.CENTER);
+    }
+    MP.click = click;
+    // Digitsofpi and Kineto: everyone at once
+    if (admOn()) {
+      var invWait = SRV.invitedAt && Date.now() - SRV.invitedAt < 30000;
+      if (mpButton(x + 24, y + h - 64, 220, 44, SRV.inviting ? "INVITING..." : invWait ? "INVITED!" : "INVITE EVERYONE", __p.color(255, 140, 0), !SRV.inviting && !invWait)) {
+        srvInviteAll();
+      }
+    }
+    if (mpButton(x + w - 24 - 140, y + h - 64, 140, 44, "DONE", __p.color(130))) {
+      MP.invPanel = null;
+      MP.focus = null;
+    }
+    MP.click = false; // (nothing under the panel)
+    mpPopEnd();
   };
   var mpDrawScreen = function mpDrawScreen() {
     var modalClick = MP.click;
     if (MP.modal) {
       MP.click = false; // the dialog takes the clicks
     }
+    var panelClick = MP.click;
+    var invOn = mpServerOn() && MP.active && (MP.screen === "host" || MP.screen === "join") && !!mpInvParty();
+    if (!invOn) {
+      MP.invPanel = null;
+    }
+    if (MP.invPanel) {
+      MP.click = false; // the invite panel takes the clicks
+    }
+    mpDrawScreenFrame();
+    // [v1.5] the screens slide in (from the right going forward, from the left going
+    // back), except between the lobby's own views (the CREATE PARTY panel pops instead)
+    var grp = MP.screen === "home" || MP.screen === "browse" || MP.screen === "create" ? "lobby" : MP.screen;
+    if (grp !== MP.scrGrp) {
+      var order = { lobby: 0, codes: 1, host: 2, join: 2 };
+      MP.scrDir = (order[grp] || 0) >= (order[MP.scrGrp] || 0) ? 1 : -1;
+      MP.scrGrp = grp;
+      MP.scrAt = __p.millis();
+    }
+    var sk = __p.constrain((__p.millis() - (MP.scrAt || 0)) / 280, 0, 1),
+      se = 1 - Math.pow(1 - sk, 3);
+    if (sk < 0.5) {
+      MP.click = false; // (not while the screen is still moving in)
+    }
+    var sctx = __p.externals.context,
+      sa = sctx.globalAlpha;
+    __p.pushMatrix();
+    __p.translate((1 - se) * 70 * (MP.scrDir || 1), 0);
+    sctx.globalAlpha = sa * __p.constrain(se * 1.4, 0, 1);
     mpDrawScreenBody();
-    // [v1.5] Digitsofpi and Kineto: invite every player online to this party
-    if (admOn() && mpServerOn() && MP.active && (MP.screen === "host" || MP.screen === "join")) {
-      var invWait = SRV.invitedAt && Date.now() - SRV.invitedAt < 30000;
-      if (mpButton(178, 520, 214, 50, SRV.inviting ? "INVITING..." : invWait ? "INVITED!" : "INVITE EVERYONE", __p.color(255, 140, 0), !SRV.inviting && !invWait)) {
-        srvInviteAll();
-      }
+    // [v1.5] INVITE PLAYERS, for everyone in a party (Digitsofpi and Kineto also get
+    // INVITE EVERYONE inside it)
+    if (invOn && mpButton(178, 520, 214, 50, "INVITE PLAYERS", __p.color(255, 140, 0))) {
+      MP.invPanel = {
+        list: [],
+        at: 0,
+        q: null,
+        loaded: false
+      };
+      MP.fields.invq = "";
+      MP.focus = null;
+      MP.click = false;
+    }
+    __p.popMatrix();
+    sctx.globalAlpha = sa;
+    if (MP.invPanel) {
+      MP.click = panelClick;
+      mpDrawInvPanel();
     }
     if (MP.modal) {
       MP.click = modalClick;
       mpDrawModal();
     }
   };
-  var mpDrawScreenBody = function mpDrawScreenBody() {
+  var mpDrawScreenFrame = function mpDrawScreenFrame() {
     shopBackground();
     // header (same style as the other DASH menus)
     __p.fill(255);
@@ -52578,6 +53086,8 @@ function program() {
     arcText("MULTIPLAYER", 95, 52);
     mpDashIcon(512, 50, 34, __p.color(255, 0, 0));
     mpDashIcon(552, 44, 34, __p.color(0, 120, 255));
+  };
+  var mpDrawScreenBody = function mpDrawScreenBody() {
     var y = 118;
     if (!window.DashNet || !window.DashNet.supported) {
       mpParagraph("Multiplayer needs WebRTC, which this browser or page does not allow. Try a recent Chrome, Edge or Firefox.", 40, y, 520, 17);
@@ -52795,7 +53305,7 @@ function program() {
     if (MP.waitT > 0 && !cutsceneIs) {
       var g = MP.waitGate || "";
       var what = g === "end" || g === "victory" ? "the finish" : g.indexOf("boss") === 0 ? "the boss" : g === "masterx" || g === "into" ? "the cutscene" : g.charAt(0) === "c" ? "the checkpoint" : "the launcher";
-      return "Waiting for your team at " + what + "... (you can't be hurt while you wait)";
+      return "Waiting for your team at " + what + "...";
     }
     return "";
   };
@@ -53135,10 +53645,12 @@ function program() {
             });
           }
           MP.chatOpen = false;
-        } else if (target === "pass" && MP.modal && MP.modal.onYes) {
+        } else if ((target === "pass" || target === "name" && MP.modal && MP.modal.nameAsk) && MP.modal && MP.modal.onYes) {
           MP.modal.onYes();
           e.preventDefault();
           return; // onYes may have changed the field
+        } else if (target === "invq" && MP.invPanel) {
+          mpInvRefresh(true); // [v1.5] search now
         } else if (target === "reply") {
           mpUseReply();
         } else if (target === "invite") {
@@ -53160,7 +53672,7 @@ function program() {
         return false;
       }
       var val = String((target === "chat" ? MP.chatText : MP.fields[target]) || "");
-      var maxLen = target === "name" ? 16 : target === "chat" ? 200 : target === "pass" ? 24 : 200;
+      var maxLen = target === "name" || target === "invq" ? 16 : target === "chat" ? 200 : target === "pass" ? 24 : 200;
       var code = target === "invite" || target === "reply";
       var before = val;
       if (k.key === "Backspace") {
@@ -55765,7 +56277,8 @@ function program() {
   // [v1.5] Every game on the website checks in every 15 s (for the server's stats:
   // how many play, when), and hears about a developer's invite that way.
   var srvHelloTick = function srvHelloTick() {
-    if (SRV.helloBusy || Date.now() - (SRV.helloAt || 0) < 15000) {
+    // ([v1.5] every 10 s, so an invite from a player arrives quickly)
+    if (SRV.helloBusy || Date.now() - (SRV.helloAt || 0) < 10000) {
       return;
     }
     SRV.helloBusy = true;
@@ -55773,17 +56286,35 @@ function program() {
     srvFetch("POST", "/api/hello", {
       dev: SRV.dev,
       mp: MP.active ? 1 : 0,
-      game: scene === "game" ? 1 : 0
+      game: scene === "game" ? 1 : 0,
+      name: srvTxt(MP.fields.name || ""), // [v1.5] for the invite list
+      inv: settings.mpInvites === false ? 0 : 1 // [v1.5] Receive Invites
     }).then(function (r) {
       SRV.helloBusy = false;
       SRV.online = typeof r.online === "number" ? r.online : SRV.online;
+      var mineP = function (pid) {
+        return SRV.party && SRV.party.id === pid || SRV.joinedParty === pid && MP.active;
+      };
       var iv = r.invite;
-      var mine = SRV.party && iv && SRV.party.id === iv.party || SRV.joinedParty === (iv && iv.party) && MP.active;
-      if (iv && iv.id !== SRV.inviteSeen && !mine) {
+      if (iv && iv.id !== SRV.inviteSeen && !mineP(iv.party)) {
         SRV.inviteSeen = iv.id;
+        iv.dev = true;
         SRV.inviteNote = iv;
         SRV.inviteAt = Date.now();
         sfx("playerJoin");
+      }
+      // [v1.5] invites from players (a developer's gets through Receive Invites: off)
+      var pis = r.pinvites || [];
+      for (var pi = pis.length - 1; pi >= 0; pi--) {
+        var v = pis[pi];
+        if (mineP(v.party) || settings.mpInvites === false && !v.dev) {
+          continue;
+        }
+        v.player = true;
+        SRV.inviteNote = v;
+        SRV.inviteAt = Date.now();
+        sfx("playerJoin");
+        break;
       }
     }, function () {
       SRV.helloBusy = false;
@@ -55846,7 +56377,7 @@ function program() {
     __p.textFont(mpSans, 15);
     __p.fill(20);
     __p.textAlign(__p.LEFT, __p.TOP);
-    var line = cleanText(iv.from || "A developer") + ", a developer of this game, invited you to play with him!";
+    var line = iv.player && !iv.dev ? cleanText(iv.from || "A player") + " invited you to their party!" : cleanText(iv.from || "A developer") + ", a developer of this game, invited you to play with him!"; // [v1.5] or a player
     var rows = mpTextWrap(line, w - 150, 0);
     for (var r = 0; r < rows.length && r < 3; r++) {
       __p.text(rows[r], x + 32, y + 16 + r * 19);
@@ -56010,6 +56541,11 @@ function program() {
     __p.noStroke();
     __p.fill(0, 0, 0, 140);
     __p.rect(-widePad - 10, 94, wideW + 20, 520);
+    mpPop("createPanel", 300, 335); // [v1.5] pops in
+    srvDrawCreatePanelIn();
+    mpPopEnd();
+  };
+  var srvDrawCreatePanelIn = function srvDrawCreatePanelIn() {
     var x = 70,
       y = 130,
       w = 460;

@@ -221,10 +221,28 @@ can't leak them. Don't copy them into it.
 
 </details>
 
+## Player invites
+
+Everyone in a party has an **INVITE PLAYERS** button on the Multiplayer screen.
+It lists the players online right now (with a search bar); each has its own
+INVITE button, usable once every 15 seconds per player (at most 12 invites a
+minute). The invited player gets a notice within about 10 seconds:
+"(name) invited you to their party!" with JOIN. The invite lasts 2 minutes and
+lets them in without the passcode of a private party (someone in the party
+invited them). Players who turn off **Settings > General > Receive Invites**
+aren't listed and don't get player invites; developer invites still reach them.
+The list shows names only, by a random id, never the device id.
+
+| | |
+|---|---|
+| `POST /api/online` `{dev, q}` | who is online (named, taking invites), up to 60 |
+| `POST /api/pinvite` `{dev, party, to, from}` | invite one player (`key` = admin key: ignores Receive Invites) |
+| `POST /api/hello` | now also sends `name` and `inv`; answers with `pinvites` |
+
 ## Developer invites
 
 Digitsofpi and Kineto (with their admin key) see an **INVITE EVERYONE** button
-on the Multiplayer screen while they are in a party. Every player on the
+inside INVITE PLAYERS while they are in a party. Every player on the
 website (in multiplayer or not) gets a notice within about 15 seconds:
 "Kineto, a developer of this game, invited you to play with him!", with JOIN
 and a close button. The invite lasts 2 minutes and lets players into the party
