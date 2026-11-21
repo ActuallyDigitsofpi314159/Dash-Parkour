@@ -44,7 +44,11 @@ stats() {
     "  Busiest hours (average players online, Pi time):",
     ( [range(0;24)] as $h | ([.hourSum, .hourN] | transpose | map(if .[1] > 0 then .[0] / .[1] else 0 end)) as $avg |
       ($avg | max) as $m |
-      $h[] | . as $i | "   \(if $i < 10 then "0" else "" end)\($i):00  \("#" * (if $m > 0 then ($avg[$i] / $m * 40 | floor) else 0 end)) \($avg[$i] * 10 | round / 10)" )
+      $h[] | . as $i | "   \(if $i < 10 then "0" else "" end)\($i):00  \("#" * (if $m > 0 then ($avg[$i] / $m * 40 | floor) else 0 end)) \($avg[$i] * 10 | round / 10)" ),
+    "",
+    "  Joins that never linked up (last 7 days), and why:",
+    ( [.days | to_entries | sort_by(.key) | .[-7:][] | .value.failWhy // {} | to_entries[]] | group_by(.key) | map({k: .[0].key, n: (map(.value) | add)}) | sort_by(-.n) | .[:12] |
+      if length == 0 then "   none reported" else .[] | "   \(.n | tostring | (" " * (4 - length)) + .)  \(.k)" end )
   '
   echo
   echo "${D}(Each device is counted by a random id the game makes; no names or addresses are kept.)${N}"

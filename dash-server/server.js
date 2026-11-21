@@ -317,7 +317,7 @@ function statDay(t) {
   const k = dayKey(t);
   let d = pstats.days[k];
   if (!d) {
-    d = pstats.days[k] = { players: 0, newPlayers: 0, mpPlayers: 0, peak: 0, mpPeak: 0, parties: 0, joins: 0, seen: {}, mpSeen: {} };
+    d = pstats.days[k] = { players: 0, newPlayers: 0, mpPlayers: 0, peak: 0, mpPeak: 0, parties: 0, joins: 0, linkFails: 0, failWhy: {}, seen: {}, mpSeen: {} };
     // keep 120 days
     const keys = Object.keys(pstats.days).sort();
     while (keys.length > 120) delete pstats.days[keys.shift()];
@@ -394,7 +394,7 @@ function statsSummary() {
   const o = onlineNow();
   const days = Object.keys(pstats.days).sort().slice(-30).map((k) => {
     const d = pstats.days[k];
-    return { day: k, players: d.players, newPlayers: d.newPlayers, mpPlayers: d.mpPlayers, peak: d.peak, mpPeak: d.mpPeak, parties: d.parties, joins: d.joins };
+    return { day: k, players: d.players, newPlayers: d.newPlayers, mpPlayers: d.mpPlayers, peak: d.peak, mpPeak: d.mpPeak, parties: d.parties, joins: d.joins, linkFails: d.linkFails || 0, failWhy: d.failWhy || {} };
   });
   return { now: o, peak: pstats.peak, mpPeak: pstats.mpPeak, totalPlayers: Object.keys(pstats.devices).length, since: pstats.since, days, hours: pstats.hourSum.map((v, i) => (pstats.hourN[i] ? Math.round((v / pstats.hourN[i]) * 10) / 10 : 0)) };
 }
@@ -415,6 +415,17 @@ function inParty(p, dev) {
     if (r && r.party === p.id && r.dev === dev) return true;
   }
   return false;
+}
+// [v1.5] the device hashes of everyone in the party (to leave them out of invites)
+function partyHashes(p) {
+  const out = new Set();
+  if (!p) return out;
+  if (p.hostDev) out.add(devHash(p.hostDev));
+  for (const x of p.roster) {
+    const r = x.rid && requests.get(x.rid);
+    if (r && r.party === p.id && r.dev) out.add(devHash(r.dev));
+  }
+  return out;
 }
 const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max: p.max, playing: p.playing, host: p.host });
 
@@ -600,6 +611,7 @@ async function handle(req, res) {
     const r = requests.get(m[1]);
     if (!r || !parties.has(r.party)) return send(res, 200, { state: "gone" });
     r.seen = Date.now();
+    if (r.dropped) return send(res, 200, { state: "dropped" }); // [v1.5] ask again
     const p = parties.get(r.party);
     // [v1.3] same: on the host's Wi-Fi (the game then links them with local addresses)
     // hostAway: the host's game hasn't checked in for a while (tab hidden, asleep...)
@@ -621,7 +633,7 @@ async function handle(req, res) {
     // [v1.5] name: the multiplayer name (for the invite list); inv: 0 = no invites from players
     const h = statHello(bdev, body.mp, body.game, { name: clean(body.name, 16), inv: body.inv !== 0 && body.inv !== false, banned });
     const out = { online: onlineNow().n };
-    if (invite && Date.now() < invite.until && invite.fromDev !== bdev && parties.has(invite.party) && !banned) {
+    if (invite && Date.now() < invite.until && invite.fromDev !== bdev && parties.has(invite.party) && !banned && !(invite.skip && invite.skip.has(devHash(bdev)))) {
       out.invite = { id: invite.id, from: invite.from, party: invite.party, name: invite.name, token: invite.token };
     }
     // [v1.5] invites from players (handed over once)
@@ -634,14 +646,29 @@ async function handle(req, res) {
     }
     return send(res, 200, out);
   }
+  // [v1.5] a join that didn't link up, and why (no addresses: only which kinds each
+  // side had and how far the link got). Counted per day for dash-party stats.
+  if (p0 === "/api/joinlog") {
+    const why = clean(body.why, 20) || "?";
+    const tag = [why, "ice:" + clean(body.ice, 30), body.mePub ? "me:pub" : "me:nopub", body.hostPub ? "host:pub" : "host:nopub", body.same ? "samenet" : "", body.mic ? "mic" : ""].filter(Boolean).join(" ");
+    const d = statDay(Date.now());
+    d.linkFails = (d.linkFails || 0) + 1;
+    d.failWhy = d.failWhy || {};
+    if (Object.keys(d.failWhy).length < 60 || d.failWhy[tag]) d.failWhy[tag] = (d.failWhy[tag] || 0) + 1;
+    const lp = parties.get(String(body.party || ""));
+    if (lp) hEvent(lp, "linkfail", tag);
+    log("LINK FAIL", tag);
+    return send(res, 200, { ok: true });
+  }
   // [v1.5] who is online (for the invite screen): players with a name who take invites
   if (p0 === "/api/online") {
     const me = bdev ? devHash(bdev) : "";
     const q = norm(body.q);
     const now = Date.now();
     const list = [];
+    const inMine = partyHashes(parties.get(String(body.party || ""))); // (already in your party)
     for (const [k, o] of online) {
-      if (k === me || now - o.seen > ONLINE_MS || !o.name || !o.inv || o.banned) continue;
+      if (k === me || inMine.has(k) || now - o.seen > ONLINE_MS || !o.name || !o.inv || o.banned) continue;
       if (q && !norm(o.name).includes(q)) continue;
       list.push({ id: o.pid, name: o.name, mp: o.mp, game: o.game, starts: q ? norm(o.name).startsWith(q) : false });
     }
@@ -714,7 +741,13 @@ async function handle(req, res) {
     invite = { id: id(6), from: clean(body.from, 16) || clean(who.name, 16), fromDev: bdev, party: ip2.id, name: ip2.name, token: ip2.inviteToken, until: ip2.inviteUntil };
     hEvent(ip2, "invite", invite.from);
     log("INVITE from", who.name, "to", ip2.id);
-    return send(res, 200, { ok: true, online: onlineNow().n, text: "Invited everyone online (" + Math.max(0, onlineNow().n - 1) + " other players) to " + ip2.name + "." });
+    // ([v1.5] not counting the players already in the party)
+    const ph = partyHashes(ip2);
+    ph.add(devHash(bdev));
+    let others = 0;
+    for (const [k, o] of online) if (Date.now() - o.seen <= ONLINE_MS && !ph.has(k)) others++;
+    invite.skip = ph; // (and they don't get it)
+    return send(res, 200, { ok: true, online: onlineNow().n, text: "Invited everyone online (" + others + " other player" + (others === 1 ? "" : "s") + ") to " + ip2.name + "." });
   }
 
   // joiner's answer code
@@ -725,6 +758,7 @@ async function handle(req, res) {
     const code = String(body.code || "");
     if (!code || code.length > MAX_CODE) return fail(res, 400, "Bad connection code.");
     r.answer = code;
+    r.answerAt = Date.now();
     r.seen = Date.now();
     return send(res, 200, { ok: true });
   }
@@ -852,17 +886,35 @@ async function handle(req, res) {
     // at once instead of waiting on them (that's what left people stuck at "waiting
     // for the host"). One who has the host's code is busy making a reply, not asking.
     const now = Date.now();
+    // [v1.5] acks: the answers the host's game got. An answer is sent with every beat
+    // until then (one lost beat used to lose the answer, and the join stuck at "Almost
+    // there"). Games without acks get each answer once, as before.
+    // drop: joins the host's game gave up on; those players ask again at once.
+    const acks = Array.isArray(body.acks) ? body.acks.slice(0, 40).map(String) : null;
+    for (const rid of acks || []) {
+      const r = requests.get(rid);
+      if (r && r.party === p.id && !r.done) {
+        r.done = true; // kept a little while (for moderation), then tidied up
+        r.seen = now + 60 * 60 * 1000;
+      }
+    }
+    for (const rid of Array.isArray(body.drop) ? body.drop.slice(0, 40).map(String) : []) {
+      const r = requests.get(rid);
+      if (r && r.party === p.id && !r.done) r.dropped = true;
+    }
     const out = { requests: [], answers: [], kicks: p.kicks.splice(0), live: [] };
     for (const r of requests.values()) {
-      if (r.party !== p.id || r.done) continue;
+      if (r.party !== p.id || r.done || r.dropped) continue;
       if (!r.admin && isBanned(r.ip, r.dev)) continue;
       if (now - r.seen < LIVE_MS || (r.offer && now - r.offerAt < 25000)) out.live.push(r.rid);
       if (!r.offer) out.requests.push({ rid: r.rid, name: r.name, admin: !!r.admin, same: !!r.same });
-      else if (r.answer && !r.given) {
+      else if (r.answer && (acks ? now - r.answerAt < 30000 : !r.given)) {
         out.answers.push({ rid: r.rid, code: r.answer });
         r.given = true;
-        r.done = true; // kept a little while (for moderation), then tidied up
-        r.seen = Date.now() + 60 * 60 * 1000;
+        if (!acks) {
+          r.done = true;
+          r.seen = now + 60 * 60 * 1000;
+        }
       }
     }
     return send(res, 200, out);

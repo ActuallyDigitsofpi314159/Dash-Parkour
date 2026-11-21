@@ -25312,54 +25312,32 @@ function program() {
     __p.popMatrix();
     __p.fill(c);
   };
-  // [v1.5] a brighter shopping bag: pink with a folded lip, a side panel, gold rope
-  // handles, a star badge and a twinkle
+  // [v1.5] a brighter shopping bag, flat like the other menu icons: pink with a folded
+  // lip, a gold handle, a star badge and a twinkle
   var drawShoppingBag = function drawShoppingBag(x, y, s) {
     __p.pushMatrix();
-    __p.translate(x, y + s * 0.02);
-    __p.rotate(-6);
+    __p.translate(x, y + s * 0.03);
     var ow = s * 0.028; // outline
-    // shadow
-    __p.noStroke();
-    __p.fill(0, 0, 0, 45);
-    __p.ellipse(s * 0.02, s * 0.3, s * 0.5, s * 0.07);
-    // back handle (behind the bag)
+    __p.strokeJoin(__p.ROUND);
+    // handle
     __p.noFill();
     __p.stroke(40, 20, 0);
-    __p.strokeWeight(s * 0.06);
-    __p.arc(s * 0.08, -s * 0.19, s * 0.2, s * 0.24, 180, 360);
-    __p.stroke(205, 145, 25);
-    __p.strokeWeight(s * 0.03);
-    __p.arc(s * 0.08, -s * 0.19, s * 0.2, s * 0.24, 180, 360);
-    // side panel
+    __p.strokeWeight(s * 0.065);
+    __p.arc(0, -s * 0.13, s * 0.24, s * 0.28, 180, 360);
+    __p.stroke(255, 205, 50);
+    __p.strokeWeight(s * 0.032);
+    __p.arc(0, -s * 0.13, s * 0.24, s * 0.28, 180, 360);
+    // bag
     __p.stroke(40, 0, 15);
     __p.strokeWeight(ow);
-    __p.strokeJoin(__p.ROUND);
-    __p.fill(200, 30, 85);
-    __p.quad(s * 0.16, -s * 0.15, s * 0.27, -s * 0.2, s * 0.27, s * 0.22, s * 0.16, s * 0.28);
-    // front
     __p.fill(255, 75, 125);
-    __p.rect(-s * 0.26, -s * 0.15, s * 0.42, s * 0.43, s * 0.03);
+    __p.rect(-s * 0.24, -s * 0.15, s * 0.48, s * 0.43, s * 0.04);
     // folded lip
     __p.fill(255, 150, 180);
-    __p.rect(-s * 0.26, -s * 0.15, s * 0.42, s * 0.07, s * 0.02);
-    // front handle
-    __p.noFill();
-    __p.stroke(40, 20, 0);
-    __p.strokeWeight(s * 0.06);
-    __p.arc(-s * 0.05, -s * 0.12, s * 0.22, s * 0.26, 180, 360);
-    __p.stroke(255, 205, 50);
-    __p.strokeWeight(s * 0.03);
-    __p.arc(-s * 0.05, -s * 0.12, s * 0.22, s * 0.26, 180, 360);
-    // rivets where the handle meets the bag
-    __p.noStroke();
-    __p.fill(255, 225, 120);
-    __p.ellipse(-s * 0.16, -s * 0.115, s * 0.04, s * 0.04);
-    __p.ellipse(s * 0.06, -s * 0.115, s * 0.04, s * 0.04);
+    __p.rect(-s * 0.24, -s * 0.15, s * 0.48, s * 0.075, s * 0.02);
     // star badge
-    var bx = -s * 0.05,
+    var bx = 0,
       by = s * 0.09;
-    __p.stroke(40, 0, 15);
     __p.strokeWeight(ow * 0.8);
     __p.fill(255);
     __p.ellipse(bx, by, s * 0.25, s * 0.25);
@@ -25372,15 +25350,12 @@ function program() {
       __p.vertex(bx + __p.cos(ang) * rr, by + __p.sin(ang) * rr);
     }
     __p.endShape(__p.CLOSE);
-    // shine down the front
-    __p.noStroke();
-    __p.fill(255, 255, 255, 70);
-    __p.rect(-s * 0.225, -s * 0.06, s * 0.035, s * 0.3, s * 0.02);
     // twinkle
     var tw = (Math.sin(__p.millis() / 260) + 1) / 2;
     var sx = s * 0.25,
-      sy = -s * 0.27,
+      sy = -s * 0.25,
       sr = s * (0.05 + tw * 0.035);
+    __p.noStroke();
     __p.fill(255, 255, 210, 160 + tw * 95);
     __p.quad(sx, sy - sr, sx + sr * 0.25, sy, sx, sy + sr, sx - sr * 0.25, sy);
     __p.quad(sx - sr, sy, sx, sy - sr * 0.25, sx + sr, sy, sx, sy + sr * 0.25);
@@ -27171,12 +27146,28 @@ function program() {
   SAVE_TEMPLATE_V.skin_22 = false;
   SAVE_TEMPLATE_V.renderScale = 100;
   var SaveV = makeSaveSystem(SAVE_TEMPLATE_V);
+  // [v1.5] The 1.5 layout ("uuu..."): the 1.1 layout plus Receive Invites and the two
+  // volume sliders. (A "uu" code's body never starts with "u", so this tells them
+  // apart.) Older codes still load, and the game saves them in this layout at once.
+  var SAVE_TEMPLATE_W = {};
+  for (var KeyW in SAVE_TEMPLATE_V) {
+    if (SAVE_TEMPLATE_V.hasOwnProperty(KeyW)) {
+      SAVE_TEMPLATE_W[KeyW] = SAVE_TEMPLATE_V[KeyW];
+    }
+  }
+  SAVE_TEMPLATE_W.mpInvites = true;
+  SAVE_TEMPLATE_W.musicVolume = 100;
+  SAVE_TEMPLATE_W.sfxVolume = 100;
+  var SaveW = makeSaveSystem(SAVE_TEMPLATE_W);
   // Read either kind of code; null if it isn't one.
   var savedPlayerName = "";
   var decodeAnySave = function decodeAnySave(str) {
     str = String(str || "").replace(/^\s+|\s+$/g, "");
     if (!str) {
       return null;
+    }
+    if (str.slice(0, 3) === "uuu") {
+      return SaveW.load(str.slice(3)); // [v1.5]
     }
     if (str.slice(0, 2) === "uu") {
       return SaveV.load(str.slice(2));
@@ -27775,7 +27766,7 @@ function program() {
   var generateSaveString = function generateSaveString() {
     var dataToPack = exportLiveGlobalsToObj();
     dataToPack.playerName = savePlayerName();
-    return "uu" + SaveV.save(dataToPack); // [v1.1]
+    return "uuu" + SaveW.save(dataToPack); // [v1.5] (the newest layout)
   };
   var applyLoadedDataToGlobals = function applyLoadedDataToGlobals(data) {
     if (data === null || data === undefined) {
@@ -27861,6 +27852,15 @@ function program() {
     achToastOn = false; // loading a save is not a new unlock
     applyLoadedDataToGlobals(loaded);
     achToastOn = achToastReady;
+    // [v1.5] settings this device also keeps by itself (an older code leaves them be)
+    try {
+      if (typeof loaded.mpInvites === "boolean") {
+        window.localStorage.setItem("dashparkour-invites", settings.mpInvites ? "1" : "0");
+      }
+    } catch (e) {}
+    if (typeof loaded.musicVolume !== "number") {
+      settings.musicVolume = typeof dashSnd !== "undefined" && dashSnd.mv !== undefined ? dashSnd.mv : settings.musicVolume;
+    }
     return true;
   };
 
@@ -36532,7 +36532,8 @@ function program() {
       if (this.col) {
         __p.stroke(this.col[0], this.col[1], this.col[2], this.life * 2); // [v1.1] an exploding enemy's own colour
       } else {
-        __p.stroke(skins[currentSkin].mainColor, this.life * 2);
+        var dcol = this.dashCol || ownParticleCol(); // [v1.5] (whose Dash it was)
+        __p.stroke(dcol[0], dcol[1], dcol[2], this.life * 2);
       }
       __p.strokeWeight(this.size * 1.6);
       if (particleVisible) {
@@ -36556,7 +36557,8 @@ function program() {
       }
     } else if (this.type === "spawn") {
       // Inverse of death: red trails converging inward
-      __p.stroke(skins[currentSkin].mainColor, this.life * 1.5); // Orange for spawn
+      var scol = this.dashCol || ownParticleCol(); // [v1.5] (whose Dash it was)
+      __p.stroke(scol[0], scol[1], scol[2], this.life * 1.5);
       __p.strokeWeight(this.size * 1.4);
       if (particleVisible) {
         __p.line(this.x, this.y, this.x + this.vx * 2, this.y + this.vy * 2);
@@ -36706,7 +36708,27 @@ function program() {
     });
   };
   var lowParticleAcc = 0;
+  // [v1.5] Particles made for ANOTHER player (their spawn and death bursts in
+  // multiplayer) use that player's skin and colour; everything that picks a look
+  // from the skin used to read this game's own skin, so with the Parkour Master
+  // costume on, other players appeared in pink and purple particles.
+  var particleSkin = null,
+    particleCol = null;
+  // the colour a Dash is shown in: a red Dash takes its multiplayer colour
+  var dashParticleCol = function dashParticleCol(sk, mpColorIdx) {
+    var c = (skins[sk] || skins[0] || {}).mainColor;
+    var rgb = c !== undefined ? [__p.red(c), __p.green(c), __p.blue(c)] : [255, 0, 0];
+    if (rgb[0] === 255 && rgb[1] === 0 && rgb[2] === 0 && mpColorIdx) {
+      var m = MP_COLORS[mpColorIdx % MP_COLORS.length];
+      rgb = [m[0], m[1], m[2]];
+    }
+    return rgb;
+  };
+  var ownParticleCol = function ownParticleCol() {
+    return dashParticleCol(currentSkin, typeof MP !== "undefined" && MP.active ? mpMyColor() : 0);
+  };
   var spawnParticles = function spawnParticles(x, y, count, type, speed, boss) {
+    var psk = particleSkin !== null ? particleSkin : currentSkin;
     // [v5] Fancy Graphics off: about a third of the particles (spawn particles
     // stay, they show where you appear)
     if (!settings.fancyGraphics && type !== "spawn") {
@@ -36715,16 +36737,17 @@ function program() {
       lowParticleAcc -= count;
     }
     // [v1.1] Party Dash: his dust is confetti (a little more of it, popping upward)
-    var partyDust = type === "dust" && currentSkin === 24;
+    var partyDust = type === "dust" && psk === 24;
     if (partyDust) {
       type = "confetti";
       count = Math.ceil(count * 1.5);
     }
     var pmStart = particles.length; // [v1.5] (see the Parkour Master colours below)
+    var colStart = particles.length;
     // [v1.5] Money Dash kicks up cash (bills and coins), Bubbly Dash pink glitter
-    if (type === "dust" && currentSkin === 25) {
+    if (type === "dust" && psk === 25) {
       type = "money";
-    } else if (type === "dust" && currentSkin === 14) {
+    } else if (type === "dust" && psk === 14) {
       type = "glitter";
       count = Math.ceil(count * 1.5);
     }
@@ -36809,10 +36832,19 @@ function program() {
     }
     // [v1.5] the Parkour Master costume: everything around his Dash is pink and purple
     // (hitting a spike, lava... mixes that obstacle's own colour in with them)
-    if (currentSkin === 21 && !boss && p && __p.abs(x - p.x) < 60 && __p.abs(y - p.y) < 60 && PM_TINT_TYPES[type] !== undefined) {
+    if (psk === 21 && !boss && (particleSkin !== null || p && __p.abs(x - p.x) < 60 && __p.abs(y - p.y) < 60) && PM_TINT_TYPES[type] !== undefined) {
       for (var pk = pmStart; pk < particles.length; pk++) {
         if (PM_TINT_TYPES[type] === 1 || (pk - pmStart) % 2 === 0) {
           particles[pk].pm = PM_COLS[Math.floor(__p.random(0, PM_COLS.length))];
+        }
+      }
+    }
+    // [v1.5] spawn and death bursts: the colour of the Dash they belong to
+    if ((type === "spawn" || type === "death") && !boss) {
+      var bc = particleCol || (particleSkin === null ? null : dashParticleCol(particleSkin, 0));
+      for (var ck = colStart; ck < particles.length; ck++) {
+        if (!particles[ck].col) {
+          particles[ck].dashCol = bc; // (null: this game's own Dash)
         }
       }
     }
@@ -38210,8 +38242,13 @@ function program() {
         cyc -= IDLE_LOOKS[il][2];
       }
     }
-    this.idleLX = __p.lerp(this.idleLX || 0, ilx, dtLerp(0.12));
-    this.idleLY = __p.lerp(this.idleLY || 0, ily, dtLerp(0.12));
+    // ([v1.5] snappy, the way his eyes move when keys are pressed: a quick spring that
+    // overshoots a little and settles, then holds; not a slow glide)
+    var ik = __p.min(DT, 3);
+    this.idleVX = ((this.idleVX || 0) + (ilx - (this.idleLX || 0)) * 0.3 * ik) * Math.pow(0.55, ik);
+    this.idleVY = ((this.idleVY || 0) + (ily - (this.idleLY || 0)) * 0.3 * ik) * Math.pow(0.55, ik);
+    this.idleLX = (this.idleLX || 0) + this.idleVX * ik;
+    this.idleLY = (this.idleLY || 0) + this.idleVY * ik;
     faceX += this.idleLX * scaleOffset * 0.9;
     faceY += this.idleLY * this.h * 0.1;
 
@@ -40721,10 +40758,12 @@ function program() {
       });
     }
   };
+  var wipeDrawnFrame = -1;
   var handleScreenWipe = function handleScreenWipe() {
     if (!screenWipeActive) {
       return;
     }
+    wipeDrawnFrame = __p.frameCount;
     p.vx = 0;
     bossTransTimer += DT;
 
@@ -40752,7 +40791,12 @@ function program() {
     }
 
     // Frame when everything is covered
-    if (dtCross(bossTransTimer, bossTransCoverFrame)) {
+    if (dtCross(bossTransTimer, bossTransCoverFrame) && specWipeTo) {
+      // [v1.5] a spectator moving to the part of X-4 the player they watch is in
+      var sw = specWipeTo;
+      specWipeTo = null;
+      mpSpecApplyStage(sw);
+    } else if (dtCross(bossTransTimer, bossTransCoverFrame)) {
       // Safe zone to alter scenes, update coordinates, reset maps, etc.
       bossRemixStage = __p.min(bossRemixStage + 1, 2);
       loadLevel(currentLevel);
@@ -40771,6 +40815,31 @@ function program() {
     }
   };
 
+  // [v1.5] Spectating in X-4: the part (and vortex) of the player being watched.
+  // { rs: 0-2, fb3: in the vortex } while a spectator's wipe is on its way there.
+  var specWipeTo = null;
+  var mpSpecApplyStage = function mpSpecApplyStage(w) {
+    bossFight = false;
+    bossIntro = false;
+    switchBossRemix = false;
+    clearBossAttackState();
+    bossRemixStage = w.fb3 ? 2 : w.rs;
+    if (finalBossPhase === 3 && !w.fb3) {
+      finalBossPhase = 1;
+    }
+    loadLevel(currentLevel);
+    p.reset(lvl.spawn.x, lvl.spawn.y);
+    checkpointReached = false;
+    checkCircSize = 0;
+    if (w.fb3) {
+      // (what the end of the Master X cutscene does)
+      finalBossPhase = 3;
+      FinalPhase.reset();
+      p.normalize();
+      p.clearStatus();
+      p.initiateFinalBoss();
+    }
+  };
   // Trigger logic block to run at any moment
   var triggerScreenWipe = function triggerScreenWipe() {
     initWipePlatforms();
@@ -46076,7 +46145,9 @@ function program() {
                 continue;
               }
               if (mpEnemyPuppetFor(enemies[i]) && !mpEnemyLocal(enemies[i])) {
-                mpEnemyApply(enemies[i]); // [MP] Linked: the host's enemy
+                if (!mpEnemyCamp(enemies[i])) {
+                  mpEnemyApply(enemies[i]); // [MP] Linked: the host's enemy
+                }
               } else {
                 dtSubsteps(function () {
                   enemies[i].update(mpEnemyTarget(enemies[i]), lvl.objects);
@@ -47369,6 +47440,7 @@ function program() {
 
             // Handle Game Objects
             FinalPhase.update();
+            mpSpectateCam(); // [v1.5] (a spectator watching someone in another part leaves the vortex)
 
             // [v1.5] Dash still at a spot from the stage before (far outside the vortex)
             // starts in the middle: the vortex's edges used to pin them in a corner
@@ -47751,6 +47823,10 @@ function program() {
           // used to play behind them, so you joined it partway through), then a short beat
           if (cutsceneName === "intro" && cFrames < 1 && (window.__dashBootHold || loading)) {
             introWait = 45;
+          }
+          if (cutsceneName === "intro" && cFrames < 1) {
+            ctOpacity = 255; // (black until it starts: the first text used to show while it waited,
+            ctOpacity2 = 255; // then went black and faded in again)
           }
           if (cutsceneName === "intro" && introWait > 0) {
             introWait -= DT;
@@ -49385,6 +49461,13 @@ function program() {
           __p.rect(-10 - widePad, -10, 700 + widePad * 2, fadeIntoGame + 350);
         }
       }
+      // [v1.5] the vortex is drawn by its own branch, which never ran the platform wipe
+      // (a spectator's wipe into the vortex stayed on screen for good)
+      if (screenWipeActive && scene === "game" && wipeDrawnFrame !== __p.frameCount) {
+        __p.pushStyle();
+        handleScreenWipe();
+        __p.popStyle();
+      }
       __p.pushStyle();
       mpDrawOverlay(); // [MP] chat, notices, race results
       __p.popStyle();
@@ -49687,6 +49770,16 @@ function program() {
   };
   var mpLeave = function mpLeave(reason) {
     var wasActive = MP.active;
+    // [v1.5] the party just left: the list leaves you out of its count until the
+    // server has heard from the host (it showed you still in it)
+    if (wasActive && !MP.isHost && typeof SRV !== "undefined" && SRV.joinedParty) {
+      SRV.leftParty = {
+        id: SRV.joinedParty,
+        n: mpCount(),
+        at: Date.now()
+      };
+      SRV.listAt = 0; // (and refresh it now)
+    }
     mpBroadcast({
       t: "bye",
       id: MP.myId
@@ -49771,6 +49864,7 @@ function program() {
       lv: currentLevel,
       fb: finalBossPhase,
       rs: currentLevel === 15 ? bossRemixStage : 0, // [v1.5] which X-4 stage
+      bf: bossFight || bossIntro ? 1 : 0, // [v1.5] in a boss fight (spectators start it too)
       x: __p.round(p.x * 10) / 10,
       y: __p.round(p.y * 10) / 10,
       vx: __p.round(p.vx * 100) / 100,
@@ -49853,7 +49947,8 @@ function program() {
         t: "gate",
         id: MP.myId,
         g: name,
-        ses: MP.session
+        ses: MP.session,
+        ep: MP.gateEp || 0
       });
     }
     if (mpGateDone(name)) {
@@ -49880,12 +49975,23 @@ function program() {
     }
     return true;
   };
-  var mpOnLocalDeath = function mpOnLocalDeath() {
-    // a death resets launcher/boss/finish arrivals (checkpoints stay reached)
+  // [v1.5] A death resets the launcher / boss / cutscene / finish arrivals (checkpoints
+  // stay reached). Each game used to reset them when its own death played, which in
+  // Linked is a moment apart: a teammate who had already respawned and reached the
+  // launcher again had that arrival wiped, and the two games then disagreed for good
+  // (one launched, the other waited). Now every game counts the team's deaths
+  // (MP.gateEp) the moment it hears of one, and arrivals carry that count.
+  var mpGateReset = function mpGateReset() {
+    MP.gateEp = (MP.gateEp || 0) + 1;
     for (var gn in MP.gates) {
       if (gn.charAt(0) !== "c") {
         delete MP.gates[gn];
       }
+    }
+  };
+  var mpOnLocalDeath = function mpOnLocalDeath() {
+    if (!MP.active || mpCount() < 2 || MP.mode !== "linked" || !MP.linkedDeath) {
+      mpGateReset(); // (a teammate's death already did this when it was heard)
     }
     if (!MP.active || mpCount() < 2) {
       p.lastHurtBy = undefined;
@@ -50074,9 +50180,26 @@ function program() {
     }
     if (!mine && was) {
       e.mpBlend = 1;
+      e.mpStay = true; // [v1.5] (see mpEnemyCamp)
     }
     e.mpMine = mine;
     return mine;
+  };
+  // [v1.5] An enemy that was chasing you and is now far behind stays where you left
+  // it, until the host's copy of it comes close. It used to glide over to the host's
+  // copy, which (with nobody near it in the host's game) was usually still at its
+  // spawn: thorns slid back home as soon as they were off screen.
+  var mpEnemyCamp = function mpEnemyCamp(e) {
+    if (!e.mpStay) {
+      return false;
+    }
+    var v = MP.wview;
+    var rb = v && v.b.map[e.mpId];
+    if (!rb || rb[5] !== 1 || __p.abs(rb[1] - e.x) + __p.abs(rb[2] - e.y) < 200) {
+      e.mpStay = false; // back with the host (or the host's copy is gone)
+      return false;
+    }
+    return true;
   };
   var mpEnemyApply = function mpEnemyApply(e) {
     var v = MP.wview;
@@ -50627,6 +50750,7 @@ function program() {
   var mpSceneChanged = function mpSceneChanged() {
     MP.gates = {};
     MP.gateSent = {};
+    MP.gateEp = 0; // [v1.5] (a new level: no deaths yet)
     MP.finished = false;
     // [v1.5] no name yet: ask for one first
     if (scene === "Multiplayer" && !MP.active && !MP.join && !String(MP.fields.name || "").replace(/\s+/g, "") && !(MP.modal && MP.modal.nameAsk)) {
@@ -50814,6 +50938,21 @@ function program() {
     }
     MP.specId = list[idx].id;
     var pl2 = list[idx];
+    // [v1.5] X-4: go to the part (or the vortex) they're in, with the platform wipe;
+    // and if they're fighting the boss, start it here too so it can be seen
+    if (currentLevel === 15 && pl2.st && pl2.st.lv === 15 && !cutsceneIs) {
+      var wantFb3 = pl2.st.fb === 3,
+        wantRs = wantFb3 ? 2 : pl2.st.rs || 0;
+      if ((wantRs !== bossRemixStage || wantFb3 !== (finalBossPhase === 3)) && !screenWipeActive) {
+        specWipeTo = {
+          rs: wantRs,
+          fb3: wantFb3
+        };
+        triggerScreenWipe();
+      } else if (!screenWipeActive && !wantFb3 && wantRs === 2 && pl2.st.bf && !bossFight && !bossIntro && bosses[world - 1] && bosses[world - 1].startFight) {
+        bosses[world - 1].startFight();
+      }
+    }
     var snap = mpSample(pl2) || pl2.st;
     if (!snap) {
       return;
@@ -51015,11 +51154,15 @@ function program() {
         sfx("chat"); // [v1.1] sound
         return;
       case "gate":
-        if (m.ses === MP.session) {
+        // ([v1.5] checkpoints always count; anything else only from the same life)
+        if (m.ses === MP.session && (m.g.charAt(0) === "c" || m.ep === undefined || m.ep === (MP.gateEp || 0))) {
           (MP.gates[m.g] || (MP.gates[m.g] = {}))[m.id] = true;
         }
         return;
       case "die":
+        if (m.ses === MP.session && MP.mode === "linked") {
+          mpGateReset(); // [v1.5] the moment it's heard (see mpGateReset)
+        }
         if (m.ses === MP.session && scene === "game" && !p.dead && !p.deathTriggered && MP.mode === "linked" && !MP.spectating) {
           MP.linkedDeath = true;
           p.health = 0;
@@ -51055,6 +51198,18 @@ function program() {
         return;
       case "wld":
         mpApplyWorld(m); // [v1.1] Linked: the host's enemies and boss
+        return;
+      case "admmode":
+        // [v1.5] a developer in the party switched the mode
+        pl = MP.players[fromId];
+        if (MP.isHost && pl && pl.st && pl.st.adm && (m.mode === "linked" || m.mode === "race") && MP.mode !== m.mode) {
+          MP.mode = m.mode;
+          mpBroadcast({
+            t: "mode",
+            mode: m.mode
+          });
+          mpChatLine("", mpShownName(pl) + " (developer) switched to " + (m.mode === "race" ? "Race" : "Linked") + ".", -1);
+        }
         return;
       case "admlv":
         // [v1.5] a developer in the party chose a level: start it for everyone
@@ -51278,6 +51433,9 @@ function program() {
     return true;
   };
   var mpDropLink = function mpDropLink(id) {
+    if (typeof SRV !== "undefined" && SRV.party) {
+      SRV.lastBeat = 0; // [v1.5] tell the party list straight away that they left
+    }
     for (var i = MP.links.length - 1; i >= 0; i--) {
       if (MP.links[i].id === id) {
         try {
@@ -51797,7 +51955,13 @@ function program() {
     var j = MP.join;
     j.status = "making";
     // [v1.3] same Wi-Fi as the host (the server says so): get the local address first
-    (j.same ? mpTryUnlockLocal() : Promise.resolve(true)).then(function () {
+    // ([v1.5] but never wait on the browser's microphone question for more than 6 s:
+    // the host had dropped the join by the time it was answered)
+    (j.same ? Promise.race([mpTryUnlockLocal(), new Promise(function (res) {
+      setTimeout(function () {
+        res(false);
+      }, 6000);
+    })]) : Promise.resolve(true)).then(function () {
       return window.DashNet.acceptInvite(MP.fields.invite);
     }).then(function (r) {
       if (MP.join !== j) {
@@ -52375,12 +52539,18 @@ function program() {
           pl.deadFx = true;
           var dx = pl.ghostShown && pl.ghost ? pl.ghost.x : fx.x,
             dy = pl.ghostShown && pl.ghost ? pl.ghost.y : fx.y + fy;
+          particleSkin = st.sk | 0; // [v1.5] their skin and colour, not ours
+          particleCol = dashParticleCol(st.sk | 0, pl.color);
           spawnParticles(dx, dy, 40, "death", 6);
+          particleSkin = particleCol = null;
         } else if (fx && !fx.d && pl.deadFx) {
           pl.deadFx = false;
         }
         if (fx && fx.spn && !pl.away) {
+          particleSkin = st.sk | 0;
+          particleCol = dashParticleCol(st.sk | 0, pl.color);
           spawnParticles(fx.x, fx.y + fy, dtCount(20), "spawn", 1.5);
+          particleSkin = particleCol = null;
         }
       }
       // [v1.1] a paused player (other tab, or no news for a moment) stays where
@@ -52530,7 +52700,9 @@ function program() {
   };
   // Effective unlock level for the level/area pickers.
   var mpUnlock = function mpUnlock() {
-    return MP.active && !MP.isHost ? MP.hostUnlock : lvlUnlock;
+    // [v1.5] Digitsofpi and Kineto can pick any level for the party, so every level is
+    // open to them on the map (picking one past the host's progress did nothing)
+    return MP.active && !MP.isHost ? admOn() ? levels.length : MP.hostUnlock : lvlUnlock;
   };
   // ---------------- UI helpers ----------------
   var mpButton = function mpButton(x, y, w, h, label, col, enabled) {
@@ -52885,19 +53057,41 @@ function program() {
     ctx.globalAlpha = mpPopStack[mpPopStack.length - 1] * __p.constrain(k * 1.8, 0, 1);
     return k;
   };
+  // [v1.5] ...and shrink and fade out when they close: mpPopOut(at, cx, cy) is true
+  // while the closing one is still showing (draw it, without clicks, then mpPopEnd)
+  var mpPopOut = function mpPopOut(at, cx, cy) {
+    var k = 1 - (__p.millis() - at) / 170;
+    if (!at || k <= 0) {
+      return false;
+    }
+    var ctx = __p.externals.context;
+    mpPopStack.push(ctx.globalAlpha);
+    __p.pushMatrix();
+    __p.translate(cx, cy);
+    __p.scale(0.84 + 0.16 * k);
+    __p.translate(-cx, -cy);
+    ctx.globalAlpha = mpPopStack[mpPopStack.length - 1] * k;
+    return true;
+  };
   var mpPopEnd = function mpPopEnd() {
     __p.popMatrix();
     __p.externals.context.globalAlpha = mpPopStack.length ? mpPopStack.pop() : 1;
   };
-  var mpDrawModal = function mpDrawModal() {
-    var M = MP.modal;
+  var mpDrawModal = function mpDrawModal(closing) {
+    var M = closing || MP.modal;
     if (!M.popId) {
       M.popId = "modal" + Math.random(); // (each new dialog pops in)
     }
     __p.noStroke();
-    __p.fill(0, 0, 0, 150 * __p.constrain((__p.millis() - (MP.pops && MP.pops[M.popId] ? MP.pops[M.popId].at : __p.millis())) / 160, 0, 1));
+    __p.fill(0, 0, 0, closing ? 150 * __p.max(0, 1 - (__p.millis() - closing.outAt) / 170) : 150 * __p.constrain((__p.millis() - (MP.pops && MP.pops[M.popId] ? MP.pops[M.popId].at : __p.millis())) / 160, 0, 1));
     __p.rect(-widePad - 10, -10, wideW + 20, 620);
-    mpPop(M.popId, 300, 300);
+    if (closing) {
+      if (!mpPopOut(closing.outAt, 300, 300)) {
+        return;
+      }
+    } else {
+      mpPop(M.popId, 300, 300);
+    }
     __p.stroke(0);
     __p.strokeWeight(6);
     __p.fill(255);
@@ -52905,7 +53099,7 @@ function program() {
     mpArcLine(M.title, 300, 172, 12, __p.color(0, 120, 255), __p.CENTER);
     mpParagraph(M.text, 115, 212, 370, 14, 40);
     if (M.field) {
-      if (MP.focus === null && !M.focused) {
+      if (MP.focus === null && !M.focused && !closing) {
         MP.focus = M.field; // ready to type
         M.focused = true;
       }
@@ -52980,7 +53174,8 @@ function program() {
     var q = MP.fields.invq || "";
     srvFetch("POST", "/api/online", {
       dev: SRV.dev,
-      q: srvTxt(q)
+      q: srvTxt(q),
+      party: mpInvParty() // [v1.5] (players already in it aren't listed)
     }).then(function (r) {
       I.busy = false;
       I.list = r.players || [];
@@ -53020,13 +53215,20 @@ function program() {
       mpToast(e.message);
     });
   };
-  var mpDrawInvPanel = function mpDrawInvPanel() {
-    var I = MP.invPanel;
-    var click = MP.click;
+  var mpDrawInvPanel = function mpDrawInvPanel(closing) {
+    var I = closing || MP.invPanel;
+    var click = closing ? false : MP.click;
     __p.noStroke();
-    __p.fill(0, 0, 0, 140);
+    __p.fill(0, 0, 0, closing ? 140 * __p.max(0, 1 - (__p.millis() - closing.outAt) / 170) : 140);
     __p.rect(-widePad - 10, 94, wideW + 20, 520);
-    mpPop("invPanel", 300, 320);
+    if (closing) {
+      if (!mpPopOut(closing.outAt, 300, 320)) {
+        return;
+      }
+      MP.click = false;
+    } else {
+      mpPop("invPanel", 300, 320);
+    }
     var x = 60,
       y = 112,
       w = 480,
@@ -53038,7 +53240,9 @@ function program() {
     mpArcLine("INVITE PLAYERS", 300, y + 16, 12, __p.color(0, 120, 255), __p.CENTER);
     // search (as you type, a moment after the last key)
     mpField("invq", x + 24, y + 58, w - 48, 40, "Search players...");
-    if (MP.fields.invq !== I.typed) {
+    if (closing) {
+      I.typedAt = 0;
+    } else if (MP.fields.invq !== I.typed) {
       I.typed = MP.fields.invq;
       I.typedAt = Date.now();
     }
@@ -53046,7 +53250,9 @@ function program() {
       I.typedAt = 0;
       mpInvRefresh(true);
     }
-    mpInvRefresh(false); // (and every 5 s)
+    if (!closing) {
+      mpInvRefresh(false); // (and every 5 s)
+    }
     var ly = y + 112,
       rh = 46,
       maxRows = admOn() ? 6 : 7;
@@ -53153,12 +53359,51 @@ function program() {
       MP.fields.invq = "";
       MP.focus = null;
       MP.click = false;
+      panelClick = false; // [v1.5] (the same click pressed INVITE EVERYONE / INVITE under it)
     }
     __p.popMatrix();
     sctx.globalAlpha = sa;
     if (MP.invPanel) {
       MP.click = panelClick;
       mpDrawInvPanel();
+    }
+    // [v1.5] closing animations: what was open last frame and isn't now
+    if (MP.lastInv && !MP.invPanel) {
+      MP.lastInv.outAt = __p.millis();
+      MP.invOut = MP.lastInv;
+    }
+    MP.lastInv = MP.invPanel;
+    if (MP.invOut && !MP.invPanel) {
+      var ic = MP.click;
+      mpDrawInvPanel(MP.invOut);
+      MP.click = ic;
+      if (__p.millis() - MP.invOut.outAt > 180) {
+        MP.invOut = null;
+      }
+    }
+    if (MP.lastScreen === "create" && MP.screen !== "create") {
+      MP.createOutAt = __p.millis();
+    }
+    MP.lastScreen = MP.screen;
+    if (MP.createOutAt && MP.screen !== "create") {
+      srvDrawCreatePanel(MP.createOutAt);
+      if (__p.millis() - MP.createOutAt > 180) {
+        MP.createOutAt = 0;
+      }
+    }
+    if (MP.lastModal && MP.lastModal !== MP.modal) {
+      MP.lastModal.outAt = __p.millis();
+      MP.modalOut = MP.lastModal;
+    }
+    MP.lastModal = MP.modal;
+    if (MP.modalOut && !MP.modal) {
+      var mc = MP.click;
+      MP.click = false;
+      mpDrawModal(MP.modalOut);
+      MP.click = mc;
+      if (__p.millis() - MP.modalOut.outAt > 180) {
+        MP.modalOut = null;
+      }
     }
     if (MP.modal) {
       MP.click = modalClick;
@@ -53313,6 +53558,19 @@ function program() {
         mpParagraph("The host chooses the levels and you follow them in automatically. You can still change your skin in the shop. Press the slash key to chat.", 40, y + 30, 520, 15);
         mpLabel("Players", 40, y + 86);
         mpPlayerList(40, y + 112);
+        // [v1.5] Digitsofpi and Kineto can switch the mode even when they aren't hosting
+        if (admOn() && MP.links[0]) {
+          mpLabel("Mode (developer)", 330, y + 86);
+          var admModes = [["linked", "LINKED", __p.color(0, 160, 90)], ["race", "RACE", __p.color(230, 110, 0)]];
+          for (var am = 0; am < 2; am++) {
+            if (mpButton(330 + am * 120, y + 112, 110, 40, admModes[am][1], MP.mode === admModes[am][0] ? admModes[am][2] : __p.color(150)) && MP.mode !== admModes[am][0]) {
+              mpSendRaw(MP.links[0], {
+                t: "admmode",
+                mode: admModes[am][0]
+              });
+            }
+          }
+        }
         if (mpButton(40, 520, 120, 50, "LEAVE", __p.color(120))) {
           mpLeave();
         }
@@ -53384,6 +53642,26 @@ function program() {
         mpLeave();
       }
     }
+  };
+  // [v1.5] a black rectangle (alpha 0-255) with its edges on whole screen pixels
+  var mpSnapRect = function mpSnapRect(x, y, w, h, a) {
+    var ctx = __p.externals.context;
+    var m = ctx.getTransform ? ctx.getTransform() : null;
+    if (!m || m.b !== 0 || m.c !== 0) {
+      __p.noStroke();
+      __p.fill(0, 0, 0, a);
+      __p.rect(x, y, w, h);
+      return;
+    }
+    var x0 = Math.round(x * m.a + m.e),
+      y0 = Math.round(y * m.d + m.f),
+      x1 = Math.round((x + w) * m.a + m.e),
+      y1 = Math.round((y + h) * m.d + m.f);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "rgba(0,0,0," + __p.constrain(a / 255, 0, 1) + ")";
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.restore();
   };
   // ---------------- overlays: chat, toasts, gates, race results ----------------
   var mpWaitingText = function mpWaitingText() {
@@ -53507,9 +53785,9 @@ function program() {
     for (var r0 = 0; r0 < rows.length; r0++) {
       var R = rows[r0];
       var ly = bottom - r0 * rowH;
-      __p.noStroke();
-      __p.fill(0, 0, 0, R.a * 0.45);
-      __p.rect(chatX, ly - rowH + 1, boxW, rowH);
+      // [v1.5] snapped to whole screen pixels: rows drawn at fractions of a pixel left
+      // thin see-through seams between them
+      mpSnapRect(chatX, ly - rowH + 1, boxW, rowH, R.a * 0.45);
       __p.textAlign(__p.LEFT, __p.BOTTOM);
       var tx = chatX + 6;
       if (R.pre) {
@@ -55887,6 +56165,14 @@ function program() {
     SRV.listing = true;
     srvFetch("GET", "/api/parties?q=" + encodeURIComponent(MP.fields.search || "") + "&dev=" + SRV.dev).then(function (j) {
       SRV.list = j.parties || [];
+      var lp = SRV.leftParty;
+      if (lp && Date.now() - lp.at < 15000) {
+        for (var li = 0; li < SRV.list.length; li++) {
+          if (SRV.list[li].id === lp.id && SRV.list[li].n >= lp.n) {
+            SRV.list[li].n = __p.max(1, lp.n - 1); // (still counted you)
+          }
+        }
+      }
       SRV.banned = !!j.banned;
       SRV.listErr = "";
     }, function (e) {
@@ -55972,6 +56258,30 @@ function program() {
       }
     };
   };
+  // [v1.5] A join that didn't link up tells the server why, without any addresses:
+  // which kinds of address each side had and how far the link got. (dash-party stats)
+  var srvJoinReport = function srvJoinReport(j, why) {
+    try {
+      var d = window.DashNet && window.DashNet.describe ? window.DashNet.describe : function () {
+        return {};
+      };
+      var mine = j.code ? d(j.code) || {} : {},
+        theirs = MP.fields.invite ? d(MP.fields.invite) || {} : {};
+      var pc = j.pc;
+      srvFetch("POST", "/api/joinlog", {
+        dev: SRV.dev,
+        party: j.partyRef ? j.partyRef.id : "",
+        why: why,
+        st: j.status,
+        ice: pc ? pc.iceConnectionState + "/" + pc.connectionState : "none",
+        mePub: !!mine.pub,
+        hostPub: !!theirs.pub,
+        same: !!(mine.pub && mine.pub === theirs.pub),
+        mic: !!MP.localUnlocked,
+        tries: j.retries || 0
+      }).then(null, function () {});
+    } catch (e) {}
+  };
   // joiner: wait for the host's connection code, answer it through the server
   var srvJoinTick = function srvJoinTick() {
     var j = MP.join,
@@ -55979,7 +56289,10 @@ function program() {
     if (!j || !j.server || !s || MP.active) {
       return;
     }
-    if (j.status === "waiting" && !s.polling && __p.millis() - (s.last || 0) > 1000) {
+    // ([v1.5] it keeps checking in while it makes its reply and connects too, every
+    // 2 s: the host then knows it's still there, and it hears when the host gave up)
+    var linking = j.status === "making" || j.status === "idle" || j.status === "reply";
+    if ((j.status === "waiting" || linking) && !s.polling && __p.millis() - (s.last || 0) > (linking ? 2000 : 1000)) {
       s.polling = true;
       s.last = __p.millis();
       srvFetch("GET", "/api/join/" + encodeURIComponent(s.rid)).then(function (r) {
@@ -55994,7 +56307,9 @@ function program() {
           j.same = !!r.same;
           j.status = "idle";
           mpUseInvite(); // makes the reply (j.status "making", then "reply")
-        } else if (r.state === "gone") {
+        } else if (r.state === "dropped" && (j.status === "reply" || j.status === "making" || j.status === "idle")) {
+          s.dropped = true; // [v1.5] the host's game gave up on this try: ask again now
+        } else if (r.state === "gone" && !(j.status === "reply" && s.posted)) {
           j.status = "refused";
           j.error = "The party closed, or the host didn't answer in time.";
         }
@@ -56009,6 +56324,7 @@ function program() {
       if (MP.join) {
         MP.join.reasked = true;
         MP.join.retried = j.retried;
+        MP.join.retries = j.retries;
       }
       return;
     }
@@ -56026,20 +56342,30 @@ function program() {
     if (j.status === "reply" && !s.replyAt) {
       s.replyAt = __p.millis();
     }
-    if (j.status === "reply" && s.replyAt && __p.millis() - s.replyAt > 25000 && !j.retried && !MP.active && j.partyRef) {
+    // [v1.5] (also at once when the host gave up on this try; twice at most, and not
+    // while the host's game is in the background: that isn't a failed link)
+    if (s.hostAway && j.status === "reply") {
+      s.replyAt = __p.millis();
+      s.at = __p.millis() - 30000;
+    }
+    var tries = j.retries || 0;
+    if ((s.dropped || j.status === "reply" && s.replyAt && __p.millis() - s.replyAt > 25000) && tries < 2 && !MP.active && j.partyRef) {
+      srvJoinReport(j, s.dropped ? "host dropped" : "no link");
       try {
         j.pc.close();
       } catch (e) {}
       SRV.join = null;
       srvAskJoin(j.partyRef, j.pass, j.key, j.invite);
       if (MP.join) {
+        MP.join.retries = tries + 1;
         MP.join.retried = true;
       }
       return;
     }
     if (__p.millis() - s.at > 75000 && !MP.active && j.status !== "refused") {
+      srvJoinReport(j, "gave up");
       j.status = "refused";
-      j.error = "The host didn't connect in time. They may be away from their game, or this network blocks direct links. Try again.";
+      j.error = "The host didn't connect in time. They may be away from their game, or this network blocks direct links (school, work and phone networks often do). Try again, or try another network.";
     }
   };
   // ---------------- parties (hosts) ----------------
@@ -56186,15 +56512,20 @@ function program() {
       if (joined && MP.players[b.slot]) {
         MP.players[b.slot].rid = b.rid; // how they joined (for moderators' /kick and /ban)
       }
-      // done, or given up: an invite that never got an answer is dropped after 20 s,
-      // one that is connecting gets its 30 s, and nothing waits more than 45 s
-      var stale = inv.status === "failed" || inv.status === "error" || b.giveUp || now - b.at > 45000 || inv.status !== "connecting" && b.posted && !b.answered && now - b.postedAt > 20000;
+      // done, or given up: an invite that never got an answer is dropped after 40 s,
+      // one that is connecting gets its 30 s, and nothing waits more than 60 s.
+      // [v1.5] (was 20 s / 45 s: a joiner still making its reply, e.g. answering the
+      // browser's microphone question for Same Wi-Fi, was dropped, and its answer then
+      // reached nobody: "Almost there" for good.) A joiner who left is noticed sooner,
+      // from the heartbeat (they keep checking in now).
+      var stale = inv.status === "failed" || inv.status === "error" || b.giveUp || now - b.at > 60000 || inv.status !== "connecting" && b.posted && !b.answered && now - b.postedAt > 40000;
       if (joined || stale) {
         if (!joined) {
           inv.dropped = true;
           try {
             inv.pc.close();
           } catch (e) {}
+          SRV.dropRids = (SRV.dropRids || []).concat(b.rid); // [v1.5] the joiner asks again at once
         }
         SRV.busy.splice(bi, 1);
       }
@@ -56212,11 +56543,20 @@ function program() {
     }
     SRV.beating = true;
     SRV.lastBeat = __p.millis();
+    // [v1.5] acks: answers that arrived (the server sends an answer again until it
+    // hears this: one lost heartbeat used to lose the answer, and the join with it);
+    // drop: joins given up here, so those players ask again straight away
+    var acks = SRV.ackRids || [],
+      drops = SRV.dropRids || [];
+    SRV.ackRids = [];
+    SRV.dropRids = [];
     srvFetch("POST", "/api/parties/" + encodeURIComponent(pt.id) + "/beat", {
       token: pt.token,
       n: mpCount(),
       playing: scene === "game",
-      roster: srvRoster()
+      roster: srvRoster(),
+      acks: acks,
+      drop: drops
     }).then(function (r) {
       SRV.beating = false;
       if (SRV.party !== pt) {
@@ -56272,6 +56612,7 @@ function program() {
       }
       var ans = r.answers || [];
       for (var a = 0; a < ans.length; a++) {
+        SRV.ackRids = (SRV.ackRids || []).concat(ans[a].rid);
         var ab = busyFor(ans[a].rid);
         if (ab) {
           ab.answered = true;
@@ -56282,6 +56623,8 @@ function program() {
       }
     }, function (e) {
       SRV.beating = false;
+      SRV.ackRids = acks.concat(SRV.ackRids || []); // (sent again with the next one)
+      SRV.dropRids = drops.concat(SRV.dropRids || []);
       if (/moderator/i.test(e.message)) {
         SRV.party = null;
         mpLeave("A moderator closed this party.");
@@ -56448,40 +56791,105 @@ function program() {
       mpToast(e.message);
     });
   };
-  // the invite notice (any screen): "(name), a developer of this game, invited you..."
+  // the invite notice (any screen): "(name) invited you to join (party)"
+  // [v1.5] A card that drops in from the top (a little bounce), with the two-Dash
+  // multiplayer badge, a bar showing how long the invite lasts, and it slides back
+  // up when it's answered, closed or runs out.
+  var INVITE_SHOW_MS = 115000;
+  var srvInviteClose = function srvInviteClose() {
+    if (SRV.inviteNote) {
+      SRV.inviteOut = {
+        iv: SRV.inviteNote,
+        at: Date.now(),
+        shownAt: SRV.inviteAt
+      };
+    }
+    SRV.inviteNote = null;
+  };
   var srvDrawInvite = function srvDrawInvite() {
-    var iv = SRV.inviteNote;
+    var iv = SRV.inviteNote,
+      closing = false,
+      shownAt = SRV.inviteAt;
+    if (iv && Date.now() - SRV.inviteAt > INVITE_SHOW_MS) {
+      srvInviteClose();
+      iv = null;
+    }
+    if (!iv && SRV.inviteOut) {
+      if (Date.now() - SRV.inviteOut.at > 260) {
+        SRV.inviteOut = null;
+        return;
+      }
+      iv = SRV.inviteOut.iv;
+      shownAt = SRV.inviteOut.shownAt;
+      closing = true;
+    }
     if (!iv) {
       return;
     }
-    if (Date.now() - SRV.inviteAt > 115000) {
-      SRV.inviteNote = null;
-      return;
+    // where it is: drops in with a little overshoot, slides up when closing
+    var k, ease;
+    if (closing) {
+      k = __p.constrain((Date.now() - SRV.inviteOut.at) / 260, 0, 1);
+      ease = 1 - k * k;
+    } else {
+      k = __p.constrain((Date.now() - shownAt) / 420, 0, 1);
+      var c1 = 1.70158;
+      ease = 1 + (c1 + 1) * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
     }
-    var w = 440,
-      h = 96,
+    var w = 470,
+      h = 108,
       x = 300 - w / 2,
-      y = 60 + (1 - __p.constrain((Date.now() - SRV.inviteAt) / 300, 0, 1)) * -40;
+      y = -h - 10 + ease * (h + 24);
+    var ctx = __p.externals.context,
+      ga = ctx.globalAlpha;
+    ctx.globalAlpha = ga * __p.constrain(closing ? 1 - k : k * 2, 0, 1);
+    var click = closing ? false : MP.click;
+    // card with a soft shadow
+    __p.noStroke();
+    __p.fill(0, 0, 0, 50);
+    __p.rect(x + 4, y + 6, w, h, 20);
     __p.stroke(0);
     __p.strokeWeight(5);
     __p.fill(255);
-    __p.rect(x, y, w, h, 18);
+    __p.rect(x, y, w, h, 20);
+    // badge: the two Dashes on a coloured disc, gently bobbing
+    var bob = Math.sin(Date.now() / 300) * 2;
     __p.noStroke();
-    __p.fill(255, 0, 0);
-    __p.rect(x + 14, y + 14, 6, h - 28, 3);
-    __p.textFont(mpSans, 15);
-    __p.fill(20);
+    __p.fill(iv.dev ? __p.color(255, 140, 0) : __p.color(0, 120, 255));
+    __p.ellipse(x + 50, y + h / 2 - 6, 66, 66);
+    mpDashIcon(x + 41, y + h / 2 - 2 + bob, 26, __p.color(255, 0, 0));
+    mpDashIcon(x + 60, y + h / 2 - 12 - bob, 26, __p.color(0, 120, 255));
+    // the words
+    var from = cleanText(iv.from || (iv.dev ? "A developer" : "A player")),
+      party = cleanText(iv.name || "their party");
     __p.textAlign(__p.LEFT, __p.TOP);
-    var line = iv.player && !iv.dev ? cleanText(iv.from || "A player") + " invited you to their party!" : cleanText(iv.from || "A developer") + ", a developer of this game, invited you to play with him!"; // [v1.5] or a player
-    var rows = mpTextWrap(line, w - 150, 0);
+    __p.textFont(mpSans, 12);
+    __p.fill(iv.dev ? __p.color(220, 110, 0) : __p.color(0, 110, 230));
+    __p.text(iv.dev ? "INVITE FROM A DEVELOPER" : "PARTY INVITE", x + 96, y + 14);
+    __p.textFont(mpSans, 16);
+    __p.fill(20);
+    var tw = w - 96 - 132;
+    var rows = mpTextWrap(from + " invited you to join " + party, tw, 0);
     for (var r = 0; r < rows.length && r < 3; r++) {
-      __p.text(rows[r], x + 32, y + 16 + r * 19);
+      __p.text(rows[r], x + 96, y + 32 + r * 19);
     }
-    __p.fill(110);
-    __p.textSize(12);
-    __p.text("Party: " + cleanText(iv.name || ""), x + 32, y + h - 24);
-    if (mpButton(x + w - 112, y + 22, 92, 50, "JOIN", __p.color(0, 170, 90))) {
-      SRV.inviteNote = null;
+    // time left
+    var left = __p.constrain(1 - (Date.now() - shownAt) / INVITE_SHOW_MS, 0, 1);
+    __p.noStroke();
+    __p.fill(230);
+    __p.rect(x + 20, y + h - 14, w - 40, 5, 3);
+    __p.fill(iv.dev ? __p.color(255, 140, 0) : __p.color(0, 170, 90));
+    __p.rect(x + 20, y + h - 14, (w - 40) * left, 5, 3);
+    // JOIN (it breathes a little to draw the eye)
+    var pulse = 1 + Math.sin(Date.now() / 220) * 0.03;
+    var jw = 100 * pulse,
+      jh = 48 * pulse,
+      jx = x + w - 122 - (jw - 100) / 2,
+      jy = y + 26 - (jh - 48) / 2;
+    var was = MP.click;
+    MP.click = click;
+    if (mpButton(jx, jy, jw, jh, "JOIN", __p.color(0, 170, 90)) && !closing) {
+      srvInviteClose();
       MP.click = false;
       if (MP.active) {
         mpLeave();
@@ -56491,26 +56899,38 @@ function program() {
         transitionActive = true;
         sceneToTransition = "Multiplayer";
       }
+    } else {
+      MP.click = was;
     }
     // the X
-    var cx = x + w - 6,
-      cy = y + 6,
-      hovX = __p.dist(worldMouseX, worldMouseY, cx, cy) < 15;
+    var cx = x + w - 8,
+      cy = y + 8,
+      hovX = !closing && __p.dist(worldMouseX, worldMouseY, cx, cy) < 15;
     __p.stroke(0);
     __p.strokeWeight(3);
     __p.fill(hovX ? 235 : 255);
     __p.ellipse(cx, cy, 28, 28);
-    __p.strokeWeight(3);
     __p.line(cx - 5, cy - 5, cx + 5, cy + 5);
     __p.line(cx + 5, cy - 5, cx - 5, cy + 5);
     if (hovX) {
       __p.cursor(__p.HAND);
       if (MP.click) {
-        SRV.inviteNote = null;
+        srvInviteClose();
         MP.click = false;
       }
     }
+    ctx.globalAlpha = ga;
   };
+  // [v1.5] The game stops drawing in a background tab, and the party heartbeat and
+  // joins stopped with it: players joining a host who had switched tabs waited at
+  // "Almost there". These keep running about once a second while the game is hidden.
+  setInterval(function () {
+    if (typeof document !== "undefined" && document.hidden && !loading) {
+      try {
+        srvTick();
+      } catch (e) {}
+    }
+  }, 1000);
   var srvTick = function srvTick() {
     if (!mpServerOn()) {
       return;
@@ -56632,15 +57052,26 @@ function program() {
     }
   };
   // CREATE PARTY's settings, in a panel over the list
-  var srvDrawCreatePanel = function srvDrawCreatePanel() {
+  var srvDrawCreatePanel = function srvDrawCreatePanel(outAt) {
     __p.noStroke();
-    __p.fill(0, 0, 0, 140);
+    __p.fill(0, 0, 0, outAt ? 140 * __p.max(0, 1 - (__p.millis() - outAt) / 170) : 140);
     __p.rect(-widePad - 10, 94, wideW + 20, 520);
+    if (outAt) {
+      if (!mpPopOut(outAt, 300, 335)) {
+        return;
+      }
+      var was = MP.click;
+      MP.click = false;
+      srvDrawCreatePanelIn(true);
+      MP.click = was;
+      mpPopEnd();
+      return;
+    }
     mpPop("createPanel", 300, 335); // [v1.5] pops in
     srvDrawCreatePanelIn();
     mpPopEnd();
   };
-  var srvDrawCreatePanelIn = function srvDrawCreatePanelIn() {
+  var srvDrawCreatePanelIn = function srvDrawCreatePanelIn(closing) {
     var x = 70,
       y = 130,
       w = 460;
@@ -56713,7 +57144,7 @@ function program() {
     mpLabel("Joining " + mpArcSafe(cleanText(j.party || "the party")), 40, y, 18);
     var hostBusy = SRV.join && SRV.join.hostPlaying;
     var hostAway = SRV.join && SRV.join.hostAway;
-    var msg = j.status === "asking" ? "Asking to join..." : j.status === "waiting" ? hostAway ? "The host's game is in the background (another tab or app). You'll get in as soon as they come back..." : hostBusy ? "The host is in a level right now. You'll join in a moment and watch (spectate) until the next level starts..." : "Waiting for the host to let you in..." : j.status === "making" || j.status === "idle" ? "Connecting..." : j.status === "reply" ? "Almost there: connecting to the host..." : j.status === "refused" ? j.error || "Couldn't join." : "";
+    var msg = j.status === "asking" ? "Asking to join..." : j.status === "waiting" ? hostAway ? "The host's game is in the background (another tab or app). You'll get in as soon as they come back..." : hostBusy ? "The host is in a level right now. You'll join in a moment and watch (spectate) until the next level starts..." : "Waiting for the host to let you in..." : j.status === "making" || j.status === "idle" ? "Connecting..." : j.status === "reply" ? hostAway ? "Almost there: the host's game is in the background. You'll get in when they come back..." : j.retries ? "Almost there: trying again (try " + (j.retries + 1) + " of 3)..." : "Almost there: connecting to the host..." : j.status === "refused" ? j.error || "Couldn't join." : "";
     mpParagraph(msg, 40, y + 34, 520, 16, j.status === "refused" ? __p.color(200, 40, 0) : 60);
     if (j.status === "refused" && mpButton(40, y + 90, 220, 46, "BACK TO PARTIES", __p.color(0, 120, 255))) {
       MP.join = null;

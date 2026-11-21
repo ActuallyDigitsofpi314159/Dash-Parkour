@@ -221,6 +221,15 @@ can't leak them. Don't copy them into it.
 
 </details>
 
+## Joins that don't link up
+
+`dash-party stats` ends with **Joins that never linked up (last 7 days), and why**.
+A joiner whose link doesn't open reports it (no addresses: just which kinds of
+address each side had and how far the link got), e.g.
+`no link ice:checking/checking me:pub host:pub`. Each heartbeat also tells the
+server which answers the host got (`acks`; an answer is sent again until then)
+and which joins it gave up on (`drop`; the joiner then asks again at once).
+
 ## Player invites
 
 Everyone in a party has an **INVITE PLAYERS** button on the Multiplayer screen.
