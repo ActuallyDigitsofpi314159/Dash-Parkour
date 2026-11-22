@@ -171,6 +171,53 @@
       swell(E, 'bandpass', 1000, 1.5, t, 0.25, 0.12 * v, o, 6000);
       seq(E, 'glock', [72, 76, 79], 0.05, 0.2, 0.4 * v, w, t + 0.1);
     } },
+    /* ------------------------------------------------ [v1.6] skin spawns and deaths */
+    skinThud: { gap: 0.08, play: function (E, t, o, v) { // landing after a drop
+      tone(E, 'sine', 150, 45, t, 0.2, 0.5 * v, o); hiss(E, 'lowpass', 700, 0.8, t, 0.12, 0.3 * v, o);
+    } },
+    skinWhoosh: { gap: 0.2, play: function (E, t, o, v) { // falling in / flying past
+      swell(E, 'bandpass', 500, 1.2, t, 0.28, 0.2 * v, o, 2800); hiss(E, 'bandpass', 2500, 1, t + 0.28, 0.2, 0.1 * v, o, 0, 700);
+    } },
+    skinPop: { gap: 0.05, play: function (E, t, o, v) { // popping out (of a hat), a balloon going
+      hiss(E, 'bandpass', 1800, 2, t, 0.05, 0.4 * v, o); tone(E, 'sine', 900, 220, t, 0.09, 0.35 * v, o);
+    } },
+    skinHat: { gap: 0.1, play: function (E, t, o, v) { // the hat flips onto his head: ta-da
+      var w = wet(E, o, 0.3); seq(E, 'glock', [79, 84], 0.07, 0.25, 0.45 * v, w, t);
+    } },
+    skinTick: { gap: 0.025, vol: 0.8, play: function (E, t, o, v, opt) { // one piece (a pixel, a digit) landing
+      var n = [72, 74, 76, 79, 81, 84, 86, 88];
+      play(E, opt.inst || 'marimba', n[Math.max(0, Math.min(n.length - 1, opt.n | 0))], t, 0.06, 0.3 * v, o);
+    } },
+    skinGlitch: { gap: 0.06, play: function (E, t, o, v) { // Scary Larry: static and broken blips
+      for (var i = 0; i < 5; i++) tone(E, 'square', rnd(150, 1800), 0, t + i * 0.03, 0.025, 0.06 * v, E.helpers.filt('lowpass', 4000, 1, o));
+      hiss(E, 'bandpass', rnd(2000, 5000), 1.5, t, 0.15, 0.18 * v, o);
+    } },
+    skinShort: { gap: 0.1, duck: 0.15, play: function (E, t, o, v) { // Zapp shorting out
+      for (var i = 0; i < 6; i++) hiss(E, 'bandpass', rnd(2500, 7000), 6, t + i * 0.05 + rnd(0, 0.03), 0.03, 0.4 * v, o);
+      tone(E, 'sawtooth', 120, 60, t, 0.35, 0.08 * v, E.helpers.filt('lowpass', 1200, 2, o));
+    } },
+    skinPixels: { gap: 0.1, play: function (E, t, o, v) { // bursting into pixels
+      seq(E, 'chip', [84, 79, 76, 72, 67, 60], 0.035, 0.04, 0.4 * v, o, t, { duty: 0.25 }); hiss(E, 'highpass', 3000, 1, t, 0.12, 0.12 * v, o);
+    } },
+    skinChomp: { gap: 0.1, play: function (E, t, o, v) { // the Dino's jaws snapping shut
+      tone(E, 'square', 320, 70, t, 0.08, 0.12 * v, E.helpers.filt('lowpass', 1500, 1, o)); hiss(E, 'bandpass', 1200, 2, t, 0.05, 0.35 * v, o);
+      tone(E, 'sine', 110, 50, t + 0.02, 0.12, 0.3 * v, o);
+    } },
+    skinPuff: { gap: 0.1, vol: 0.5, play: function (E, t, o, v) { // the Ninja: a soft puff of smoke
+      swell(E, 'bandpass', 900, 0.8, t, 0.1, 0.15 * v, o, 1800); hiss(E, 'lowpass', 1500, 0.7, t + 0.1, 0.2, 0.1 * v, o);
+    } },
+    skinBoom: { gap: 0.3, duck: 0.4, play: function (E, t, o, v) { // Dash Brainrot going off
+      play(E, 'boom', 0, t, 1.4, 0.9 * v, wet(E, o, 0.4)); play(E, 'crash', 0, t, 1, 0.5 * v, o); hiss(E, 'lowpass', 1800, 0.6, t, 0.9, 0.4 * v, o);
+    } },
+    skinCoins: { gap: 0.1, play: function (E, t, o, v) { // Money Dash: coins everywhere
+      for (var i = 0; i < 5; i++) play(E, 'glock', 88 + Math.floor(rnd(0, 5)), t + i * 0.045, 0.15, 0.3 * v, o);
+    } },
+    skinFlap: { gap: 0.12, vol: 0.7, play: function (E, t, o, v) { // Kineto's wings
+      hiss(E, 'lowpass', 900, 1, t, 0.08, 0.3 * v, o); hiss(E, 'lowpass', 700, 1, t + 0.1, 0.07, 0.2 * v, o);
+    } },
+    skinGrow: { gap: 0.2, play: function (E, t, o, v) { // something swelling into shape
+      tone(E, 'sine', 300, 900, t, 0.3, 0.2 * v, o); play(E, 'glock', 84, t + 0.28, 0.3, 0.35 * v, wet(E, o, 0.3));
+    } },
     checkpoint: { duck: 0.25, duckFor: 0.6, play: function (E, t, o, v) { // the dash cell C D E, rung out
       var w = wet(E, o, 0.45);
       seq(E, 'bell', [72, 74, 76], 0.07, 0.6, 0.55 * v, w, t);
