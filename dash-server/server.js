@@ -295,7 +295,7 @@ for (const sig of ["SIGTERM", "SIGINT"]) {
 // party. From that: who is online now, peaks, players per day, new players and
 // the busiest hours. Kept in DATA_DIR/stats.json. No names or addresses.
 const STATS_FILE = path.join(DATA_DIR, "stats.json");
-const ONLINE_MS = 45000; // seen in the last 45 s = online
+const ONLINE_MS = 25000; // seen in the last 25 s = online (games check in every 10 s)
 const online = new Map(); // device hash -> { seen, mp, game, name, inv, pid, banned }
 // [v1.5] player invites: online players are shown by a random public id (pid), never
 // by their device id (that one is what bans use).
@@ -431,81 +431,189 @@ function partyHashes(p) {
 const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max: p.max, playing: p.playing, host: p.host });
 
 // ---------------- [v1.5] relay (TURN) for players who can't link directly ----------------
-// With a Cloudflare TURN key (dash-party turn set, kept in DATA_DIR/turn.json; or
-// TURN_KEY_ID / TURN_KEY_TOKEN in the environment), games get short-lived relay
-// logins from /api/ice. Players still link directly when they can; the relay is only
-// used when that fails (phone data, school and work networks, strict routers).
-// Without a key the games work as before. The file is read again whenever the
-// logins are renewed, so a new key works without a restart.
+// Players still link directly when they can; the relay is only used when that fails
+// (phone data, school and work networks, strict routers). Set up with
+// "dash-party turn set" (DATA_DIR/turn.json, read again every minute, no restart):
+//  - { kind: "cloudflare", id, token, account, analytics, budgetGB }: Cloudflare's TURN.
+//    Free for 1,000 GB a month, then paid, so it is guarded: the server reads this
+//    month's relay traffic from Cloudflare's own meter every 10 minutes and turns the
+//    relay off (and cancels every login it gave out) at budgetGB (500 by default).
+//    If the meter can't be read for 30 minutes the relay is off too, so it can never
+//    run on unwatched. Without an analytics token it isn't used at all.
+//  - { kind: "pi", urls, secret }: a relay on this Pi (coturn), free, using the home
+//    internet connection (dash-party turn pi sets it up).
+// Bot protection: logins only go to a game that is hosting a party (its party token)
+// or asking to join one (its join request), each gets its own login, a few a day per
+// address and a cap per day overall, and a login that moves more than 1 GB (no game
+// comes close) is cancelled.
 const TURN_FILE = path.join(DATA_DIR, "turn.json");
-function turnKey() {
-  let id = process.env.TURN_KEY_ID || "",
-    token = process.env.TURN_KEY_TOKEN || "";
+const TURN_USE_FILE = path.join(DATA_DIR, "turn-usage.json");
+const TURN_TTL = 3 * 3600; // seconds each login works for (longer than a party session)
+const TURN_DAY_CAP = 400; // logins a day, everyone together
+const TURN_IP_CAP = 12; // logins a day from one address
+const TURN_LOGIN_MAX = 1e9; // bytes one login may move (a whole evening of DASH is a few MB)
+function turnConf() {
+  let j = {};
   try {
-    const j = JSON.parse(fs.readFileSync(TURN_FILE, "utf8"));
-    if (j && j.id && j.token) {
-      id = String(j.id);
-      token = String(j.token);
-    }
+    j = JSON.parse(fs.readFileSync(TURN_FILE, "utf8")) || {};
   } catch (e) {}
-  return { id: id.trim(), token: token.trim() };
+  if (!j.kind && (j.id || process.env.TURN_KEY_ID)) j.kind = "cloudflare";
+  if (j.kind === "cloudflare") {
+    j.id = String(j.id || process.env.TURN_KEY_ID || "").trim();
+    j.token = String(j.token || process.env.TURN_KEY_TOKEN || "").trim();
+    j.account = String(j.account || process.env.CF_ACCOUNT_ID || "").trim();
+    j.analytics = String(j.analytics || process.env.CF_ANALYTICS_TOKEN || "").trim();
+    j.budgetGB = Math.min(950, Math.max(1, Number(j.budgetGB) || 500));
+    if (!j.id || !j.token) return null;
+    return j;
+  }
+  if (j.kind === "pi" && j.secret && Array.isArray(j.urls) && j.urls.length) return j;
+  return null;
 }
-const TURN_TTL = 6 * 3600; // seconds each login works for
-let iceCache = null; // { servers, until }
-let iceBusy = null;
-function cloudflareIce(key) {
+let turnUse = readJson(TURN_USE_FILE, {}); // { month, bytes, at, off, why }
+const turnMonth = () => new Date().toISOString().slice(0, 7);
+const turnIssued = new Map(); // owner (party or join request) -> { servers, username, until }
+let turnDay = { day: "", n: 0, ips: new Map() };
+function turnState() {
+  const c = turnConf();
+  if (!c) return { on: false, why: "not set up" };
+  if (c.kind === "pi") return { on: true, kind: "pi" };
+  if (!c.account || !c.analytics) return { on: false, kind: "cloudflare", why: "no usage meter (account ID and analytics token): off so it can't charge you" };
+  if (turnUse.month !== turnMonth() || !turnUse.at) return { on: false, kind: "cloudflare", why: "waiting for the first usage reading" };
+  if (Date.now() - turnUse.at > 30 * 60 * 1000) return { on: false, kind: "cloudflare", why: "usage meter not read for 30 minutes" };
+  if (turnUse.bytes >= c.budgetGB * 1e9) return { on: false, kind: "cloudflare", why: "monthly budget reached (" + c.budgetGB + " GB)" };
+  return { on: true, kind: "cloudflare", gb: turnUse.bytes / 1e9, budgetGB: c.budgetGB };
+}
+function cfRequest(host, pth, token, body) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ ttl: TURN_TTL });
-    const req = https.request(
-      { method: "POST", host: "rtc.live.cloudflare.com", path: "/v1/turn/keys/" + encodeURIComponent(key.id) + "/credentials/generate-ice-servers", headers: { Authorization: "Bearer " + key.token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }, timeout: 8000 },
-      (res) => {
-        const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          try {
-            if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error("Cloudflare said " + res.statusCode));
-            const j = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-            let list = j.iceServers;
-            if (list && !Array.isArray(list)) list = [list];
-            // (browsers can't use port 53, and Cloudflare's own STUN is enough next to Google's)
-            const servers = (list || []).map((x) => ({ urls: [].concat(x.urls || []).filter((u) => !/:53(\?|$)/.test(u)), username: x.username, credential: x.credential })).filter((x) => x.urls.length);
-            if (!servers.length) return reject(new Error("no ICE servers in the answer"));
-            resolve(servers);
-          } catch (e) {
-            reject(e);
-          }
-        });
-      }
-    );
+    const data = body === undefined ? "" : JSON.stringify(body);
+    const req = https.request({ method: "POST", host, path: pth, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }, timeout: 10000 }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error("Cloudflare said " + res.statusCode));
+        try {
+          resolve(text ? JSON.parse(text) : {});
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
     req.on("timeout", () => req.destroy(new Error("timed out")));
     req.on("error", reject);
-    req.end(body);
+    req.end(data);
   });
 }
-function getIce() {
-  if (iceCache && Date.now() < iceCache.until) return Promise.resolve(iceCache.servers);
-  const key = turnKey();
-  if (!key.id || !key.token) {
-    iceCache = { servers: [], until: Date.now() + 60 * 1000 }; // (looked at again in a minute)
-    return Promise.resolve([]);
-  }
-  if (!iceBusy) {
-    iceBusy = cloudflareIce(key)
-      .then((servers) => {
-        iceCache = { servers, until: Date.now() + 60 * 60 * 1000 }; // (one login for everyone, renewed hourly)
-        return servers;
-      }, (e) => {
-        log("TURN: couldn't get relay logins:", e.message);
-        iceCache = { servers: iceCache ? iceCache.servers : [], until: Date.now() + 2 * 60 * 1000 };
-        return iceCache.servers;
-      })
-      .then((x) => {
-        iceBusy = null;
-        return x;
-      });
-  }
-  return iceBusy;
+function cloudflareIce(c) {
+  return cfRequest("rtc.live.cloudflare.com", "/v1/turn/keys/" + encodeURIComponent(c.id) + "/credentials/generate-ice-servers", c.token, { ttl: TURN_TTL }).then((j) => {
+    let list = j.iceServers;
+    if (list && !Array.isArray(list)) list = [list];
+    // (browsers can't use port 53)
+    const servers = (list || []).map((x) => ({ urls: [].concat(x.urls || []).filter((u) => !/:53(\?|$)/.test(u)), username: x.username, credential: x.credential })).filter((x) => x.urls.length);
+    if (!servers.some((x) => x.username)) throw new Error("no relay login in the answer");
+    return servers;
+  });
 }
+function revokeTurn(c, username) {
+  if (!username || !c || c.kind !== "cloudflare") return Promise.resolve();
+  return cfRequest("rtc.live.cloudflare.com", "/v1/turn/keys/" + encodeURIComponent(c.id) + "/credentials/" + encodeURIComponent(username) + "/revoke", c.token).catch((e) => log("TURN: couldn't cancel a login:", e.message));
+}
+function revokeAllTurn(why) {
+  const c = turnConf();
+  let n = 0;
+  for (const [k, t] of turnIssued) {
+    if (t.until > Date.now()) {
+      revokeTurn(c, t.username);
+      n++;
+    }
+    turnIssued.delete(k);
+  }
+  if (n) log("TURN: cancelled", n, "relay logins (" + why + ")");
+}
+// Cloudflare's meter: this month's relay traffic (what it bills), and the logins using the most
+const gqlDay = (d) => d.toISOString().slice(0, 10);
+async function readTurnMeter() {
+  const c = turnConf();
+  if (!c || c.kind !== "cloudflare" || !c.account || !c.analytics) return;
+  if (!/^[0-9a-f]{32}$/i.test(c.account)) return log("TURN: the account ID doesn't look right (32 letters and numbers)");
+  const now = new Date();
+  const start = gqlDay(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));
+  const end = gqlDay(now);
+  const q = (inner) => cfRequest("api.cloudflare.com", "/client/v4/graphql", c.analytics, { query: '{ viewer { accounts(filter: { accountTag: "' + c.account + '" }) { ' + inner + " } } }" });
+  try {
+    const j = await q('callsTurnUsageAdaptiveGroups(limit: 10000, filter: { date_geq: "' + start + '", date_leq: "' + end + '" }) { dimensions { keyId } sum { egressBytes } }');
+    if (j.errors && j.errors.length) throw new Error(String(j.errors[0].message || "query error"));
+    const acc = j.data && j.data.viewer && j.data.viewer.accounts && j.data.viewer.accounts[0];
+    if (!acc) throw new Error("no such account (check the account ID and the analytics token's access)");
+    let bytes = 0;
+    for (const g of acc.callsTurnUsageAdaptiveGroups || []) bytes += Number(g.sum && g.sum.egressBytes) || 0;
+    const was = turnState().on;
+    turnUse = { month: turnMonth(), bytes, at: Date.now() };
+    writeJson(TURN_USE_FILE, turnUse);
+    const st = turnState();
+    if (was && !st.on) {
+      log("TURN: relay turned off:", st.why);
+      revokeAllTurn(st.why);
+    }
+  } catch (e) {
+    log("TURN: couldn't read the usage meter:", e.message);
+    if (turnState().on === false && turnIssued.size) revokeAllTurn("usage meter not readable");
+    return;
+  }
+  // logins moving far more than a game would (someone using the relay for something else)
+  try {
+    const since = gqlDay(new Date(Date.now() - 864e5));
+    const j = await q('callsTurnUsageAdaptiveGroups(limit: 20, orderBy: [sum_egressBytes_DESC], filter: { date_geq: "' + since + '", date_leq: "' + end + '" }) { dimensions { username } sum { egressBytes } }');
+    const acc = j.data && j.data.viewer && j.data.viewer.accounts && j.data.viewer.accounts[0];
+    for (const g of (acc && acc.callsTurnUsageAdaptiveGroups) || []) {
+      const u = g.dimensions && g.dimensions.username;
+      if (u && Number(g.sum && g.sum.egressBytes) > TURN_LOGIN_MAX) {
+        log("TURN: cancelling a login that used", Math.round(g.sum.egressBytes / 1e6), "MB");
+        revokeTurn(c, u);
+        for (const [k, t] of turnIssued) if (t.username === u) turnIssued.delete(k);
+      }
+    }
+  } catch (e) {}
+}
+setInterval(readTurnMeter, 10 * 60 * 1000).unref();
+setTimeout(readTurnMeter, 3000).unref();
+// a login for a relay on this Pi (coturn's shared-secret logins)
+function piIce(c) {
+  const username = Math.floor(Date.now() / 1000 + TURN_TTL) + ":dash";
+  const credential = crypto.createHmac("sha1", c.secret).update(username).digest("base64");
+  return [{ urls: c.urls.slice(0, 4), username, credential }];
+}
+// owner: "p:" + party id (a host) or "r:" + join request id (a joiner)
+function getIce(owner, ip) {
+  const st = turnState();
+  if (!st.on) return Promise.resolve([]);
+  const have = turnIssued.get(owner);
+  if (have && have.until - Date.now() > 20 * 60 * 1000) return Promise.resolve(have.servers);
+  const day = gqlDay(new Date());
+  if (turnDay.day !== day) turnDay = { day, n: 0, ips: new Map() };
+  const ipKey = netKey(ip) || ip;
+  const ipN = turnDay.ips.get(ipKey) || 0;
+  if (turnDay.n >= TURN_DAY_CAP || ipN >= TURN_IP_CAP) return Promise.resolve([]);
+  turnDay.n++;
+  turnDay.ips.set(ipKey, ipN + 1);
+  const c = turnConf();
+  const made = c.kind === "pi" ? Promise.resolve(piIce(c)) : cloudflareIce(c);
+  return made.then(
+    (servers) => {
+      const login = servers.find((x) => x.username);
+      turnIssued.set(owner, { servers, username: login && login.username, until: Date.now() + TURN_TTL * 1000 });
+      return servers;
+    },
+    (e) => {
+      log("TURN: couldn't get a relay login:", e.message);
+      return [];
+    }
+  );
+}
+setInterval(() => {
+  for (const [k, t] of turnIssued) if (t.until < Date.now()) turnIssued.delete(k);
+}, 10 * 60 * 1000).unref();
 
 // ---------------- HTTP helpers ----------------
 const API_HEADERS = {
@@ -668,7 +776,20 @@ async function handle(req, res) {
     return serveSite(req, res, url.pathname);
   }
   if (req.method === "GET" && p0 === "/api/ice") {
-    return getIce().then((servers) => send(res, 200, { iceServers: servers }));
+    // [v1.5] only for a game hosting a party or asking to join one (see the relay notes)
+    const pid = String(url.searchParams.get("party") || "");
+    const rid = String(url.searchParams.get("rid") || "");
+    let owner = "";
+    const hp = pid && parties.get(pid);
+    if (hp && sameText(String(url.searchParams.get("token") || ""), hp.token)) owner = "p:" + pid;
+    const jr = !owner && rid && requests.get(rid);
+    if (jr && !jr.done && parties.has(jr.party)) owner = "r:" + rid;
+    if (!owner) return send(res, 200, { iceServers: [] });
+    return getIce(owner, ip).then((servers) => send(res, 200, { iceServers: servers }));
+  }
+  if (req.method === "GET" && p0 === "/api/turn" && (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1")) {
+    // [v1.5] for dash-party turn (on the Pi itself only)
+    return send(res, 200, Object.assign({ month: turnUse.month, gb: turnUse.bytes ? Math.round(turnUse.bytes / 1e7) / 100 : 0, readAt: turnUse.at || 0, loginsToday: turnDay.n }, turnState()));
   }
   if (req.method === "GET" && p0 === "/api/health") {
     return send(res, 200, { ok: true, game: "DASH Parkour party server", parties: parties.size, uptime: Math.round(process.uptime()) });
@@ -709,6 +830,11 @@ async function handle(req, res) {
   }
   const bdev = cleanDev(body.dev);
 
+  // [v1.6] a game being closed: not online any more (straight away, not 25 s later)
+  if (p0 === "/api/bye") {
+    if (bdev) online.delete(devHash(bdev));
+    return send(res, 200, { ok: true });
+  }
   // [v1.5] every game, every 15 s: counted for the stats; gets a developer's invite
   if (p0 === "/api/hello") {
     const banned = !!isBanned(ip, bdev);

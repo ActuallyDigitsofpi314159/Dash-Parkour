@@ -11,7 +11,7 @@
 #   dash-party stats      how the game is doing: players online, per day, peaks, busy hours
 #   dash-party unban NAME let someone back in
 #   dash-party notify     phone notices when a party is made (on | off | test)
-#   dash-party turn       the relay for players who can't link directly (set | off)
+#   dash-party turn       the relay for players who can't link directly (set | pi | off)
 #   dash-party restart    restart the server and the tunnel
 #   dash-party fix        run the watchdog's checks and fixes now
 #   dash-party update     get the newest version from GitHub and set it up again
@@ -209,33 +209,116 @@ setkey() {
 
 # [v1.5] the Cloudflare relay (TURN): players whose networks block direct links
 turn() {
-  local f="$DATA/turn.json" id tok n
+  local f="$DATA/turn.json" id tok acct an bud tmp host pub sec lan j
   case "${1:-}" in
     set)
-      echo "From the Cloudflare dashboard: Realtime > TURN Server > your key."
-      printf 'Turn Token ID (the Key ID): '; read -r id
-      printf 'API Token (not shown while you type): '; read -rs tok; echo
+      echo "Cloudflare's relay: free for 1,000 GB a month. The server reads Cloudflare's own"
+      echo "usage meter every 10 minutes and switches the relay off at your budget, so it"
+      echo "can't run into paid use. You need four things from the Cloudflare dashboard:"
+      echo "  1. Realtime > TURN Server > your key: the ${B}Turn Token ID${N} and its ${B}API Token${N}"
+      echo "  2. Your ${B}Account ID${N} (Account home, the ... menu > Copy account ID)"
+      echo "  3. An ${B}analytics token${N}: My Profile > API Tokens > Create Token > Custom token,"
+      echo "     permission: Account / Account Analytics / Read (nothing else)"
+      echo
+      printf 'Turn Token ID: '; read -r id
+      printf 'TURN API Token (hidden): '; read -rs tok; echo
+      printf 'Account ID: '; read -r acct
+      printf 'Analytics token (hidden): '; read -rs an; echo
+      printf 'Monthly budget in GB [500]: '; read -r bud
       id="$(printf '%s' "$id" | tr -d '[:space:]')"; tok="$(printf '%s' "$tok" | tr -d '[:space:]')"
-      if [ -z "$id" ] || [ -z "$tok" ]; then echo "${R}Both are needed.${N} Nothing changed."; exit 1; fi
-      local tmp; tmp="$(mktemp)"
-      jq -n --arg id "$id" --arg t "$tok" '{id: $id, token: $t}' > "$tmp" &&
+      acct="$(printf '%s' "$acct" | tr -d '[:space:]')"; an="$(printf '%s' "$an" | tr -d '[:space:]')"
+      bud="$(printf '%s' "${bud:-500}" | tr -cd '0-9')"; [ -z "$bud" ] && bud=500
+      [ "$bud" -gt 950 ] && { echo "${Y}Budget capped at 950 GB${N} (the free amount is 1,000)."; bud=950; }
+      if [ -z "$id" ] || [ -z "$tok" ] || [ -z "$acct" ] || [ -z "$an" ]; then echo "${R}All four are needed${N} (without the meter the relay stays off). Nothing changed."; exit 1; fi
+      tmp="$(mktemp)"
+      jq -n --arg id "$id" --arg t "$tok" --arg a "$acct" --arg an "$an" --argjson b "$bud" '{kind: "cloudflare", id: $id, token: $t, account: $a, analytics: $an, budgetGB: $b}' > "$tmp" &&
         S install -m 600 -o dashparty -g dashparty "$tmp" "$f" || { rm -f "$tmp"; echo "${R}Couldn't save it.${N}"; exit 1; }
       rm -f "$tmp"
-      echo "${G}Saved.${N} Checking it (within a minute the server uses it, no restart needed)..."
+      echo "${G}Saved.${N} Restarting the server so it reads the meter now..."
+      S systemctl restart dash-party; sleep 8; turn ;;
+    pi)
+      lan="$(hostname -I 2>/dev/null | awk '{print $1}')"
+      echo "A relay on this Pi (coturn): free, uses your home internet. Your router has to"
+      echo "forward these to the Pi (${lan:-its local address}):"
+      echo "  ${B}UDP and TCP 3478${N}, and ${B}UDP 49160-49200${N}"
+      echo "and players need an address that reaches your home directly (not through"
+      echo "Cloudflare's proxy): your public IP, or a DNS-only (grey cloud) name."
+      echo "${Y}Players linking through it can see your home IP address.${N}"
+      pub="$(curl -fsS -m 8 https://api.ipify.org 2>/dev/null || true)"
+      [ -z "$pub" ] && { echo "${R}Couldn't find your public IP${N} (the relay needs it)."; exit 1; }
+      [ -z "$lan" ] && { echo "${R}Couldn't find the Pi's local address.${N}"; exit 1; }
+      printf 'Address for players [%s]: ' "$pub"; read -r host
+      host="$(printf '%s' "${host:-$pub}" | tr -cd 'A-Za-z0-9.:-')"
+      S apt-get install -y --no-install-recommends coturn >/dev/null || { echo "${R}Couldn't install coturn.${N}"; exit 1; }
+      sec="$(head -c 32 /dev/urandom | base64 | tr -cd 'A-Za-z0-9')"
+      S tee /etc/turnserver.conf >/dev/null <<CONF
+# DASH Parkour relay (written by dash-party turn pi)
+listening-port=3478
+listening-ip=$lan
+external-ip=$pub/$lan
+min-port=49160
+max-port=49200
+fingerprint
+use-auth-secret
+static-auth-secret=$sec
+realm=dashparkour
+no-tls
+no-dtls
+no-cli
+no-multicast-peers
+# a game uses well under 0.1 MB/s; these keep anyone else from using up the connection
+max-bps=250000
+bps-capacity=3000000
+total-quota=40
+user-quota=4
+stale-nonce=600
+# never relay into the home network
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=$pub
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+syslog
+simple-log
+CONF
+      S chmod 644 /etc/turnserver.conf
+      [ -f /etc/default/coturn ] && S sed -i 's/^#\{0,1\}TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
+      S systemctl enable coturn >/dev/null 2>&1; S systemctl restart coturn
+      tmp="$(mktemp)"
+      jq -n --arg h "$host" --arg s "$sec" '{kind: "pi", urls: ["turn:\($h):3478?transport=udp", "turn:\($h):3478?transport=tcp"], secret: $s}' > "$tmp" &&
+        S install -m 600 -o dashparty -g dashparty "$tmp" "$f" || { rm -f "$tmp"; echo "${R}Couldn't save it.${N}"; exit 1; }
+      rm -f "$tmp"
+      echo "${G}Pi relay running.${N} If your home IP changes, run ${B}dash-party turn pi${N} again."
       sleep 2; turn ;;
     off)
-      S rm -f "$f" && echo "Relay turned off (games link directly only, within a minute)." ;;
+      S rm -f "$f"
+      S systemctl disable --now coturn >/dev/null 2>&1 || true
+      echo "Relay turned off (games link directly only, within a minute)." ;;
     *)
       if ! S test -r "$f"; then
         echo "${Y}No relay set up.${N} Players whose networks block direct links can't join."
-        echo "Set one up with ${B}dash-party turn set${N} (a free Cloudflare TURN key)."; return
+        echo "  ${B}dash-party turn set${N}  Cloudflare's relay (free up to 1,000 GB, with a shutoff)"
+        echo "  ${B}dash-party turn pi${N}   a relay on this Pi (free, needs router port forwarding)"; return
       fi
-      n="$(curl -fsS -m 15 http://127.0.0.1:8787/api/ice 2>/dev/null | jq -r '[.iceServers[]?.urls[]?] | map(select(test("^turns?:"))) | length' 2>/dev/null)"
-      if [ "${n:-0}" -gt 0 ] 2>/dev/null; then
-        echo "${G}Relay working:${N} games get $n relay addresses from Cloudflare."
+      j="$(curl -fsS -m 15 http://127.0.0.1:8787/api/turn 2>/dev/null)"
+      if [ -z "$j" ]; then echo "${R}The server didn't answer.${N} Try: dash-party errors"; return; fi
+      if [ "$(printf '%s' "$j" | jq -r .on)" = "true" ]; then
+        if [ "$(printf '%s' "$j" | jq -r .kind)" = "pi" ]; then
+          echo "${G}Relay on${N} (this Pi). Logins given today: $(printf '%s' "$j" | jq -r .loginsToday)"
+          S systemctl is-active --quiet coturn || echo "${R}But coturn isn't running.${N} Try: sudo systemctl restart coturn"
+        else
+          echo "${G}Relay on${N} (Cloudflare). This month: $(printf '%s' "$j" | jq -r .gb) GB of your $(printf '%s' "$j" | jq -r .budgetGB) GB budget."
+          echo "Logins given today: $(printf '%s' "$j" | jq -r .loginsToday)"
+        fi
       else
-        echo "${R}The key is saved but Cloudflare didn't give relay logins.${N}"
-        echo "Check the Key ID and API Token (dash-party turn set), and: dash-party errors"
+        echo "${Y}Relay off:${N} $(printf '%s' "$j" | jq -r .why)"
+        echo "Details: dash-party errors"
       fi ;;
   esac
 }

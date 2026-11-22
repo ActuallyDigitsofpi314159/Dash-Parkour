@@ -24530,8 +24530,9 @@ function program() {
     lowCapeLastX = 0,
     lowCapeLastFrame = -1;
   // There's the man
+  var pmNoCape = false; // [v1.6] (the costume draws its own cape)
   var parkMast = function parkMast(x, y, s, boss) {
-    if (settings.fancyGraphics) {
+    if (pmNoCape) {} else if (settings.fancyGraphics) {
       var capeRebuilt = false;
       if (Spacing !== s / 10) {
         rebuildClothWithSpacing(s / 10);
@@ -25316,7 +25317,9 @@ function program() {
   // lip, a gold handle, a star badge and a twinkle
   var drawShoppingBag = function drawShoppingBag(x, y, s) {
     __p.pushMatrix();
-    __p.translate(x, y + s * 0.03);
+    // [v1.6] bigger, and centred in the button (handle top to bag bottom)
+    __p.translate(x + s * 0.012, y - s * 0.035);
+    __p.scale(1.22);
     var ow = s * 0.028; // outline
     __p.strokeJoin(__p.ROUND);
     // handle
@@ -26015,6 +26018,100 @@ function program() {
       text: __p.color(240),
       accent: __p.color(10, 132, 255),
       hover: __p.color(60)
+    }
+  };
+  // [v1.6] Dark Mode for all the menus (title, shop, achievements, multiplayer, runs,
+  // and the buttons on the map; levels are never changed). While a menu is drawn,
+  // its greys swap round (white paper turns dark, black outlines and writing turn
+  // light), and coloured things keep their colours. Dashes, skins and pictures are
+  // drawn as they are (uiThemeHold), so their eyes stay white.
+  var uiThemeK = 0,
+    uiThemeHeld = 0;
+  var uiOrigFill = null,
+    uiOrigStroke = null,
+    uiOrigBg = null;
+  var uiGreyFlip = function uiGreyFlip(v) {
+    var k = uiThemeHeld ? 0 : uiThemeK;
+    return k <= 0 ? v : v + (24 + (255 - v) * 0.86 - v) * k;
+  };
+  // the arguments of fill / stroke / background with their greys swapped
+  var uiThemeArgs = function uiThemeArgs(a) {
+    var n = a.length;
+    if (!n || (uiThemeHeld ? 0 : uiThemeK) <= 0) {
+      return a;
+    }
+    var v0 = a[0];
+    if (typeof v0 !== "number") {
+      return a;
+    }
+    if (n <= 2) {
+      if (v0 >= 0 && v0 <= 255) {
+        return n === 2 ? [uiGreyFlip(v0), a[1]] : [uiGreyFlip(v0)];
+      }
+      // a colour made with color(): only a grey one changes
+      var r = v0 >> 16 & 255,
+        g = v0 >> 8 & 255,
+        b = v0 & 255,
+        al = v0 >>> 24 & 255;
+      if (__p.abs(r - g) < 8 && __p.abs(g - b) < 8) {
+        var gv = uiGreyFlip((r + g + b) / 3);
+        return n === 2 ? [gv, gv, gv, a[1]] : [gv, gv, gv, al];
+      }
+      return a;
+    }
+    if (__p.abs(a[0] - a[1]) < 8 && __p.abs(a[1] - a[2]) < 8) {
+      var gv2 = uiGreyFlip((a[0] + a[1] + a[2]) / 3);
+      return n >= 4 ? [gv2, gv2, gv2, a[3]] : [gv2, gv2, gv2];
+    }
+    return a;
+  };
+  var uiThemeHook = function uiThemeHook() {
+    if (uiOrigFill) {
+      return;
+    }
+    uiOrigFill = __p.fill;
+    uiOrigStroke = __p.stroke;
+    uiOrigBg = __p.background;
+    __p.fill = function () {
+      return uiOrigFill.apply(__p, uiThemeK > 0 && !uiThemeHeld ? uiThemeArgs(arguments) : arguments);
+    };
+    __p.stroke = function () {
+      return uiOrigStroke.apply(__p, uiThemeK > 0 && !uiThemeHeld ? uiThemeArgs(arguments) : arguments);
+    };
+    __p.background = function () {
+      return uiOrigBg.apply(__p, uiThemeK > 0 && !uiThemeHeld ? uiThemeArgs(arguments) : arguments);
+    };
+  };
+  var uiThemeScene = function uiThemeScene() {
+    return scene === "title" || scene === "Shop" || scene === "Goals" || scene === "Multiplayer" || scene === "Runs";
+  };
+  var uiThemeBegin = function uiThemeBegin() {
+    darkModeRatio = __p.lerp(darkModeRatio, settings.darkMode ? 1 : 0, dtLerp(0.1));
+    if (__p.abs(darkModeRatio - (settings.darkMode ? 1 : 0)) < 0.005) {
+      darkModeRatio = settings.darkMode ? 1 : 0;
+    }
+    uiThemeHook();
+    uiThemeHeld = 0;
+    uiThemeK = uiThemeScene() ? darkModeRatio : 0;
+  };
+  var uiThemeEnd = function uiThemeEnd() {
+    uiThemeK = 0;
+    uiThemeHeld = 0;
+  };
+  // (for a part of a screen that isn't a menu scene: the map's buttons)
+  var uiThemeOn = function uiThemeOn() {
+    uiThemeK = darkModeRatio;
+  };
+  var uiThemeOff = function uiThemeOff() {
+    uiThemeK = 0;
+  };
+  // draw fn with the real colours (a Dash, a skin, a picture)
+  var uiThemeHold = function uiThemeHold(fn) {
+    uiThemeHeld++;
+    try {
+      return fn();
+    } finally {
+      uiThemeHeld--;
     }
   };
   var getC = function getC(p) {
@@ -26922,6 +27019,9 @@ function program() {
     // Jewel
     __p.fill(219, 21, 166);
     __p.ellipse(x, y - crownH, s / 5, s / 5);
+    if (typeof crownShine === "function" && !drawIdleCrown.baking) {
+      crownShine(x, y, crownW, crownH, 2.6); // [v1.6] the shine, like the Champion's crown
+    }
   };
   var drawStopLight = function drawStopLight(x, y, s) {
     // Pole
@@ -28012,6 +28112,55 @@ function program() {
   // row (it was a fixed amount, so badges added at the end, like Parkour Master once
   // it is listed, could sit below the bottom of the screen)
   var goalsMinY = -110;
+  // [v1.6] badges earned / badges there are (the hidden ones count once shown)
+  var achProgress = function achProgress() {
+    var got = 0,
+      all = 0;
+    for (var c = 0; c < badgeClassOrder.length; c++) {
+      var list = groupedAchievements[badgeClassOrder[c]] || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].shown === true) {
+          continue;
+        }
+        all++;
+        if (!list[i].locked) {
+          got++;
+        }
+      }
+    }
+    return { got: got, all: all };
+  };
+  // [v1.6] a locked badge's picture: a grey disc with a big drawn question mark
+  var drawMysteryBadge = function drawMysteryBadge(x, y, d, ring) {
+    if (uiThemeK && !uiThemeHeld) {
+      return uiThemeHold(function () {
+        drawMysteryBadge(x, y, d, ring);
+      });
+    }
+    __p.noStroke();
+    __p.fill(70);
+    __p.ellipse(x, y, d, d);
+    __p.fill(95);
+    __p.ellipse(x - d * 0.06, y - d * 0.07, d * 0.82, d * 0.82);
+    __p.stroke(ring);
+    __p.strokeWeight(d / 22);
+    __p.noFill();
+    __p.ellipse(x, y, d, d);
+    var bob = Math.sin(__p.millis() / 420) * d * 0.02;
+    var q = function (ox, oy, col, w) {
+      __p.stroke(col);
+      __p.strokeWeight(w);
+      __p.noFill();
+      __p.arc(x + ox, y - d * 0.12 + oy + bob, d * 0.34, d * 0.3, 180, 395);
+      __p.line(x + ox + d * 0.075, y + d * 0.005 + oy + bob, x + ox, y + d * 0.075 + oy + bob);
+      __p.line(x + ox, y + d * 0.075 + oy + bob, x + ox, y + d * 0.12 + oy + bob);
+      __p.noStroke();
+      __p.fill(col);
+      __p.ellipse(x + ox, y + d * 0.25 + oy + bob, w * 1.25, w * 1.25);
+    };
+    q(d * 0.015, d * 0.02, __p.color(30), d * 0.1); // shadow
+    q(0, 0, __p.color(255), d * 0.1);
+  };
   function drawBadgesAndClasses(classNames, startX, initialY, s, maxWidth) {
     var lastRowY = initialY;
     // --------------------------------------------------------
@@ -28032,6 +28181,13 @@ function program() {
       var className = classNames[c];
       var list = groupedAchievements[className] || [];
       var currentX = startX;
+      // [v1.6] each section's name on a coloured tab
+      var tabCol = className === "General" ? __p.color(0, 120, 255) : className === "Obstacles" ? __p.color(235, 120, 0) : __p.color(0, 165, 80);
+      var tabW = arcMeasureLine(className, s / 6.5) + 26;
+      __p.fill(tabCol);
+      __p.stroke(0);
+      __p.strokeWeight(4);
+      __p.rect(startX - s / 2.3 - 13, currentY - s / 1.4 - s / 5, tabW, s / 3.2, 10);
       __p.stroke(255);
       arcText(className, startX - s / 2.3, currentY - s / 1.4);
       for (var i = 0, len = list.length; i < len; i++) {
@@ -28048,11 +28204,21 @@ function program() {
         var isHovered = hoverSq < hoverRadiusSq;
         badge.animScale = __p.lerp(badge.animScale, isHovered ? 1.2 : 1.0, dtLerp(0.15));
         var dS = s * badge.animScale;
+        // [v1.6] a white disc with a black outline behind each badge (like the buttons)
+        __p.fill(255);
+        __p.stroke(0);
+        __p.strokeWeight(s / 14);
+        __p.ellipse(currentX, currentY, dS / 1.1 + s / 9, dS / 1.1 + s / 9);
         if (badge.img && !badge.maskedImg) {
           ensureBadgeMasked(badge, Math.round(s * 4));
         }
         if (!drawBadgeAA(badge, currentX, currentY, dS / 1.1, s * 1.2 / 1.1) && badge.maskedImg) {
           __p.image(badge.maskedImg, currentX, currentY, dS / 1.1, dS / 1.1);
+        }
+        if (badge.name === "Parkour Champion" && !badge.locked) {
+          // [v1.6] the crown's shine, live over the badge
+          var cD = dS / 1.1;
+          crownShine(currentX, currentY + cD / 6, cD * 2 / 3, cD * 0.55 * 2 / 3, 2.6);
         }
         __p.stroke(badge.rarityColor);
         __p.strokeWeight(s / 20);
@@ -28063,10 +28229,12 @@ function program() {
           __p.ellipse(currentX, currentY, dS / 1.1, dS / 1.1);
         }
         if (badge.locked) {
-          __p.noStroke();
-          __p.fill(0, 0, 0, 180);
-          __p.ellipse(currentX, currentY, dS / 1.1, dS / 1.1);
-          lock(currentX, currentY, dS / 1.5);
+          uiThemeHold(function () {
+            __p.noStroke();
+            __p.fill(0, 0, 0, 180);
+            __p.ellipse(currentX, currentY, dS / 1.1, dS / 1.1);
+            lock(currentX, currentY, dS / 1.5);
+          });
         }
         if (isHovered && __p.mouseIsPressed) {
           if (selectedBadge !== badge.name) {
@@ -28130,10 +28298,7 @@ function program() {
       }
     } else {
       arcText("???", x + s * 3, y);
-      __p.textSize(s * 4);
-      __p.textAlign(__p.CENTER, __p.CENTER);
-      __p.stroke(rColor);
-      __p.text("❔", x - s / 4, y + s);
+      drawMysteryBadge(x - s / 2, y + s, s * 5.7, rColor); // [v1.6] (was an emoji)
     }
     __p.stroke(rColor);
     __p.strokeWeight(s / 1.5);
@@ -28154,13 +28319,13 @@ function program() {
     }
     arcSize(s / 2);
     arcAlign(__p.LEFT);
-    __p.stroke(128, 128, 128);
+    __p.stroke(70);
     if (!badge.locked) {
       arcText(badge.description, x + s * 3, y + s * 1.5);
     } else {
       arcText("???", x + s * 3, y + s * 1.5);
     }
-    __p.stroke(186, 186, 186);
+    __p.stroke(120);
     // [v5] a long tutorial (Parkour Master's list of levels left) shrinks to fit two lines
     var tutS = s / 2;
     while (tutS > s / 2.9 && arcGetLayout(badge.tutorial, tutS, __p.LEFT, 350).lines.length > 2) {
@@ -36090,6 +36255,9 @@ function program() {
   var currentLevel = 1;
   var bossRemixStage;
   function loadLevel(levelIndex, player) {
+    if (typeof skinFxClear === "function") {
+      skinFxClear(); // [v1.6]
+    }
     lvl = levels[levelIndex];
     if (currentLevel === 15) {
       lvl = levels[levelIndex].levels[bossRemixStage];
@@ -36735,6 +36903,13 @@ function program() {
       lowParticleAcc += count * 0.33;
       count = __p.floor(lowParticleAcc);
       lowParticleAcc -= count;
+    }
+    // [v1.6] 8-bit Dash: his dust is little squares
+    if (type === "dust" && psk === 9 && typeof fxPart === "function") {
+      for (var pq = 0; pq < count; pq++) {
+        fxPart({ kind: "sq", x: x + __p.random(-6, 6), y: y + __p.random(-3, 3), vx: __p.random(-speed, speed), vy: __p.random(-speed * 1.2, 0), g: 0.12, size: __p.random(3, 5), life: 24, col: pq % 3 ? [150, 150, 150] : [210, 60, 50] });
+      }
+      return;
     }
     // [v1.1] Party Dash: his dust is confetti (a little more of it, popping upward)
     var partyDust = type === "dust" && psk === 24;
@@ -37603,11 +37778,20 @@ function program() {
   };
   Player.prototype.update = function () {
     if (this.spawning && !this.dead) {
+      // [v1.6] your skin's own way of appearing (see skinFxSpawn)
+      if (this === p && this.spawningTimer === 0) {
+        mpLocalTint();
+        skinFxSpawn(currentSkin, this.x, this.y, dashTint, typeof MP !== "undefined" && MP.active ? mpMyColor() : 0, true);
+        dashTint = null;
+        this.dinoCover = currentSkin === 11 ? 1 : 0;
+        this.stacheBuild = currentSkin === 23 ? 0 : 1;
+        this.discoDrop = currentSkin === 24 ? 1 : 0;
+      }
       this.spawningTimer += DT;
-      if (this.spawningTimer < 10) {
+      if (this !== p && this.spawningTimer < 10) {
         spawnParticles(this.x, this.y, dtCount(20), "spawn", 1.5);
       }
-      if (this.spawningTimer >= 28) {
+      if (this.spawningTimer >= (this === p ? skinSpawnLen(currentSkin) : 28)) {
         // (same frame as "> 27" at 60 fps, without starting early at high fps)
         this.spawning = false;
       }
@@ -37874,7 +38058,40 @@ function program() {
       // Pass 'this' as the 6th argument so the particle can attach to you
       spawnParticles(this.x, this.y, 2, "pi", 0, this);
     }
+    if (this === p) {
+      skinTrail(currentSkin, this, this.prevGrounded); // [v1.6]
+    }
     ballSkinRotation += this.vx * 2.5 * DT;
+  };
+  // [v1.6] Multi-Platform Dash: the Emerald Guard's stack of platforms, squarer
+  var drawMultiPlat = function drawMultiPlat(w, h, u) {
+    var sx = w / 40 / u,
+      sy = h / 40 / u;
+    __p.pushMatrix();
+    __p.scale(sx * u, sy * u);
+    __p.noStroke();
+    // poles and bars (black)
+    __p.fill(0);
+    __p.rect(-21, -25, 1.8, 17);
+    __p.rect(-21, -9.5, 7, 1.8);
+    __p.rect(19.5, -21, 1.8, 15);
+    __p.rect(14, -7.5, 7, 1.8);
+    __p.rect(-0.9, -34, 1.8, 12);
+    // platforms
+    __p.fill(150);
+    __p.rect(-28, -30, 15, 5.5, 1.4);
+    __p.rect(13, -26, 15, 5.5, 1.4);
+    __p.rect(-13, -40, 26, 6.5, 1.4);
+    // the main body
+    __p.rect(-15, -22, 30, 22, 3);
+    bossEye(-5.6, -11, 7.2, "left", bossBlinks[1].blink);
+    bossEye(5.6, -11, 7.2, "right", bossBlinks[1].blink);
+    __p.stroke(255, 255, 255, 60);
+    __p.strokeWeight(1);
+    __p.line(12, -19, 12, -18);
+    __p.line(12, -15, 12, -8);
+    __p.line(25, -24.5, 25, -24);
+    __p.popMatrix();
   };
   Player.prototype.drawBase = function (w, h, bodyColor, fX, fY, fYMove) {
     var scaleOffset = this.w * 0.25;
@@ -38030,6 +38247,17 @@ function program() {
     var mx = fX * 0.6,
       my = fY + h * 0.27 + bounce * 0.45 * u;
     var m = this.w / 40; // drawn in 40-px units
+    // [v1.6] after he appears, the mustache is built (its own little particles fly in)
+    if (this.stacheBuild !== undefined && this.stacheBuild < 1 && this !== fxDummy) {
+      this.stacheBuild = __p.min(1, this.stacheBuild + DT / 18);
+    }
+    if (this.stacheBuild !== undefined && this.stacheBuild < 1) {
+      var sb = this.stacheBuild < 0.3 ? 0 : fxBack((this.stacheBuild - 0.3) / 0.7);
+      if (sb <= 0.01) {
+        return;
+      }
+      m *= sb;
+    }
     var tip = bounce * 0.9 - 1; // the curled tips flick the most
     __p.noStroke();
     __p.fill(15, 10, 10);
@@ -38059,8 +38287,21 @@ function program() {
     var t = __p.frameCount;
     var lag = this.skinSpring("ballY", -__p.constrain(this.vy * 0.6, -9, 9), 0.16, 0.2);
     var r = 10.5 * u;
+    if (skinNoProp) {
+      return;
+    }
+    // [v1.6] after he appears the ball comes down on its string and settles over him
+    if (this.discoDrop > 0 && this !== fxDummy) {
+      this.discoDrop = __p.max(0, this.discoDrop - DT / 46);
+    }
+    var drop = this.discoDrop > 0 ? 150 * this.discoDrop * this.discoDrop * u : 0;
     var cx = fX * 0.25,
-      cy = -h - 17 * u + Math.sin(t * 0.07) * 1.6 * u + lag * u;
+      cy = -h - 17 * u + Math.sin(t * 0.07) * 1.6 * u + lag * u - drop;
+    if (drop > 0) {
+      __p.stroke(70);
+      __p.strokeWeight(1.2 * u);
+      __p.line(cx, cy - r, cx, cy - r - 260 * u);
+    }
     // coloured light beams sweeping down from it
     __p.noStroke();
     for (var b = 0; b < 3; b++) {
@@ -38164,6 +38405,19 @@ function program() {
       __p.noStroke();
       __p.fill(255, 200, 40);
       __p.rect(fX / 2 + 2.6 * u, mY - 1.2 * u, 3.6 * u, 3.8 * u, 0, 0, 1.2 * u, 1.2 * u);
+      // [v1.6] the gold tooth catches the light now and then: a glint and a twinkle
+      var tsh = __p.millis() / 1000 % 2.2;
+      if (tsh < 0.5) {
+        var tk = Math.sin(tsh / 0.5 * Math.PI);
+        var tx = fX / 2 + 4.4 * u,
+          ty = mY + 0.4 * u;
+        __p.fill(255, 255, 220, 230 * tk);
+        __p.rect(fX / 2 + 2.9 * u, mY - 1 * u, 1.1 * u, 3.2 * u, 0.5 * u);
+        var tss = 4.6 * u * tk;
+        __p.fill(255, 255, 255, 240 * tk);
+        __p.quad(tx, ty - tss, tx + tss * 0.22, ty, tx, ty + tss, tx - tss * 0.22, ty);
+        __p.quad(tx - tss, ty, tx, ty - tss * 0.22, tx + tss, ty, tx, ty + tss * 0.22);
+      }
     }
     // sunglasses: dark lenses, gold rims, a glint that slides as he moves
     var gx = fX * 0.8,
@@ -38191,16 +38445,9 @@ function program() {
     var hatY = -h + this.skinSpring("hatY", -__p.constrain(this.vy * 0.45, -6, 10), 0.25, 0.22) * u;
     var hx = fX * 0.3;
     var hw = __p.lerp(this.w, w, 0.4);
-    __p.stroke(0);
-    __p.strokeWeight(1.5 * u);
-    __p.fill(28, 28, 34);
-    __p.rect(hx - hw * 0.31, hatY - 19 * u, hw * 0.62, 19 * u, 2 * u, 2 * u, 0, 0);
-    __p.rect(hx - hw * 0.5, hatY - 3 * u, hw, 4.5 * u, 2 * u);
-    __p.noStroke();
-    __p.fill(255, 205, 50);
-    __p.rect(hx - hw * 0.31 + 0.7 * u, hatY - 8.2 * u, hw * 0.62 - 1.4 * u, 4.4 * u);
-    __p.fill(255, 255, 255, 45);
-    __p.rect(hx - hw * 0.31 + 2 * u, hatY - 17.5 * u, 2.6 * u, 8 * u, 1.3 * u);
+    if (!skinNoProp) {
+      moneyHatShape(hx, hatY, hw, u); // [v1.6] (shared with his spawn / death)
+    }
   };
   var masterXScroll;
   Player.prototype.draw = function () {
@@ -38231,24 +38478,22 @@ function program() {
     var ilx = 0,
       ily = 0;
     if (this.idleT > 600) {
-      var cyc = (this.idleT - 600) % 420;
-      var IDLE_LOOKS = [[-1, 0, 80], [0, 0, 40], [1, 0, 80], [0, 0, 40], [0.7, -0.9, 70], [-0.6, -0.6, 60], [0, 0, 50]];
-      for (var il = 0; il < IDLE_LOOKS.length; il++) {
-        if (cyc < IDLE_LOOKS[il][2]) {
-          ilx = IDLE_LOOKS[il][0];
-          ily = IDLE_LOOKS[il][1];
-          break;
-        }
-        cyc -= IDLE_LOOKS[il][2];
-      }
+      // [v1.6] a slow, graceful look around: his eyes drift left and right and now and
+      // then up, easing in and out of each glance (it used to leap between set spots)
+      var ph = this.idleT - 600;
+      var env = __p.min(1, ph / 90);
+      ilx = env * (Math.sin(ph * 0.0105) * 0.85 + Math.sin(ph * 0.0041 + 1.3) * 0.15);
+      ily = env * -0.55 * __p.max(0, Math.sin(ph * 0.0057 - 0.8)) * __p.max(0, Math.sin(ph * 0.0057 - 0.8));
     }
-    // ([v1.5] snappy, the way his eyes move when keys are pressed: a quick spring that
-    // overshoots a little and settles, then holds; not a slow glide)
+    // (eased, with no overshoot; returns quickly when he moves again)
     var ik = __p.min(DT, 3);
-    this.idleVX = ((this.idleVX || 0) + (ilx - (this.idleLX || 0)) * 0.3 * ik) * Math.pow(0.55, ik);
-    this.idleVY = ((this.idleVY || 0) + (ily - (this.idleLY || 0)) * 0.3 * ik) * Math.pow(0.55, ik);
-    this.idleLX = (this.idleLX || 0) + this.idleVX * ik;
-    this.idleLY = (this.idleLY || 0) + this.idleVY * ik;
+    var ie = this.idleT > 600 ? 0.06 : 0.25;
+    var nlx = __p.lerp(this.idleLX || 0, ilx, dtLerp(ie)),
+      nly = __p.lerp(this.idleLY || 0, ily, dtLerp(ie));
+    this.idleVX = nlx - (this.idleLX || 0);
+    this.idleVY = nly - (this.idleLY || 0);
+    this.idleLX = nlx;
+    this.idleLY = nly;
     faceX += this.idleLX * scaleOffset * 0.9;
     faceY += this.idleLY * this.h * 0.1;
 
@@ -38285,24 +38530,9 @@ function program() {
         // Position the hat base right on top of the dynamic head position + lag
         var hX = faceX * 0.3; // Hat slightly leans into face direction
         var hY = -this.visualH + hatLagY;
-        __p.stroke(0);
-        __p.strokeWeight(2);
-        __p.fill(255);
-
-        // Top puffs 
-        __p.ellipse(hX + hatW / 2, hY - hatH / 3, hatW / 1.5, hatH / 1.5);
-        __p.ellipse(hX - hatW / 2, hY - hatH / 3, hatW / 1.5, hatH / 1.5);
-        __p.ellipse(hX, hY - hatH / 2, hatW / 1.5, hatH / 1.5);
-
-        // Base fill
-        __p.noStroke();
-        __p.rect(hX - hatW / 2, hY - hatH / 2, hatW, hatH / 1.6);
-
-        // Brim detailing lines
-        __p.stroke(0);
-        __p.line(hX - hatW / 2, hY + hatH / 7, hX - hatW / 2, hY - hatH / 4);
-        __p.line(hX + hatW / 2, hY + hatH / 7, hX + hatW / 2, hY - hatH / 4);
-        __p.line(hX - hatW / 2, hY + hatH / 8, hX + hatW / 2, hY + hatH / 8);
+        if (!skinNoProp) {
+          chefHatShape(hX, hY, hatW, hatH); // [v1.6] (shared with his spawn / death)
+        }
         break;
       case 3:
         // Dirt block
@@ -38389,63 +38619,95 @@ function program() {
         drawLarrySkin(this, this.visualW, this.visualH); // [v1.5] animated (was the still picture)
         break;
       case 8:
-        // Warrior Skin 
-        // more shortcuts
+        // [v1.6] Warrior Costume: steel helmet with a red crest, a short cape, a
+        // belt, a round-topped shield on the side he faces and a sword on the other
         var w = this.visualW;
         var h = this.visualH;
+        var u = this.w / 40;
         var fX = faceX;
         var fY = faceY;
         var fYMove = faceYMove;
-
-        // drawbase handles the body, eyes, hurt frames, and mouth perfectly
+        var face = fX > 0.5 ? 1 : fX < -0.5 ? -1 : this.wFace || 1;
+        this.wFace = face;
+        // cape behind him (trails when he runs, lifts when he falls)
+        var wcT = __p.constrain(-this.vx * 2.2, -w * 0.7, w * 0.7);
+        var wcL = __p.constrain(this.vy * 1.4, -h * 0.3, h * 0.2);
+        __p.stroke(0);
+        __p.strokeWeight(1.4 * u);
+        __p.fill(150, 20, 25);
+        __p.beginShape();
+        __p.vertex(-w * 0.42, -h * 0.82);
+        __p.vertex(w * 0.42, -h * 0.82);
+        __p.bezierVertex(w * 0.5 + wcT * 0.5, -h * 0.4, w * 0.48 + wcT, -h * 0.1 + wcL, w * 0.44 + wcT, -h * 0.02 + wcL);
+        __p.vertex(-w * 0.44 + wcT, -h * 0.02 + wcL);
+        __p.bezierVertex(-w * 0.48 + wcT, -h * 0.1 + wcL, -w * 0.5 + wcT * 0.5, -h * 0.4, -w * 0.42, -h * 0.82);
+        __p.endShape(__p.CLOSE);
         this.drawBase(w, h, __p.color(255, 0, 0), fX, fY, fYMove);
-
-        // cute hat
-        var hatLagY = -__p.constrain(this.vy * 0.3, -6, 8);
-        var hatY = -h + hatLagY;
-
-        // Helmet Plume 
-        __p.fill(200, 30, 30);
+        // belt with a gold buckle
         __p.noStroke();
-        __p.arc(fX * 0.2, hatY - 2, w * 0.5, h * 0.4, 180, 360);
-
-        // Helmet Base 
-        __p.fill(140, 150, 160);
+        __p.fill(90, 55, 30);
+        __p.rect(-w / 2, -h * 0.24, w, h * 0.1);
+        __p.fill(240, 195, 60);
+        __p.rect(fX * 0.3 - 3 * u, -h * 0.25, 6 * u, h * 0.12, u);
+        __p.fill(90, 55, 30);
+        __p.rect(fX * 0.3 - 1.2 * u, -h * 0.22, 2.4 * u, h * 0.06);
+        // helmet
+        if (!skinNoProp) {
+          var hatLagY = -__p.constrain(this.vy * 0.3, -6, 8);
+          helmetShape(fX * 0.2, -h + hatLagY, w, h);
+        }
+        // sword (behind the hand on the far side)
+        var swX = -face * w * 0.62,
+          swY = -h * 0.35 + fYMove * 0.3;
+        __p.pushMatrix();
+        __p.translate(swX, swY);
+        __p.rotate(-face * 12);
         __p.stroke(0);
-        __p.strokeWeight(2);
-        __p.arc(fX * 0.2, hatY + 5, w * 1.05, h * 0.6, 180, 360);
-
-        // Nose Guard
-        __p.fill(100, 110, 120);
+        __p.strokeWeight(1.2 * u);
+        __p.fill(215, 222, 232);
+        __p.beginShape();
+        __p.vertex(-2 * u, -2 * u);
+        __p.vertex(-2 * u, -17 * u);
+        __p.vertex(0, -21 * u);
+        __p.vertex(2 * u, -17 * u);
+        __p.vertex(2 * u, -2 * u);
+        __p.endShape(__p.CLOSE);
+        __p.fill(240, 195, 60);
+        __p.rect(-5.5 * u, -2.5 * u, 11 * u, 2.6 * u, u);
+        __p.fill(90, 55, 30);
+        __p.rect(-1.5 * u, 0, 3 * u, 6 * u, u);
         __p.noStroke();
-        __p.triangle(fX * 0.2 - w * 0.08, hatY + 4, fX * 0.2 + w * 0.08, hatY + 4, fX * 0.2, hatY + h * 0.25);
-
-        // shield
-        // goes in the direction the player is going
-        var shieldX = fX > 0 ? w * 0.65 : -w * 0.65;
+        __p.fill(255, 255, 255, 150);
+        __p.rect(-0.6 * u, -16 * u, 1 * u, 13 * u);
+        __p.popMatrix();
+        // shield on the side he faces
+        var shieldX = face * w * 0.62;
         var shieldY = -h * 0.4 + fYMove * 0.3;
-        var shieldW = w * 0.45;
-        var shieldH = h * 0.6;
-
-        // Outer Shield
-        __p.fill(205, 127, 50);
+        var shieldW = w * 0.5;
+        var shieldH = h * 0.62;
         __p.stroke(0);
-        __p.strokeWeight(2);
+        __p.strokeWeight(1.6 * u);
+        __p.fill(150, 160, 172);
         __p.beginShape();
-        __p.vertex(shieldX - shieldW / 2, shieldY - shieldH / 2);
-        __p.vertex(shieldX + shieldW / 2, shieldY - shieldH / 2);
-        __p.bezierVertex(shieldX + shieldW / 2, shieldY + shieldH / 4, shieldX, shieldY + shieldH / 2, shieldX, shieldY + shieldH / 1.8);
-        __p.bezierVertex(shieldX, shieldY + shieldH / 2, shieldX - shieldW / 2, shieldY + shieldH / 4, shieldX - shieldW / 2, shieldY - shieldH / 2);
+        __p.vertex(shieldX - shieldW / 2, shieldY - shieldH * 0.32);
+        __p.bezierVertex(shieldX - shieldW / 2, shieldY - shieldH * 0.6, shieldX + shieldW / 2, shieldY - shieldH * 0.6, shieldX + shieldW / 2, shieldY - shieldH * 0.32);
+        __p.bezierVertex(shieldX + shieldW / 2, shieldY + shieldH * 0.2, shieldX + shieldW * 0.1, shieldY + shieldH * 0.42, shieldX, shieldY + shieldH * 0.52);
+        __p.bezierVertex(shieldX - shieldW * 0.1, shieldY + shieldH * 0.42, shieldX - shieldW / 2, shieldY + shieldH * 0.2, shieldX - shieldW / 2, shieldY - shieldH * 0.32);
         __p.endShape(__p.CLOSE);
-
-        // Inner Shield Core 
-        __p.fill(110, 120, 130);
+        __p.noStroke();
+        __p.fill(190, 30, 35);
         __p.beginShape();
-        __p.vertex(shieldX - shieldW / 3, shieldY - shieldH / 2.5);
-        __p.vertex(shieldX + shieldW / 3, shieldY - shieldH / 2.5);
-        __p.bezierVertex(shieldX + shieldW / 3, shieldY + shieldH / 5, shieldX, shieldY + shieldH / 2.5, shieldX, shieldY + shieldH / 2.2);
-        __p.bezierVertex(shieldX, shieldY + shieldH / 2.5, shieldX - shieldW / 3, shieldY + shieldH / 5, shieldX - shieldW / 3, shieldY - shieldH / 2.5);
+        __p.vertex(shieldX - shieldW * 0.36, shieldY - shieldH * 0.3);
+        __p.bezierVertex(shieldX - shieldW * 0.36, shieldY - shieldH * 0.48, shieldX + shieldW * 0.36, shieldY - shieldH * 0.48, shieldX + shieldW * 0.36, shieldY - shieldH * 0.3);
+        __p.bezierVertex(shieldX + shieldW * 0.36, shieldY + shieldH * 0.12, shieldX + shieldW * 0.08, shieldY + shieldH * 0.3, shieldX, shieldY + shieldH * 0.38);
+        __p.bezierVertex(shieldX - shieldW * 0.08, shieldY + shieldH * 0.3, shieldX - shieldW * 0.36, shieldY + shieldH * 0.12, shieldX - shieldW * 0.36, shieldY - shieldH * 0.3);
         __p.endShape(__p.CLOSE);
+        // a gold cross on it
+        __p.fill(240, 195, 60);
+        __p.rect(shieldX - 1.4 * u, shieldY - shieldH * 0.36, 2.8 * u, shieldH * 0.62, 0.6 * u);
+        __p.rect(shieldX - shieldW * 0.26, shieldY - shieldH * 0.16, shieldW * 0.52, 2.8 * u, 0.6 * u);
+        __p.fill(255, 255, 255, 70);
+        __p.ellipse(shieldX - shieldW * 0.2, shieldY - shieldH * 0.3, shieldW * 0.24, shieldH * 0.12);
         break;
       case 9:
         // Pixel Dash
@@ -38474,13 +38736,20 @@ function program() {
         }
         break;
       case 10:
-        boss2Graphic(0, -this.h / 2, this.w);
+        // [v1.6] Multi-Platform Dash: a squarer stack of platforms (it was twice
+        // as wide as Dash), squashing and stretching with him
+        drawMultiPlat(this.visualW, this.visualH, this.w / 40);
         break;
       case 11:
         // Dino Costume
         // basic setup
         var w = this.visualW;
         var h = this.visualH;
+        // [v1.6] dinoCover 1: the hood and jaw close right over him (spawn and death)
+        if (this.dinoCover > 0 && this !== fxDummy && !this.dead) {
+          this.dinoCover = __p.max(0, this.dinoCover - DT / 16);
+        }
+        var dc = fxEase(this.dinoCover || 0);
         var lagY = -__p.constrain(this.vy * 0.3, -5, 5);
         var topHead = -h + lagY;
         var dinoGreen = __p.color(46, 139, 87);
@@ -38520,16 +38789,18 @@ function program() {
         __p.strokeWeight(1);
 
         // top green hood
+        var hoodH = h * (0.25 + 0.25 * dc),
+          jawTop = h * (0.72 - 0.22 * dc);
         __p.fill(dinoGreen);
-        __p.rect(-w / 2, topHead, w, h * 0.25, cornerRad, cornerRad, 0, 0);
+        __p.rect(-w / 2, topHead, w, hoodH, cornerRad, cornerRad, 0, 0);
 
         // Lower jaw
         __p.fill(dinoGreen);
-        __p.rect(-w / 2, topHead + h * 0.72, w, h * 0.28, 0, 0, cornerRad, cornerRad);
+        __p.rect(-w / 2, topHead + jawTop, w, h - jawTop, 0, 0, cornerRad, cornerRad);
 
         // Top teeth
         __p.fill(255);
-        var topToothY = topHead + h * 0.25;
+        var topToothY = topHead + hoodH - 3 * dc;
         var toothW = w / 4;
         for (var i = 0; i < 4; i++) {
           var tx = -w / 2 + i * toothW;
@@ -38537,7 +38808,7 @@ function program() {
         }
 
         // Bottom teeth
-        var botToothY = topHead + h * 0.72;
+        var botToothY = topHead + jawTop + 3 * dc;
         for (var i = 0; i < 4; i++) {
           var tx = -w / 2 + i * toothW;
           var bx = tx + toothW * 0.25;
@@ -38617,47 +38888,78 @@ function program() {
         __p.rect(w * 0.30, footY, footW, footH, footW / 2);
         break;
       case 13:
-        // Ninja Skin
+        // [v1.6] Ninja Costume: a dark hood and mask with just an eye slit, a red
+        // headband whose tails flutter behind him, and a shuriken at his belt
         var w = this.visualW;
         var h = this.visualH;
+        var u = this.w / 40;
         var fX = faceX;
         var fY = faceY;
         var fYMove = faceYMove;
         var cornerRad = w * 0.25;
-        this.drawBase(w, h, __p.color(255, 0, 0), fX, fY, fYMove);
-        var maskColor = __p.color(0, 0, 0);
-        __p.fill(maskColor);
+        var behind = this.vx > 0.4 ? -1 : this.vx < -0.4 ? 1 : this.nkBehind || -1;
+        this.nkBehind = behind;
+        var spd = __p.min(1, __p.abs(this.vx) / 6);
+        // headband tails, behind him
+        var knotX = behind * w * 0.44,
+          knotY = -h * 0.73;
+        var flut = Math.sin(__p.millis() / 60) * (2 + spd * 3) * u;
         __p.noStroke();
-        __p.rect(-w / 2, -h, w, h * 0.25, cornerRad, cornerRad, 0, 0);
-        __p.rect(-w / 2, -h * 0.52, w, h * 0.52, 0, 0, cornerRad, cornerRad);
-        __p.stroke(122, 0, 0);
-        __p.strokeWeight(w * 0.04);
-        var lineY1 = -h + h * 0.12;
-        var lineY2 = -h + h * 0.22;
-        __p.line(-w / 2 + 3, lineY1, w / 2 - 3, lineY1);
-        __p.line(-w / 2 + 3, lineY2, w / 2 - 3, lineY2);
-        var starX = -w * 0.55 + fX * 0.1;
-        var starY = -h * 0.25 + fYMove * 0.3;
-        var starSize = w * 0.3;
-        __p.fill(160, 170, 175);
-        __p.stroke(120, 120, 120);
-        __p.strokeWeight(1.5);
+        __p.fill(190, 20, 30);
+        for (var tl = 0; tl < 2; tl++) {
+          var len = (14 + spd * 10 - tl * 4) * u,
+            dy = (tl * 5 - 1) * u;
+          __p.beginShape();
+          __p.vertex(knotX, knotY - 1.6 * u);
+          __p.bezierVertex(knotX + behind * len * 0.4, knotY + dy - flut * 0.6, knotX + behind * len * 0.75, knotY + dy + flut, knotX + behind * len, knotY + dy + 2 * u + flut * (tl ? -1 : 1));
+          __p.vertex(knotX + behind * len * 0.95, knotY + dy + 4.6 * u + flut * (tl ? -1 : 1));
+          __p.bezierVertex(knotX + behind * len * 0.7, knotY + dy + 3 * u + flut, knotX + behind * len * 0.35, knotY + dy + 2.6 * u - flut * 0.6, knotX, knotY + 1.6 * u);
+          __p.endShape(__p.CLOSE);
+        }
+        this.drawBase(w, h, __p.color(255, 0, 0), fX, fY, fYMove);
+        // hood and mask
+        __p.fill(26, 28, 42);
+        __p.rect(-w / 2, -h, w, h * 0.27, cornerRad, cornerRad, 0, 0);
+        __p.rect(-w / 2, -h * 0.5, w, h * 0.5, 0, 0, cornerRad, cornerRad);
+        // folds in the mask
+        __p.stroke(50, 54, 78);
+        __p.strokeWeight(1.2 * u);
+        __p.noFill();
+        __p.arc(fX * 0.3, -h * 0.47, w * 0.7, h * 0.18, 10, 170);
+        __p.arc(fX * 0.3 - 6 * u, -h * 0.3, w * 0.4, h * 0.14, 20, 160);
+        __p.noStroke();
+        // headband over the hood, with a knot
+        __p.fill(205, 25, 35);
+        __p.rect(-w / 2, -h * 0.78, w, h * 0.09);
+        __p.fill(160, 15, 25);
+        __p.ellipse(knotX, knotY, 5 * u, 5 * u);
+        // a metal plate on the headband
+        __p.fill(170, 178, 186);
+        __p.rect(fX * 0.3 - 5 * u, -h * 0.785, 10 * u, h * 0.1, u);
+        __p.stroke(110, 116, 124);
+        __p.strokeWeight(0.8 * u);
+        __p.line(fX * 0.3 - 3 * u, -h * 0.74, fX * 0.3 + 3 * u, -h * 0.74);
+        // belt and shuriken
+        __p.noStroke();
+        __p.fill(60, 62, 80);
+        __p.rect(-w / 2, -h * 0.2, w, h * 0.07);
+        var starX = -behind * w * 0.3;
+        var starY = -h * 0.165;
+        var starSize = w * 0.26;
+        __p.fill(170, 178, 186);
+        __p.stroke(90, 96, 104);
+        __p.strokeWeight(1.2 * u);
         __p.pushMatrix();
         __p.translate(starX, starY);
-        __p.rotate(15);
+        __p.rotate(15 + this.x * 2);
         __p.beginShape();
         for (var i = 0; i < 8; i++) {
-          // Alternates between long sharp points and inner dips
           var angle = i * 45;
           var radius = i % 2 === 0 ? starSize / 2 : starSize / 5;
-          var sx = __p.cos(angle) * radius;
-          var sy = __p.sin(angle) * radius;
-          __p.vertex(sx, sy);
+          __p.vertex(__p.cos(angle) * radius, __p.sin(angle) * radius);
         }
         __p.endShape(__p.CLOSE);
-
-        // Center point hole detail of the shuriken
-        __p.fill(maskColor);
+        __p.fill(26, 28, 42);
         __p.noStroke();
         __p.ellipse(0, 0, starSize / 5, starSize / 5);
         __p.popMatrix();
@@ -38720,6 +39022,29 @@ function program() {
         // a relic
         var w = this.visualW;
         var h = this.visualH;
+        // [v1.6] like a cube in a rhythm game: he spins while in the air (higher jumps,
+        // more turns) and lands square
+        if (this === p) {
+          if (!this.grounded && !this.prevGrounded && __p.abs(this.vy) > 0.5) {
+            if (!this.brAir) {
+              this.brAir = true;
+              this.brDir = this.vx < -0.3 ? -1 : this.vx > 0.3 ? 1 : this.brDir || 1;
+            }
+            this.brR = (this.brR || 0) + this.brDir * 4.5 * DT;
+          } else {
+            this.brAir = false;
+            var brT = Math.round((this.brR || 0) / 90) * 90;
+            this.brR = __p.lerp(this.brR || 0, brT, dtLerp(0.35));
+            if (__p.abs(this.brR - brT) < 0.5) {
+              this.brR = brT % 360;
+            }
+          }
+        }
+        if (this.brR) {
+          __p.translate(0, -h / 2);
+          __p.rotate(this.brR);
+          __p.translate(0, h / 2);
+        }
         var bodyColor = sData.mainColor;
         var fX = faceX;
         var fY = faceY;
@@ -38767,7 +39092,19 @@ function program() {
         break;
       case 18:
         // Kineto
+        // [v1.6] one flap of the wings each jump
+        if (this.vy < -7 && (this.kLastVy === undefined || this.kLastVy > -3)) {
+          this.kFlap = 1;
+        }
+        this.kLastVy = this.vy;
+        if (this.kFlap > 0) {
+          this.kFlap = __p.max(0, this.kFlap - DT / 20);
+        }
+        var kfl = this.kFlap > 0 ? Math.sin((1 - this.kFlap) * Math.PI * 2) * (this.kFlap + 0.25) : 0;
         __p.pushMatrix();
+        __p.translate(0, -this.visualH * 0.55);
+        __p.scale(1 + kfl * 0.12, 1 - kfl * 0.32);
+        __p.translate(0, this.visualH * 0.55);
         __p.scale(0.5 * this.w / 40); // [v1.1] the ears and wings grow with Dash (cutscenes use other sizes)
         __p.translate(-300, -340);
 
@@ -38814,6 +39151,7 @@ function program() {
         __p.noStroke();
         __p.rect(-this.visualW / 2, -this.visualH, this.visualW, this.visualH, this.visualW * 0.25);
         __p.pushMatrix();
+        __p.scale(this.visualW / this.w, this.visualH / this.h); // [v1.6] these layers squash and stretch with him
         __p.scale(0.5 * this.w / 40); // [v1.1] the ears and wings grow with Dash (cutscenes use other sizes)
         __p.translate(-300, -340);
 
@@ -38900,19 +39238,9 @@ function program() {
         var hatH = __p.lerp(this.h, this.visualH, 0.3);
         var hX = faceX * 0.3;
         var hY = -this.visualH + hatLagY;
-        __p.stroke(0);
-        __p.strokeWeight(this.h / 15);
-
-        // Hat Brim Base
-        __p.fill(25, 25, 25);
-        __p.rect(hX - hatW * 0.6, hY, hatW * 1.2, hatH * 0.15, hatW);
-        // Hat Tall Main Crown
-        __p.rect(hX - hatW * 0.4, hY - hatH * 0.75, hatW * 0.8, hatH * 0.75);
-
-        // Red Highlight Ribbon Accent
-        __p.fill(255, 0, 0);
-        __p.noStroke();
-        __p.rect(hX - hatW * 0.39, hY - hatH * 0.14, hatW * 0.78, hatH * 0.13);
+        if (!skinNoProp) {
+          piHatShape(hX, hY, hatW, hatH); // [v1.6]
+        }
         break;
       case 20:
         // champion!
@@ -38924,7 +39252,10 @@ function program() {
         var hatH = baseH * 0.55;
         var hX = faceX * 0.3;
         var hY = -this.visualH + hatLagY;
-        drawCrown(hX, hY, hatW, hatH);
+        if (!skinNoProp) {
+          drawCrown(hX, hY, hatW, hatH);
+          crownShine(hX, hY, hatW, hatH, 2.6); // [v1.6] a shine sweeps across it
+        }
         break;
       case 21:
         var w = this.visualW;
@@ -38946,66 +39277,14 @@ function program() {
         __p.bezierVertex(-w * 0.2 + capeTrail, capeBottom + h * 0.06 - capeFlap, w * 0.2 + capeTrail, capeBottom - h * 0.04 + capeFlap, w * 0.62 + capeTrail - capeFlap, capeBottom);
         __p.bezierVertex(w * 0.7 + capeTrail * 0.9, capeBottom - h * 0.1, w * 0.6 + capeTrail * 0.4, -h * 0.45, w * 0.46, -h * 0.82);
         __p.endShape(__p.CLOSE);
-        __p.fill(253, 147, 255); // [v1.5] the real Parkour Master's light pink
-        __p.noStroke();
-        var cornerRad = w * 0.25;
-        __p.rect(-w / 2, -h, w, h, cornerRad);
-        __p.noStroke();
-
-        // Left Eye (White Base)
-        __p.fill(255, 255, 255, 255);
-        __p.beginShape();
-        __p.vertex(x - s / 29.57, y - s / 8);
-        __p.vertex(x - s / 5.56, y - s / 5.88);
-        __p.bezierVertex(x - s / 6.25, y + s / 13.33, x - s / 15.38, y + s / 15.38, x - s / 29.57, y - s / 8);
-        __p.endShape();
-
-        // Right Eye (White Base)
-        __p.fill(255, 254, 254, 255);
-        __p.beginShape();
-        __p.vertex(x + s / 16.67, y - s / 8);
-        __p.vertex(x + s / 5.18, y - s / 5.88);
-        __p.bezierVertex(x + s / 5.26, y + s / 13.33, x + s / 15.38, y + s / 15.38, x + s / 16.67, y - s / 8);
-        __p.endShape();
-
-        // Left Eye (Black Iris)
-        __p.fill(0, 0, 0, 255);
-        __p.stroke(0, 0, 0, 255);
-        __p.strokeWeight(s / 100);
-        __p.beginShape();
-        __p.vertex(x - s / 7.69, y - s / 6.89);
-        __p.vertex(x - s / 13.33, y - s / 7.4);
-        __p.bezierVertex(x - s / 11.11, y + s / 20, x - s / 7.14, y - s / 22.22, x - s / 7.69, y - s / 6.89);
-        __p.endShape();
-
-        // Left Pupil Glow
-        __p.noStroke();
-        __p.fill(255, 255, 255, 255);
-        __p.ellipse(x - s / 10.52, y - s / 8, s / 40, s / 40);
-
-        // Right Eye (Black Iris)
-        __p.fill(0, 0, 0, 255);
-        __p.stroke(0, 0, 0, 255);
-        __p.strokeWeight(s / 100);
-        __p.beginShape();
-        __p.vertex(x + s / 10.52, y - s / 7.14);
-        __p.vertex(x + s / 6.45, y - s / 6.45);
-        __p.bezierVertex(x + s / 6.45, y - s / 100, x + s / 10, y + s / 28.57, x + s / 10.52, y - s / 7.14);
-        __p.endShape();
-
-        // Right Pupil Glow
-        __p.noStroke();
-        __p.fill(255, 255, 255, 255);
-        __p.ellipse(x + s / 7.4, y - s / 7.4, s / 40, s / 40);
-
-        // Mouth
-        __p.noFill();
-        __p.stroke(0, 0, 0, 255);
-        __p.strokeWeight(s / 66.7);
-        __p.beginShape();
-        __p.vertex(x - s / 9.52, y + s / 7.4);
-        __p.bezierVertex(x - s / 14.28, y + s / 11.11, x + s / 14.28, y + s / 11.11, x + s / 9.52, y + s / 7.4);
-        __p.endShape();
+        // [v1.6] the real Parkour Master's look: his diamond body, eyes, smirk and
+        // floating gloved hands (drawn with his own drawing), squashing with you
+        __p.pushMatrix();
+        __p.scale(w / this.w, h / this.h);
+        pmNoCape = true;
+        parkMast(0, -this.h / 2 + 1.4, this.w * 1.43, undefined);
+        pmNoCape = false;
+        __p.popMatrix();
         break;
       case 22:
         // [v1.1] Skull Costume (Hundred of Many): the orbital-strike skull
@@ -39067,6 +39346,17 @@ function program() {
   };
   // [v1.5] the zapped (paralyzed) look, at the bottom-middle of a vw x vh Dash; also
   // used for the square Dash in the vortex (final boss stage 2)
+  // [v1.6] a Dash is always drawn in his real colours, even on a Dark Mode menu
+  Player.prototype.drawSkinRaw = Player.prototype.draw;
+  Player.prototype.draw = function () {
+    if (!uiThemeK) {
+      return this.drawSkinRaw();
+    }
+    var self = this;
+    return uiThemeHold(function () {
+      return self.drawSkinRaw();
+    });
+  };
   Player.prototype.drawZapRing = function (vw, vh) {
       __p.pushMatrix();
       // Pulsing electric aura
@@ -39107,6 +39397,1336 @@ function program() {
         __p.rect(-vw / 2, -vh, vw, vh, vw * 0.25);
       }
       __p.popMatrix();
+  };
+  // ===================================================================
+  // [v1.6] Skin spawn and death animations, and the trails some skins leave.
+  // skinFxSpawn / skinFxDeath start a one-off animation at a Dash's centre (x, y)
+  // for skin sk (your own Dash, or another player's in multiplayer). While a spawn
+  // animation runs the Dash itself is hidden (p.spawning lasts skinSpawnLen(sk)),
+  // and the animation draws him; a death animation plays where he died. They
+  // carry on by themselves (a dropped hat can still be rolling after he is back).
+  // ===================================================================
+  var skinAnims = [];
+  var fxParts = [];
+  var skinNoProp = false; // (draw a costume without its hat / crown / ball / glasses)
+  var SKIN_PROP = { 2: "chef", 8: "helmet", 20: "crown", 25: "tophat" };
+  var SKIN_CARRIER = { 5: 1, 10: 2, 15: 3, 21: 4 }; // the guard (or the master) who carries them
+  var skinSpawnLen = function skinSpawnLen(sk) {
+    if (SKIN_PROP[sk]) {
+      return 50;
+    }
+    if (SKIN_CARRIER[sk]) {
+      return 40;
+    }
+    switch (sk) {
+      case 1:
+        return 30;
+      case 3:
+        return 40;
+      case 4:
+        return 40;
+      case 6:
+        return 44;
+      case 7:
+        return 34;
+      case 9:
+        return 22;
+      case 12:
+        return 30;
+      case 13:
+        return 28;
+      case 17:
+        return 44;
+      case 19:
+        return 46;
+    }
+    return 28;
+  };
+  var fxEase = function fxEase(t) {
+    t = __p.constrain(t, 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+  var fxBack = function fxBack(t) {
+    // ease out with a little overshoot
+    t = __p.constrain(t, 0, 1) - 1;
+    return 1 + t * t * (2.7 * t + 1.7);
+  };
+  // ---------- drawing a Dash (any skin) anywhere, at any size ----------
+  var fxDummy = null;
+  var skinFxDummy = function skinFxDummy(sk, x, y, o) {
+    o = o || {};
+    if (!fxDummy) {
+      fxDummy = new Player(0, 0);
+    }
+    var d = fxDummy;
+    d.x = x;
+    d.y = y;
+    d.w = d.h = 40;
+    d.visualW = d.targetW = 40;
+    d.visualH = d.targetH = 40;
+    d.vx = o.vx || 0;
+    d.vy = o.vy || 0;
+    d.r = 0;
+    d.idleT = 0;
+    d.idleLX = d.idleLY = d.idleVX = d.idleVY = 0;
+    d.hurtFrames = o.hurt ? 2 : 0;
+    d.mouth = "closed";
+    d.paralyzed = d.frozen = false;
+    d.spawning = d.dead = false;
+    d.brR = o.brR || 0;
+    d.dinoCover = o.dinoCover || 0;
+    d.stacheBuild = o.stache === undefined ? 1 : o.stache;
+    d.discoDrop = o.discoDrop || 0;
+    d.kFlap = 0;
+    var ks = currentSkin,
+      kt = dashTint,
+      ka = activeSprite,
+      kd = marioDir,
+      kn = skinNoProp;
+    currentSkin = sk;
+    dashTint = o.tint === undefined ? null : o.tint;
+    activeSprite = imgs.pixelSkinStraight;
+    marioDir = "right";
+    skinNoProp = !!o.noProp;
+    var sx = o.sx === undefined ? 1 : o.sx,
+      sy = o.sy === undefined ? sx : o.sy;
+    __p.pushMatrix();
+    __p.translate(x, y + 20);
+    if (o.r) {
+      __p.translate(0, -20);
+      __p.rotate(o.r);
+      __p.translate(0, 20);
+    }
+    __p.scale(sx, sy);
+    __p.translate(-x, -(y + 20));
+    withAlpha(o.a === undefined ? 1 : o.a, function () {
+      d.draw();
+    });
+    __p.popMatrix();
+    currentSkin = ks;
+    dashTint = kt;
+    activeSprite = ka;
+    marioDir = kd;
+    skinNoProp = kn;
+  };
+  // ---------- costume props, drawn around their own centre ----------
+  var chefHatShape = function chefHatShape(hX, hY, hatW, hatH) {
+    __p.stroke(0);
+    __p.strokeWeight(2);
+    __p.fill(255);
+    __p.ellipse(hX + hatW / 2, hY - hatH / 3, hatW / 1.5, hatH / 1.5);
+    __p.ellipse(hX - hatW / 2, hY - hatH / 3, hatW / 1.5, hatH / 1.5);
+    __p.ellipse(hX, hY - hatH / 2, hatW / 1.5, hatH / 1.5);
+    __p.noStroke();
+    __p.rect(hX - hatW / 2, hY - hatH / 2, hatW, hatH / 1.6);
+    __p.stroke(0);
+    __p.line(hX - hatW / 2, hY + hatH / 7, hX - hatW / 2, hY - hatH / 4);
+    __p.line(hX + hatW / 2, hY + hatH / 7, hX + hatW / 2, hY - hatH / 4);
+    __p.line(hX - hatW / 2, hY + hatH / 8, hX + hatW / 2, hY + hatH / 8);
+  };
+  var helmetShape = function helmetShape(hx, hatY, w, h) {
+    // a rounded steel helmet with a cheek guard, rivets and a tall red crest
+    var u = w / 40;
+    __p.stroke(0);
+    __p.strokeWeight(1.6 * u);
+    __p.fill(205, 35, 35);
+    __p.beginShape();
+    __p.vertex(hx - 11 * u, hatY - 9 * u);
+    __p.bezierVertex(hx - 10 * u, hatY - 24 * u, hx + 12 * u, hatY - 26 * u, hx + 16 * u, hatY - 14 * u);
+    __p.bezierVertex(hx + 10 * u, hatY - 17 * u, hx + 2 * u, hatY - 15 * u, hx + 1 * u, hatY - 9 * u);
+    __p.endShape(__p.CLOSE);
+    __p.stroke(140, 20, 20);
+    __p.strokeWeight(1 * u);
+    for (var c = 0; c < 3; c++) {
+      __p.line(hx - 6 * u + c * 5 * u, hatY - 11 * u, hx - 4 * u + c * 5 * u, hatY - 19 * u + c * 0.5 * u);
+    }
+    __p.stroke(0);
+    __p.strokeWeight(1.6 * u);
+    __p.fill(150, 160, 172);
+    __p.arc(hx, hatY + 4 * u, w * 1.08, h * 0.62, 180, 360);
+    __p.line(hx - w * 0.54, hatY + 4 * u, hx + w * 0.54, hatY + 4 * u);
+    __p.noStroke();
+    __p.fill(205, 212, 222);
+    __p.arc(hx - 5 * u, hatY - 0.5 * u, w * 0.6, h * 0.36, 200, 260);
+    __p.fill(105, 112, 122);
+    __p.rect(hx - w * 0.54, hatY + 1.5 * u, w * 1.08, 3.2 * u, u);
+    __p.fill(230, 190, 70);
+    for (var rv = -2; rv <= 2; rv++) {
+      __p.ellipse(hx + rv * 8 * u, hatY + 3.1 * u, 2.2 * u, 2.2 * u);
+    }
+    __p.fill(115, 122, 132);
+    __p.stroke(0);
+    __p.strokeWeight(1.2 * u);
+    __p.rect(hx - 2.2 * u, hatY + 3 * u, 4.4 * u, h * 0.24, 0, 0, 2 * u, 2 * u);
+  };
+  var crownShine = function crownShine(x, y, w, h, period) {
+    // a band of light that sweeps across the crown now and then, clipped to it
+    var t = (__p.millis() / 1000 % period) / 0.7;
+    if (t > 1) {
+      return;
+    }
+    var ctx = __p.externals.context;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x - w / 2, y);
+    ctx.lineTo(x - w / 2, y - h / 1.5);
+    ctx.lineTo(x - w / 5, y - h / 3);
+    ctx.lineTo(x, y - h);
+    ctx.lineTo(x + w / 5, y - h / 3);
+    ctx.lineTo(x + w / 2, y - h / 1.5);
+    ctx.lineTo(x + w / 2, y + h / 4);
+    ctx.lineTo(x - w / 2, y + h / 4);
+    ctx.closePath();
+    ctx.clip();
+    var bx = x - w + t * w * 2;
+    __p.noStroke();
+    __p.fill(255, 255, 230, 200);
+    __p.quad(bx - w * 0.12, y + h / 3, bx + w * 0.06, y + h / 3, bx + w * 0.36, y - h * 1.1, bx + w * 0.18, y - h * 1.1);
+    __p.fill(255, 255, 240, 110);
+    __p.quad(bx + w * 0.12, y + h / 3, bx + w * 0.2, y + h / 3, bx + w * 0.5, y - h * 1.1, bx + w * 0.42, y - h * 1.1);
+    ctx.restore();
+    // and a twinkle on the top jewel as the light passes it
+    var tw = 1 - __p.abs(t - 0.55) * 4;
+    if (tw > 0) {
+      var ts = w * 0.28 * tw;
+      __p.fill(255, 255, 255, 230 * tw);
+      __p.quad(x, y - h - ts, x + ts * 0.22, y - h, x, y - h + ts, x - ts * 0.22, y - h);
+      __p.quad(x - ts, y - h, x, y - h - ts * 0.22, x + ts, y - h, x, y - h + ts * 0.22);
+    }
+  };
+  var moneyHatShape = function moneyHatShape(hx, hatY, hw, u) {
+    __p.stroke(0);
+    __p.strokeWeight(1.5 * u);
+    __p.fill(28, 28, 34);
+    __p.rect(hx - hw * 0.31, hatY - 19 * u, hw * 0.62, 19 * u, 2 * u, 2 * u, 0, 0);
+    __p.rect(hx - hw * 0.5, hatY - 3 * u, hw, 4.5 * u, 2 * u);
+    __p.noStroke();
+    __p.fill(255, 205, 50);
+    __p.rect(hx - hw * 0.31 + 0.7 * u, hatY - 8.2 * u, hw * 0.62 - 1.4 * u, 4.4 * u);
+    __p.fill(255, 255, 255, 45);
+    __p.rect(hx - hw * 0.31 + 2 * u, hatY - 17.5 * u, 2.6 * u, 8 * u, 1.3 * u);
+  };
+  var moneyGlassesShape = function moneyGlassesShape(gx, gy, so, u, arms) {
+    var lw = 15.5 * u,
+      lh = 11 * u;
+    __p.stroke(255, 205, 50);
+    __p.strokeWeight(1.6 * u);
+    if (arms) {
+      __p.line(gx - so - lw / 2, gy - lh * 0.3, gx - so - lw / 2 - 4 * u, gy - lh * 0.45);
+      __p.line(gx + so + lw / 2, gy - lh * 0.3, gx + so + lw / 2 + 4 * u, gy - lh * 0.45);
+    }
+    __p.noFill();
+    __p.arc(gx, gy - lh * 0.12, so * 2 - lw + 3 * u, 5 * u, 180, 360);
+    __p.fill(18, 18, 28);
+    __p.rect(gx - so - lw / 2, gy - lh / 2, lw, lh, 3 * u, 3 * u, 6.5 * u, 6.5 * u);
+    __p.rect(gx + so - lw / 2, gy - lh / 2, lw, lh, 3 * u, 3 * u, 6.5 * u, 6.5 * u);
+    __p.stroke(255, 255, 255, 190);
+    __p.strokeWeight(1.5 * u);
+    for (var ls = -1; ls <= 1; ls += 2) {
+      var lx = gx + ls * so;
+      __p.line(lx - 4.2 * u, gy + 1.2 * u, lx - 0.6 * u, gy - 3 * u);
+      __p.line(lx - 1 * u, gy + 2 * u, lx + 1.2 * u, gy - 0.6 * u);
+    }
+  };
+  var piHatShape = function piHatShape(hX, hY, hatW, hatH) {
+    __p.stroke(0);
+    __p.strokeWeight(40 / 15);
+    __p.fill(25, 25, 25);
+    __p.rect(hX - hatW * 0.6, hY, hatW * 1.2, hatH * 0.15, hatW);
+    __p.rect(hX - hatW * 0.4, hY - hatH * 0.75, hatW * 0.8, hatH * 0.75);
+    __p.fill(255, 0, 0);
+    __p.noStroke();
+    __p.rect(hX - hatW * 0.39, hY - hatH * 0.14, hatW * 0.78, hatH * 0.13);
+  };
+  var discoBallShape = function discoBallShape(cx, cy, r, u, t) {
+    __p.stroke(40, 45, 70);
+    __p.strokeWeight(1.4 * u);
+    __p.fill(196, 204, 226);
+    __p.ellipse(cx, cy, r * 2, r * 2);
+    __p.noFill();
+    __p.stroke(105, 115, 150);
+    __p.strokeWeight(0.8 * u);
+    for (var row = -1; row <= 1; row++) {
+      var ry = row * r * 0.5,
+        hw = Math.sqrt(r * r - ry * ry);
+      __p.line(cx - hw, cy + ry, cx + hw, cy + ry);
+    }
+    for (var col = 0; col < 4; col++) {
+      var ca = ((t * 2.4 + col * 45) % 180) * Math.PI / 180;
+      __p.ellipse(cx, cy, Math.abs(Math.cos(ca)) * r * 2, r * 2);
+    }
+    __p.noStroke();
+    __p.fill(255, 255, 255, 190);
+    __p.ellipse(cx - r * 0.38, cy - r * 0.42, r * 0.5, r * 0.34);
+  };
+  // a prop, around its centre: { w, h } is the box it lands and rolls on
+  var SKIN_PROPS = {
+    chef: { w: 46, h: 30, draw: function () {
+      chefHatShape(0, 10.5, 40, 40);
+    } },
+    helmet: { w: 44, h: 22, draw: function () {
+      helmetShape(0, 6, 40, 40);
+    } },
+    crown: { w: 40, h: 22, draw: function () {
+      drawCrown(0, 11, 40, 22);
+    } },
+    tophat: { w: 40, h: 23, draw: function () {
+      moneyHatShape(0, 11, 40, 1);
+    } },
+    glasses: { w: 34, h: 11, draw: function () {
+      moneyGlassesShape(0, 0, 10, 1, true);
+    } },
+    pihat: { w: 48, h: 36, draw: function () {
+      piHatShape(0, 12, 40, 40);
+    } },
+    disco: { w: 22, h: 22, draw: function () {
+      discoBallShape(0, 0, 10.5, 1, __p.frameCount);
+    } }
+  };
+  // where a prop's centre sits on a Dash standing at (x, y): head top is y - 20
+  var SKIN_PROP_AT = { chef: -30.5, helmet: -26, crown: -31, tophat: -31.5, glasses: -6, pihat: -32, disco: -37 };
+  // ---------- the ground under a point (for things that fall and land) ----------
+  var fxSolid = function fxSolid(o) {
+    return (!o.type || o.type === "block" || o.type === "trampoline" || o.type === "conveyorbelt" || o.type === "hyperbelt" || o.type === "checkpoint" || o.type === "launcher") && __p.abs(o.r || 0) < 1;
+  };
+  var fxGroundY = function fxGroundY(x, y) {
+    var best = Infinity;
+    var objs = lvl && lvl.objects || [];
+    for (var i = 0; i < objs.length; i++) {
+      var o = objs[i];
+      if (!fxSolid(o) || x < o.x - o.w / 2 || x > o.x + o.w / 2) {
+        continue;
+      }
+      var top = o.y - o.h / 2;
+      if (top >= y - 6 && top < best) {
+        best = top;
+      }
+    }
+    if ((bossIntro || bossFight) && typeof bossArena !== "undefined" && bossArena[world - 1]) {
+      var ba = world === 4 ? bossArena[world - 1].levels[bossRemixStage].objects[0] : bossArena[world - 1].objects[0];
+      if (ba && x > ba.x - ba.w / 2 && x < ba.x + ba.w / 2) {
+        var at = ba.y + (lvl.arenaY || 0) - ba.h / 2;
+        if (at >= y - 6 && at < best) {
+          best = at;
+        }
+      }
+    }
+    return best;
+  };
+  // ---------- small particles of their own (squares, digits, sparks, bones...) ----------
+  var fxPart = function fxPart(o) {
+    o.t = 0;
+    o.life = o.life || 40;
+    o.vx = o.vx || 0;
+    o.vy = o.vy || 0;
+    o.g = o.g || 0;
+    o.drag = o.drag === undefined ? 0.98 : o.drag;
+    o.rot = o.rot || 0;
+    o.vr = o.vr || 0;
+    o.size = o.size || 4;
+    if (fxParts.length < 900) {
+      fxParts.push(o);
+    }
+    return o;
+  };
+  var fxPartsRun = function fxPartsRun() {
+    var ctx = __p.externals.context;
+    for (var i = fxParts.length - 1; i >= 0; i--) {
+      var q = fxParts[i];
+      q.t += DT;
+      if (q.tx !== undefined) {
+        // flying in to a spot (spawn): eased, so they arrive together
+        var k = fxEase(q.t / q.life);
+        q.x = __p.lerp(q.sx, q.tx, k);
+        q.y = __p.lerp(q.sy, q.ty, k) - Math.sin(k * Math.PI) * (q.arc || 0);
+      } else {
+        q.vy += q.g * DT;
+        q.vx *= dtPow(q.drag);
+        q.vy *= dtPow(q.drag);
+        q.x += q.vx * DT;
+        q.y += q.vy * DT;
+        if (q.bounce) {
+          var gy = q.gy === undefined ? q.gy = fxGroundY(q.x, q.y) : q.gy;
+          if (q.y > gy - q.size / 2 && q.vy > 0) {
+            q.y = gy - q.size / 2;
+            q.vy *= -q.bounce;
+            q.vx *= 0.7;
+            q.vr *= 0.6;
+          }
+        }
+      }
+      q.rot += q.vr * DT;
+      if (q.t >= q.life) {
+        fxParts.splice(i, 1);
+        continue;
+      }
+      var f = q.t / q.life;
+      var a = q.fadeIn ? __p.min(1, q.t / q.fadeIn) : 1;
+      a *= q.tx !== undefined ? 1 : f > 0.6 ? 1 - (f - 0.6) / 0.4 : 1;
+      a *= q.alpha === undefined ? 1 : q.alpha;
+      if (a <= 0.01) {
+        continue;
+      }
+      var c = q.col || [255, 255, 255];
+      var s = q.shrink ? q.size * (1 - f * 0.7) : q.size;
+      if (q.kind === "sq") {
+        __p.noStroke();
+        __p.fill(c[0], c[1], c[2], 255 * a);
+        __p.pushMatrix();
+        __p.translate(q.x, q.y);
+        __p.rotate(q.rot);
+        __p.rect(-s / 2, -s / 2, s, s);
+        __p.popMatrix();
+      } else if (q.kind === "dot") {
+        __p.noStroke();
+        __p.fill(c[0], c[1], c[2], 255 * a);
+        __p.ellipse(q.x, q.y, s, s);
+      } else if (q.kind === "spark") {
+        // a short zig-zag of electricity
+        __p.stroke(c[0], c[1], c[2], 255 * a);
+        __p.strokeWeight(q.w || 1.6);
+        __p.noFill();
+        var len = q.len || 9,
+          ang = q.rot * Math.PI / 180;
+        var ex = Math.cos(ang) * len,
+          ey = Math.sin(ang) * len;
+        var nx = -ey * 0.3,
+          ny = ex * 0.3;
+        __p.beginShape();
+        __p.vertex(q.x, q.y);
+        __p.vertex(q.x + ex * 0.35 + nx, q.y + ey * 0.35 + ny);
+        __p.vertex(q.x + ex * 0.65 - nx, q.y + ey * 0.65 - ny);
+        __p.vertex(q.x + ex, q.y + ey);
+        __p.endShape();
+        if (q.glow) {
+          __p.stroke(c[0], c[1], c[2], 70 * a);
+          __p.strokeWeight((q.w || 1.6) * 3);
+          __p.line(q.x, q.y, q.x + ex, q.y + ey);
+        }
+      } else if (q.kind === "txt") {
+        __p.fill(c[0], c[1], c[2], 255 * a);
+        __p.noStroke();
+        __p.textAlign(__p.CENTER, __p.CENTER);
+        __p.textSize(q.ts || 16);
+        __p.pushMatrix();
+        __p.translate(q.x, q.y);
+        __p.rotate(q.rot);
+        __p.text(q.txt, 0, 0);
+        __p.popMatrix();
+      } else if (q.kind === "bone") {
+        __p.pushMatrix();
+        __p.translate(q.x, q.y);
+        __p.rotate(q.rot);
+        __p.noStroke();
+        __p.fill(240, 232, 210, 255 * a);
+        __p.rect(-s * 0.5, -s * 0.13, s, s * 0.26);
+        __p.ellipse(-s * 0.5, -s * 0.13, s * 0.3, s * 0.3);
+        __p.ellipse(-s * 0.5, s * 0.13, s * 0.3, s * 0.3);
+        __p.ellipse(s * 0.5, -s * 0.13, s * 0.3, s * 0.3);
+        __p.ellipse(s * 0.5, s * 0.13, s * 0.3, s * 0.3);
+        __p.popMatrix();
+      } else if (q.kind === "shard") {
+        __p.pushMatrix();
+        __p.translate(q.x, q.y);
+        __p.rotate(q.rot);
+        __p.noStroke();
+        __p.fill(c[0], c[1], c[2], 255 * a);
+        __p.triangle(-s / 2, -s / 3, s / 2, -s / 4, 0, s / 2);
+        __p.fill(255, 255, 255, 150 * a * (0.5 + 0.5 * Math.sin(q.t * 0.4 + q.rot)));
+        __p.triangle(-s / 4, -s / 5, s / 4, -s / 6, 0, s / 5);
+        __p.popMatrix();
+      } else if (q.kind === "smoke") {
+        __p.noStroke();
+        __p.fill(c[0], c[1], c[2], 150 * a);
+        var ss = s * (1 + f * 1.6);
+        __p.ellipse(q.x, q.y, ss, ss);
+      } else if (q.kind === "ring") {
+        __p.noFill();
+        __p.stroke(c[0], c[1], c[2], 255 * a * (1 - f));
+        __p.strokeWeight((q.w || 4) * (1 - f) + 0.5);
+        var rr = q.size + (q.grow || 3) * q.t;
+        __p.ellipse(q.x, q.y, rr * 2, rr * 2);
+      } else if (q.kind === "flash") {
+        __p.noStroke();
+        var fr = q.size * (0.6 + f * 0.8);
+        for (var fl = 3; fl >= 1; fl--) {
+          __p.fill(c[0], c[1], c[2], 255 * a * (1 - f) * (0.18 * fl));
+          __p.ellipse(q.x, q.y, fr * (2.6 - fl * 0.5), fr * (2.6 - fl * 0.5));
+        }
+      } else if (q.kind === "img") {
+        // one cell of a picture (dirt block / 8-bit Dash), tumbling
+        __p.pushMatrix();
+        __p.translate(q.x, q.y);
+        __p.rotate(q.rot);
+        withAlpha(a, function () {
+          ctx.drawImage(q.src, q.cx, q.cy, q.cw, q.ch, -s / 2, -s / 2, s, s);
+        });
+        __p.popMatrix();
+      }
+    }
+  };
+  // a picture as a canvas (to cut into cells), cached
+  var fxCanvasOf = function fxCanvasOf(img) {
+    if (!img || !img.width) {
+      return null;
+    }
+    if (img.__fxCanvas) {
+      return img.__fxCanvas;
+    }
+    var c = document.createElement("canvas");
+    c.width = img.width;
+    c.height = img.height;
+    var g = c.getContext("2d");
+    if (img.sourceImg) {
+      g.drawImage(img.sourceImg, 0, 0, img.width, img.height);
+    } else if (img.imageData) {
+      g.putImageData(img.imageData, 0, 0);
+    } else {
+      return null;
+    }
+    img.__fxCanvas = c;
+    return c;
+  };
+  // ---------- the carriers: a mini guard (or the Parkour Master) ----------
+  var fxCarrierDraw = function fxCarrierDraw(who, x, y, s, flap) {
+    __p.pushMatrix();
+    __p.translate(x, y);
+    if (who === 4) {
+      var fg = settings.fancyGraphics;
+      settings.fancyGraphics = false; // (the big cloth cape belongs to the real one)
+      parkMast(0, 0, s * 1.2, undefined);
+      settings.fancyGraphics = fg;
+    } else {
+      var keepOp = bossOpacity;
+      bossOpacity = 255;
+      drawGuard(0, 0, s, guardVariant[who - 1], { state: "moving", vx: 0 });
+      bossOpacity = keepOp;
+      // little wings, flapping
+      var wf = Math.sin(flap * 0.6) * 22;
+      var c = guardVariant[who - 1].col;
+      __p.stroke(0);
+      __p.strokeWeight(s / 60);
+      __p.fill(255, 255, 255, 235);
+      for (var sd = -1; sd <= 1; sd += 2) {
+        __p.pushMatrix();
+        __p.translate(sd * s * 0.42, -s * 0.12);
+        __p.rotate(sd * (-20 + wf));
+        __p.ellipse(sd * s * 0.2, 0, s * 0.42, s * 0.2);
+        __p.popMatrix();
+      }
+      __p.noFill();
+    }
+    __p.popMatrix();
+  };
+  // ---------- starting them ----------
+  var fxTintOf = function fxTintOf(sk, mpIdx) {
+    return dashParticleCol(sk, mpIdx);
+  };
+  var skinFxSpawn = function skinFxSpawn(sk, x, y, tint, mpIdx, local) {
+    var a = { kind: "spawn", sk: sk, x: x, y: y, t: 0, tint: tint === undefined ? null : tint, mp: mpIdx || 0, local: !!local, len: skinSpawnLen(sk) };
+    a.col = fxTintOf(sk, a.mp);
+    a.gy = fxGroundY(x, y + 10);
+    if (a.gy === Infinity || a.gy > y + 60) {
+      a.gy = y + 20;
+    }
+    a.dir = Math.random() < 0.5 ? -1 : 1;
+    skinAnims.push(a);
+    return a;
+  };
+  var skinFxDeath = function skinFxDeath(sk, x, y, tint, mpIdx, vx, vy, local) {
+    var a = { kind: "death", sk: sk, x: x, y: y, t: 0, tint: tint === undefined ? null : tint, mp: mpIdx || 0, local: !!local, vx: vx || 0, vy: vy || 0 };
+    a.col = fxTintOf(sk, a.mp);
+    a.gy = fxGroundY(x, y + 10);
+    a.dir = (vx || 0) < 0 ? -1 : 1;
+    a.props = [];
+    skinAnims.push(a);
+    skinFxDeathStart(a);
+    return a;
+  };
+  var fxDefaultBurst = function fxDefaultBurst(a, n, speed) {
+    particleSkin = a.sk;
+    particleCol = a.col;
+    spawnParticles(a.x, a.y, n || 30, "death", speed || 5);
+    particleSkin = particleCol = null;
+  };
+  var fxAddProp = function fxAddProp(a, name, dx, dy, vx, vy, vr) {
+    a.props.push({ name: name, x: a.x + dx, y: a.y + dy, vx: vx, vy: vy, r: 0, vr: vr, t: 0, rest: 0 });
+  };
+  var skinFxDeathStart = function skinFxDeathStart(a) {
+    var sk = a.sk;
+    var bump = function () {
+      return __p.random(-1.6, 1.6) + a.vx * 0.25;
+    };
+    if (SKIN_PROP[sk] || sk === 19 || sk === 24) {
+      // Dash pops; his hat (crown, helmet...) is knocked up and falls by itself
+      if (sk === 25) {
+        particleSkin = 25;
+        spawnParticles(a.x, a.y, 26, "money", 4);
+        particleSkin = null;
+        fxDefaultBurst(a, 14, 4);
+      } else if (sk === 19) {
+        fxDigitBurst(a);
+      } else {
+        fxDefaultBurst(a);
+      }
+      var pn = sk === 19 ? "pihat" : sk === 24 ? "disco" : SKIN_PROP[sk];
+      fxAddProp(a, pn, 0, SKIN_PROP_AT[pn], bump(), -5.5 - Math.random() * 1.5, __p.random(-7, 7));
+      if (sk === 25) {
+        fxAddProp(a, "glasses", 0, SKIN_PROP_AT.glasses, bump() * 1.4, -4.2, __p.random(-12, 12));
+      }
+      a.len = 150;
+      return;
+    }
+    switch (sk) {
+      case 1:
+        a.len = 30; // shrinks away (see below)
+        return;
+      case 4:
+        a.len = 120; // pops like a balloon and melts into a puddle
+        return;
+      case 6:
+      case 22:
+        // just explodes
+        fxDefaultBurst(a, 46, 8);
+        fxPart({ kind: "flash", x: a.x, y: a.y, size: 34, life: 16, col: sk === 22 ? [255, 255, 255] : [120, 170, 255] });
+        fxPart({ kind: "ring", x: a.x, y: a.y, size: 10, grow: 5, w: 6, life: 18, col: sk === 22 ? [240, 240, 240] : [60, 110, 200] });
+        for (var bi = 0; bi < 10; bi++) {
+          var ba = Math.random() * Math.PI * 2,
+            bs = 3 + Math.random() * 5;
+          fxPart({ kind: "dot", x: a.x, y: a.y, vx: Math.cos(ba) * bs, vy: Math.sin(ba) * bs - 2, g: 0.25, size: 5 + Math.random() * 5, life: 34, col: sk === 22 ? [235, 235, 225] : bi % 2 ? [50, 100, 180] : [0, 150, 0], shrink: true });
+        }
+        if (a.local) {
+          cameraShake(8, 3);
+        }
+        a.len = 30;
+        return;
+      case 7:
+        a.len = 36; // glitches out
+        return;
+      case 9:
+        fxCellBurst(a, imgs.pixelSkinStraight, 8, 9);
+        a.len = 1;
+        return;
+      case 11:
+        a.len = 16; // the jaws snap shut, then he pops
+        return;
+      case 13:
+        // darts away, too fast to follow
+        for (var sm = 0; sm < 7; sm++) {
+          fxPart({ kind: "smoke", x: a.x + __p.random(-12, 12), y: a.y + __p.random(-12, 12), vx: __p.random(-0.6, 0.6), vy: __p.random(-0.8, 0), size: 14, life: 30, col: [200, 200, 205], drag: 0.94 });
+        }
+        a.len = 14;
+        return;
+      case 17:
+        fxNuke(a);
+        a.len = 1;
+        return;
+    }
+    if (SKIN_CARRIER[sk]) {
+      a.len = 70; // the guard swoops in and takes him away
+      return;
+    }
+    // everyone else: the usual pop
+    fxDefaultBurst(a);
+    a.len = 1;
+  };
+  // ---------- special bursts ----------
+  var PI_DIGITS = "31415926535897932384626433832795";
+  var fxDigitBurst = function fxDigitBurst(a) {
+    for (var i = 0; i < 26; i++) {
+      var ang = Math.random() * Math.PI * 2,
+        sp = 2 + Math.random() * 5;
+      var c = i % 3 === 0 ? [25, 25, 25] : i % 7 === 0 ? [255, 255, 255] : [255, 0, 0];
+      fxPart({ kind: "txt", txt: PI_DIGITS.charAt(i % PI_DIGITS.length), ts: i % 4 === 0 ? 20 : 14, x: a.x, y: a.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2.5, g: 0.2, vr: __p.random(-12, 12), life: 46, col: c });
+    }
+  };
+  var fxCellBurst = function fxCellBurst(a, img, n, speed) {
+    var c = fxCanvasOf(img);
+    if (!c) {
+      fxDefaultBurst(a);
+      return;
+    }
+    var cw = c.width / n,
+      ch = c.height / n,
+      s = 40 / n;
+    for (var cy = 0; cy < n; cy++) {
+      for (var cx = 0; cx < n; cx++) {
+        // skip see-through cells
+        var px = c.getContext("2d").getImageData(Math.floor((cx + 0.5) * cw), Math.floor((cy + 0.5) * ch), 1, 1).data;
+        if (px[3] < 40) {
+          continue;
+        }
+        var ox = -20 + (cx + 0.5) * s,
+          oy = -20 + (cy + 0.5) * s;
+        var d = Math.sqrt(ox * ox + oy * oy) + 4;
+        fxPart({ kind: "img", src: c, cx: cx * cw, cy: cy * ch, cw: cw, ch: ch, size: s + 0.6, x: a.x + ox, y: a.y + oy, vx: ox / d * speed * (0.5 + Math.random()), vy: oy / d * speed * (0.5 + Math.random()) - 3, g: 0.32, vr: __p.random(-14, 14), life: 52, bounce: 0.35 });
+      }
+    }
+  };
+  var fxNuke = function fxNuke(a) {
+    // Dash Brainrot goes out like a bomb: a white flash, a shock ring, a fireball
+    // and a mushroom of smoke, with 6s and 7s everywhere
+    fxPart({ kind: "flash", x: a.x, y: a.y, size: 90, life: 22, col: [255, 250, 220] });
+    fxPart({ kind: "ring", x: a.x, y: a.y, size: 14, grow: 9, w: 10, life: 24, col: [255, 255, 255] });
+    fxPart({ kind: "ring", x: a.x, y: a.y, size: 6, grow: 5, w: 7, life: 30, col: [255, 160, 40] });
+    for (var f = 0; f < 22; f++) {
+      var ang = Math.random() * Math.PI * 2,
+        sp = 1 + Math.random() * 4;
+      fxPart({ kind: "dot", x: a.x, y: a.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 1.5, size: 14 + Math.random() * 16, life: 26 + Math.random() * 14, drag: 0.92, col: f % 3 === 0 ? [255, 240, 120] : f % 3 === 1 ? [255, 140, 20] : [230, 50, 20], shrink: true });
+    }
+    for (var m = 0; m < 16; m++) {
+      // the stem, then the cap
+      var cap = m >= 6;
+      fxPart({ kind: "smoke", x: a.x + __p.random(-8, 8), y: a.y - (cap ? 10 : m * 4), vx: cap ? __p.random(-2.4, 2.4) : __p.random(-0.4, 0.4), vy: cap ? __p.random(-3.2, -2) : __p.random(-1.6, -0.8), size: cap ? 26 : 16, life: 60 + Math.random() * 20, drag: 0.96, col: cap ? [110, 95, 90] : [140, 125, 115] });
+    }
+    for (var d = 0; d < 22; d++) {
+      var da = Math.random() * Math.PI * 2,
+        ds = 3 + Math.random() * 8;
+      fxPart({ kind: "txt", txt: d % 2 ? "6" : "7", ts: d % 3 === 0 ? 22 : 16, x: a.x, y: a.y, vx: Math.cos(da) * ds, vy: Math.sin(da) * ds - 3, g: 0.22, vr: __p.random(-20, 20), life: 60, col: d % 2 ? [255, 60, 60] : [255, 220, 40] });
+    }
+    fxDefaultBurst(a, 40, 9);
+    if (a.local) {
+      cameraShake(22, 9);
+    }
+  };
+  // ---------- running them ----------
+  var skinFxRun = function skinFxRun() {
+    for (var i = skinAnims.length - 1; i >= 0; i--) {
+      var a = skinAnims[i];
+      var keep = a.kind === "spawn" ? skinFxSpawnStep(a) : skinFxDeathStep(a);
+      a.t += DT;
+      if (!keep && a.t > (a.len || 1)) {
+        skinAnims.splice(i, 1);
+      }
+    }
+    fxPartsRun();
+  };
+  var skinFxClear = function skinFxClear() {
+    skinAnims.length = 0;
+    fxParts.length = 0;
+  };
+  // the default spawn: particles rushing in (in the Dash's colour)
+  var fxSpawnParticles = function fxSpawnParticles(a, n) {
+    particleSkin = a.sk;
+    particleCol = a.col;
+    spawnParticles(a.x, a.y, dtCount(n || 20), "spawn", 1.5);
+    particleSkin = particleCol = null;
+  };
+  var skinFxSpawnStep = function skinFxSpawnStep(a) {
+    var sk = a.sk,
+      t = a.t,
+      o = { tint: a.tint };
+    var feet = a.gy; // the ground he lands on
+    var stand = feet - 20; // his centre when standing there
+    if (SKIN_PROP[sk]) {
+      return fxPropSpawn(a, SKIN_PROP[sk]);
+    }
+    if (SKIN_CARRIER[sk]) {
+      return fxCarrierSpawn(a);
+    }
+    switch (sk) {
+      case 1:
+        // Classic: a plain cube grows out of thin air
+        var g = fxBack(t / 26);
+        o.sx = o.sy = __p.max(0.01, g);
+        skinFxDummy(sk, a.x, a.y, o);
+        return t < a.len;
+      case 3:
+        // Dirt block: built one pixel at a time, bottom up
+        return fxCellBuild(a, imgs.grassImage, 8, 34);
+      case 9:
+        // 8-bit Dash: built quickly from his own squares
+        return fxCellBuild(a, imgs.pixelSkinStraight, 8, 18);
+      case 4:
+        // Sphere: dropped out of the sky
+        var fallT = 24;
+        if (t < fallT) {
+          var k = t / fallT;
+          o.sy = 1.12;
+          o.sx = 0.9;
+          skinFxDummy(sk, a.x, stand - 260 * (1 - k * k), o);
+        } else {
+          var bt = (t - fallT) / (a.len - fallT);
+          var sq = Math.sin(bt * Math.PI * 2.2) * Math.exp(-bt * 3.2) * 0.42;
+          o.sx = 1 + sq;
+          o.sy = 1 - sq;
+          if (t < fallT + 1.5) {
+            for (var dd = 0; dd < 6; dd++) {
+              fxPart({ kind: "dot", x: a.x + __p.random(-16, 16), y: feet - 2, vx: __p.random(-2.5, 2.5), vy: __p.random(-2.2, -0.6), g: 0.15, size: 5, life: 22, col: [170, 170, 170] });
+            }
+          }
+          skinFxDummy(sk, a.x, stand, o);
+        }
+        return t < a.len;
+      case 6:
+        // Boing: falls, and lands like a spring (boing, boing)
+        var bf = 22;
+        if (t < bf) {
+          var kk = t / bf;
+          o.sy = 1.15;
+          o.sx = 0.9;
+          skinFxDummy(sk, a.x, stand - 200 * (1 - kk * kk), o);
+        } else {
+          var u = (t - bf) / (a.len - bf);
+          var hop = Math.abs(Math.sin(u * Math.PI * 2)) * 34 * (1 - u) * (1 - u);
+          var sq2 = Math.max(0, Math.cos(u * Math.PI * 4)) * 0.38 * (1 - u);
+          o.sx = 1 + (hop < 4 ? sq2 : -0.1);
+          o.sy = 1 - (hop < 4 ? sq2 : -0.15);
+          skinFxDummy(sk, a.x, stand - hop, o);
+        }
+        return t < a.len;
+      case 7:
+        // Scary Larry: glitches into place
+        fxGlitch(a, 1 - t / a.len, false);
+        return t < a.len;
+      case 12:
+        // Zapp: bolts strike in toward him, and he fades in
+        if (t < 20 && dtEvery(2)) {
+          var ba = Math.random() * Math.PI * 2,
+            bd = 40 + Math.random() * 30;
+          fxPart({ kind: "spark", x: a.x + Math.cos(ba) * bd, y: a.y + Math.sin(ba) * bd, rot: ba * 180 / Math.PI + 180, len: bd - 12, w: 2.4, life: 7, col: [255, 245, 90], glow: true });
+        }
+        o.a = fxEase((t - 8) / 20);
+        if (t >= 8) {
+          skinFxDummy(sk, a.x, a.y, o);
+        }
+        return t < a.len;
+      case 13:
+        // Ninja: slips out from behind a wall nobody can see
+        var nk = fxBack(t / 22);
+        var wallX = a.x - a.dir * 22;
+        var ctx = __p.externals.context;
+        ctx.save();
+        ctx.beginPath();
+        if (a.dir > 0) {
+          ctx.rect(wallX, a.y - 80, 400, 160);
+        } else {
+          ctx.rect(wallX - 400, a.y - 80, 400, 160);
+        }
+        ctx.clip();
+        o.vx = a.dir * 4 * (1 - __p.min(1, t / 22));
+        skinFxDummy(sk, a.x - a.dir * 46 * (1 - nk), a.y, o);
+        ctx.restore();
+        if (t < 1.5) {
+          for (var sp = 0; sp < 4; sp++) {
+            fxPart({ kind: "smoke", x: wallX, y: a.y + __p.random(-14, 14), vx: a.dir * __p.random(0.2, 0.8), vy: __p.random(-0.4, 0.1), size: 9, life: 22, col: [210, 210, 215], drag: 0.93 });
+          }
+        }
+        return t < a.len;
+      case 16:
+        // ECH0: the usual particles, with a soft light-purple flash spreading out
+        if (t < 10) {
+          fxSpawnParticles(a);
+        }
+        if (t >= 6 && t < 7.5) {
+          fxPart({ kind: "flash", x: a.x, y: a.y, size: 30, life: 26, col: [205, 160, 255] });
+          fxPart({ kind: "ring", x: a.x, y: a.y, size: 8, grow: 3.4, w: 4, life: 24, col: [215, 175, 255] });
+        }
+        return t < a.len;
+      case 17:
+        // Dash Brainrot: dumped out of the air, spinning wildly, spilling 6s and 7s
+        var df = 30;
+        if (t < df) {
+          var dk = t / df;
+          o.r = a.dir * (1 - dk) * 900;
+          skinFxDummy(sk, a.x + a.dir * 60 * (1 - dk), stand - 240 * (1 - dk * dk), o);
+          if (dtEvery(3)) {
+            fxPart({ kind: "txt", txt: Math.random() < 0.5 ? "6" : "7", ts: 16, x: a.x + a.dir * 60 * (1 - dk), y: stand - 240 * (1 - dk * dk), vx: __p.random(-3, 3), vy: __p.random(-3, 0), g: 0.18, vr: __p.random(-15, 15), life: 34, col: Math.random() < 0.5 ? [255, 60, 60] : [255, 220, 40] });
+          }
+        } else {
+          var lt = (t - df) / (a.len - df);
+          var s2 = Math.sin(lt * Math.PI) * 0.3 * (1 - lt);
+          o.sx = 1 + s2;
+          o.sy = 1 - s2;
+          if (t < df + 1.5) {
+            for (var n6 = 0; n6 < 8; n6++) {
+              fxPart({ kind: "txt", txt: n6 % 2 ? "6" : "7", ts: 16, x: a.x, y: feet - 8, vx: __p.random(-4, 4), vy: __p.random(-5, -2), g: 0.22, vr: __p.random(-15, 15), life: 36, col: n6 % 2 ? [255, 60, 60] : [255, 220, 40] });
+            }
+          }
+          skinFxDummy(sk, a.x, stand, o);
+        }
+        return t < a.len;
+      case 19:
+        return fxPiBuild(a);
+      case 11:
+      case 23:
+      case 24:
+        // the usual particles; the Dino's jaws, the mustache and the disco ball
+        // finish on the Dash himself (see dinoCover / stacheBuild / discoDrop)
+        if (t < 10) {
+          fxSpawnParticles(a);
+        }
+        if (sk === 23 && t >= 24 && t < 34 && dtEvery(2)) {
+          for (var mp = 0; mp < 2; mp++) {
+            var ma = Math.random() * Math.PI * 2,
+              md = 30 + Math.random() * 26;
+            fxPart({ kind: "dot", sx: a.x + Math.cos(ma) * md, sy: a.y + Math.sin(ma) * md, tx: a.x + __p.random(-12, 12), ty: a.y + 6, life: 14, size: 3.2, col: [20, 14, 14], x: 0, y: 0 });
+          }
+        }
+        return t < (sk === 23 ? 36 : a.len);
+    }
+    if (t < 10) {
+      fxSpawnParticles(a);
+    }
+    return t < a.len;
+  };
+  // a costume with a hat (chef, warrior, champion, money): the hat appears first,
+  // upside down, he pops out of it like a magician's rabbit, and it flips onto his head
+  var fxPropSpawn = function fxPropSpawn(a, pn) {
+    var t = a.t,
+      sk = a.sk,
+      P = SKIN_PROPS[pn];
+    var feet = a.gy,
+      stand = feet - 20;
+    var o = { tint: a.tint, noProp: true };
+    var ctx = __p.externals.context;
+    var hatGround = feet - P.h / 2; // the hat's centre when it sits on the ground
+    var hatHead = stand + SKIN_PROP_AT[pn];
+    var hx, hy, hr, hs;
+    if (t < 14) {
+      hs = fxBack(t / 12);
+      hx = a.x;
+      hy = hatGround;
+      hr = 180 + Math.sin(t * 0.9) * 10 * (1 - t / 14);
+      if (sk === 25 && t < 10 && dtEvery(2)) {
+        particleSkin = 25;
+        spawnParticles(a.x, hatGround, 2, "money", 2);
+        particleSkin = null;
+      }
+    } else if (t < 34) {
+      hs = 1;
+      hx = a.x;
+      hy = hatGround;
+      hr = 180;
+    } else {
+      var k = fxEase((t - 34) / 16);
+      hs = 1;
+      hx = a.x;
+      hy = __p.lerp(hatGround, hatHead, k) - Math.sin(k * Math.PI) * 46;
+      hr = 180 + k * 180;
+    }
+    // Dash: rises out of the hat (hidden below its opening), jumps, lands
+    if (t >= 14) {
+      var u = __p.constrain((t - 14) / 32, 0, 1);
+      var yOff = __p.lerp(34, 0, u) - Math.sin(u * Math.PI) * 58;
+      var land = t > 46 ? Math.sin((t - 46) / 4 * Math.PI) * 0.18 : 0;
+      o.sx = 1 + land;
+      o.sy = 1 - land;
+      o.vy = u < 0.5 ? -6 : 6;
+      if (t < 34) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(a.x - 200, feet - P.h - 400, 400, 400);
+        ctx.clip();
+        skinFxDummy(sk, a.x, stand + yOff, o);
+        ctx.restore();
+      } else {
+        skinFxDummy(sk, a.x, stand + yOff, o);
+      }
+      if (t >= 14 && t < 15.5) {
+        for (var s = 0; s < 10; s++) {
+          var sa = -Math.PI * (0.15 + Math.random() * 0.7);
+          if (sk === 25) {
+            particleSkin = 25;
+            spawnParticles(a.x, feet - P.h, 1, "money", 3);
+            particleSkin = null;
+          } else {
+            fxPart({ kind: "sq", x: a.x + __p.random(-8, 8), y: feet - P.h, vx: Math.cos(sa) * 3, vy: Math.sin(sa) * 3.4, g: 0.12, rot: 45, vr: 6, size: 4, life: 28, col: [255, 245, 170] });
+          }
+        }
+      }
+    }
+    __p.pushMatrix();
+    __p.translate(hx, hy);
+    __p.rotate(hr);
+    __p.scale(hs);
+    P.draw();
+    __p.popMatrix();
+    return t < a.len;
+  };
+  // the guards (and the master) fly in with them and drop them off
+  var fxCarrierSpawn = function fxCarrierSpawn(a) {
+    var t = a.t,
+      sk = a.sk,
+      who = SKIN_CARRIER[sk];
+    var feet = a.gy,
+      stand = feet - 20;
+    var o = { tint: a.tint };
+    var drop = 30,
+      leave = 70;
+    var cs = who === 4 ? 46 : 40;
+    var holdY = stand - 52; // the Dash hangs this far up while carried
+    var cx, cy;
+    if (t < drop) {
+      var k = fxEase(t / drop);
+      cx = a.x - a.dir * 260 * (1 - k);
+      cy = holdY - 30 - 150 * (1 - k) * (1 - k) + Math.sin(k * Math.PI) * 10;
+      skinFxDummy(sk, cx, cy + 34, { tint: a.tint, vx: a.dir * 4 * (1 - k), vy: 2 });
+    } else {
+      var kl = (t - drop) / (leave - drop);
+      cx = a.x + a.dir * 260 * kl * kl;
+      cy = holdY - 30 - 200 * kl * kl;
+      // the Dash falls the last bit and lands with a squash
+      var ft = t - drop;
+      var fallH = stand - (holdY + 4);
+      var fy = holdY + 4 + __p.min(fallH, 0.5 * 0.9 * ft * ft);
+      if (fy >= stand) {
+        var lt = ft - Math.sqrt(2 * fallH / 0.9);
+        var sq = lt < 8 ? Math.sin(lt / 8 * Math.PI) * 0.22 : 0;
+        o.sx = 1 + sq;
+        o.sy = 1 - sq;
+        if (lt >= 0 && lt < DT + 0.01) {
+          for (var dd = 0; dd < 6; dd++) {
+            fxPart({ kind: "dot", x: a.x + __p.random(-16, 16), y: feet - 2, vx: __p.random(-2, 2), vy: __p.random(-1.8, -0.5), g: 0.12, size: 5, life: 20, col: [170, 170, 170] });
+          }
+        }
+      }
+      if (t < a.len) {
+        skinFxDummy(sk, a.x, __p.min(fy, stand), o);
+      }
+    }
+    fxCarrierDraw(who, cx, cy, cs, t);
+    return t < leave;
+  };
+  // pieces of a picture landing one at a time until it is whole
+  var fxCellBuild = function fxCellBuild(a, img, n, dur) {
+    var c = fxCanvasOf(img);
+    if (!c) {
+      if (a.t < 10) {
+        fxSpawnParticles(a);
+      }
+      return a.t < a.len;
+    }
+    if (!a.order) {
+      // bottom row first, each row in a shuffled order
+      a.order = [];
+      for (var cy = n - 1; cy >= 0; cy--) {
+        var row = [];
+        for (var cx = 0; cx < n; cx++) {
+          row.push([cx, cy]);
+        }
+        for (var r = row.length - 1; r > 0; r--) {
+          var j = Math.floor(Math.random() * (r + 1)),
+            tmp = row[r];
+          row[r] = row[j];
+          row[j] = tmp;
+        }
+        a.order = a.order.concat(row);
+      }
+    }
+    var ctx = __p.externals.context;
+    var cw = c.width / n,
+      ch = c.height / n,
+      s = 40 / n;
+    var shown = a.t / dur * a.order.length;
+    var tint = a.tint && a.sk === 9 ? tintedSprite(img, a.tint) : null;
+    var src = tint ? tint : c;
+    var sw = src.width / n,
+      sh = src.height / n;
+    for (var i = 0; i < a.order.length && i < shown; i++) {
+      var cell = a.order[i];
+      var pop = __p.constrain(shown - i, 0, 3) / 3; // each one pops in
+      var sz = s * (pop < 1 ? 0.4 + fxBack(pop) * 0.6 : 1);
+      var px = a.x - 20 + (cell[0] + 0.5) * s,
+        py = a.y - 20 + (cell[1] + 0.5) * s - (1 - pop) * 6;
+      ctx.drawImage(src, cell[0] * sw, cell[1] * sh, sw, sh, px - sz / 2 - 0.3, py - sz / 2 - 0.3, sz + 0.6, sz + 0.6);
+    }
+    return a.t < a.len;
+  };
+  // Digitsofpi: coloured digits fly in and soak into the parts of his colour
+  var fxPiBuild = function fxPiBuild(a) {
+    var t = a.t;
+    if (t < 1.5) {
+      var parts = [
+        { col: [255, 0, 0], x: 0, y: 4, w: 30, h: 26, n: 16 },
+        { col: [25, 25, 25], x: 0, y: -31, w: 26, h: 26, n: 9 },
+        { col: [255, 60, 60], x: 0, y: -23, w: 26, h: 4, n: 3 },
+        { col: [255, 255, 255], x: 0, y: -4, w: 24, h: 8, n: 3 }
+      ];
+      for (var pi = 0; pi < parts.length; pi++) {
+        var pp = parts[pi];
+        for (var k = 0; k < pp.n; k++) {
+          var ang = Math.random() * Math.PI * 2,
+            dist = 70 + Math.random() * 60;
+          fxPart({ kind: "txt", txt: PI_DIGITS.charAt((pi * 7 + k) % PI_DIGITS.length), ts: 14, sx: a.x + Math.cos(ang) * dist, sy: a.y + Math.sin(ang) * dist, tx: a.x + pp.x + __p.random(-pp.w / 2, pp.w / 2), ty: a.y + pp.y + __p.random(-pp.h / 2, pp.h / 2), life: 18 + Math.random() * 14, arc: __p.random(-20, 20), x: 0, y: 0, col: pp.col, vr: 0 });
+        }
+      }
+    }
+    // he soaks them up: body first, then the hat
+    var bodyA = fxEase((t - 16) / 22);
+    if (bodyA > 0) {
+      skinFxDummy(19, a.x, a.y, { tint: a.tint, noProp: bodyA < 0.9, a: bodyA });
+    }
+    if (bodyA > 0.4 && bodyA < 0.9) {
+      withAlpha((bodyA - 0.4) / 0.5, function () {
+        __p.pushMatrix();
+        __p.translate(a.x, a.y + SKIN_PROP_AT.pihat);
+        SKIN_PROPS.pihat.draw();
+        __p.popMatrix();
+      });
+    }
+    return t < a.len;
+  };
+  // Scary Larry's glitch: slices of him jump sideways, colours split, he flickers
+  var fxGlitch = function fxGlitch(a, amt, hurt) {
+    var ctx = __p.externals.context;
+    var sk = a.sk;
+    if (amt <= 0.02) {
+      skinFxDummy(sk, a.x, a.y, { tint: a.tint, hurt: hurt });
+      return;
+    }
+    if (Math.random() < amt * 0.35) {
+      return; // flicker off
+    }
+    var slices = 5;
+    for (var s = 0; s < slices; s++) {
+      var y0 = a.y - 26 + s * 52 / slices;
+      var off = (Math.random() - 0.5) * 26 * amt * amt + (Math.random() < 0.3 ? (Math.random() - 0.5) * 30 * amt : 0);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(a.x - 60, y0, 120, 52 / slices + 0.6);
+      ctx.clip();
+      if (amt > 0.2) {
+        // colour split: a red and a cyan copy, offset
+        skinFxDummy(sk, a.x + off - 3 * amt, a.y, { tint: __p.color(255, 0, 60), a: 0.5 * amt, hurt: hurt });
+        skinFxDummy(sk, a.x + off + 3 * amt, a.y, { tint: __p.color(0, 255, 230), a: 0.5 * amt, hurt: hurt });
+      }
+      skinFxDummy(sk, a.x + off, a.y, { tint: a.tint, a: 1 - amt * 0.4, hurt: hurt });
+      ctx.restore();
+    }
+    // static
+    __p.noStroke();
+    for (var n = 0; n < 6 * amt; n++) {
+      __p.fill(Math.random() < 0.5 ? 255 : 0, 160 * amt);
+      __p.rect(a.x + __p.random(-30, 30), a.y + __p.random(-26, 26), __p.random(4, 16), 2);
+    }
+  };
+  var skinFxDeathStep = function skinFxDeathStep(a) {
+    var sk = a.sk,
+      t = a.t;
+    var alive = false;
+    // props: fall, bounce, roll on their side, settle, then fade
+    for (var i = 0; i < a.props.length; i++) {
+      if (fxPropStep(a.props[i])) {
+        alive = true;
+      }
+    }
+    switch (sk) {
+      case 1:
+        // Classic: shrinks into nothing, at an even speed
+        var s = 1 - t / a.len;
+        if (s > 0) {
+          skinFxDummy(sk, a.x, a.y + 20 * (1 - s), { tint: a.tint, sx: s, sy: s, hurt: true });
+        }
+        break;
+      case 4:
+        fxBalloon(a);
+        break;
+      case 7:
+        // Scary Larry: glitches out of existence, hurt face and all
+        fxGlitch(a, __p.min(1, t / a.len * 1.3), true);
+        break;
+      case 11:
+        // the jaws close over him, then he pops
+        var ck = fxEase(t / 10);
+        if (t < a.len) {
+          skinFxDummy(sk, a.x, a.y, { tint: a.tint, dinoCover: ck, hurt: true });
+        }
+        if (t <= a.len && t + DT > a.len) {
+          fxDefaultBurst(a);
+        }
+        break;
+      case 13:
+        // darts away: a streak too fast to see
+        var nx = a.x + a.dir * t * t * 5;
+        __p.noStroke();
+        for (var st = 0; st < 5; st++) {
+          __p.fill(20, 20, 20, (1 - t / a.len) * (120 - st * 22));
+          __p.rect(__p.min(a.x, nx - a.dir * st * 26), a.y - 14 + st * 2, __p.abs(nx - a.x) * (1 - st * 0.15) + 1, 28 - st * 4, 6);
+        }
+        if (t < 4) {
+          skinFxDummy(sk, nx, a.y, { tint: a.tint, vx: a.dir * 12, sx: 1 + t * 0.12, sy: 1 - t * 0.06 });
+        }
+        break;
+      default:
+        if (SKIN_CARRIER[sk]) {
+          fxCarrierTake(a);
+          return a.t < a.len;
+        }
+    }
+    return alive;
+  };
+  var fxPropStep = function fxPropStep(q) {
+    var P = SKIN_PROPS[q.name];
+    q.t += DT;
+    var hw = P.w / 2,
+      hh = P.h / 2;
+    var rr = q.r * Math.PI / 180;
+    // the half-height of the box as it is turned (where its lowest point is)
+    var ext = Math.abs(Math.cos(rr)) * hh + Math.abs(Math.sin(rr)) * hw;
+    var gy = fxGroundY(q.x, q.y - 10);
+    var onGround = false;
+    q.vy += 0.42 * DT;
+    q.vx *= dtPow(0.995);
+    q.x += q.vx * DT;
+    q.y += q.vy * DT;
+    q.r += q.vr * DT;
+    if (gy !== Infinity && q.y + ext >= gy) {
+      q.y = gy - ext;
+      onGround = true;
+      if (q.vy > 1.5) {
+        // a bounce: some of the fall turns into spin (it lands on a corner)
+        var corner = Math.sin(rr * 2);
+        q.vy = -q.vy * 0.34;
+        q.vr = q.vr * 0.55 + corner * 5 + q.vx * 2.2;
+        q.vx = q.vx * 0.75 + corner * 0.6;
+        if (q.name === "disco" && !q.broke) {
+          // the disco ball smashes
+          q.broke = true;
+          q.t = 9999;
+          for (var sh = 0; sh < 16; sh++) {
+            var sa = -Math.PI * Math.random();
+            var sp = 1.5 + Math.random() * 4;
+            fxPart({ kind: "shard", x: q.x + __p.random(-8, 8), y: q.y + __p.random(-6, 6), vx: Math.cos(sa) * sp, vy: Math.sin(sa) * sp, g: 0.3, vr: __p.random(-20, 20), size: 4 + Math.random() * 4, life: 50, bounce: 0.3, col: sh % 4 === 0 ? CONFETTI_COLS[sh % CONFETTI_COLS.length] : [196, 204, 226] });
+          }
+          fxPart({ kind: "flash", x: q.x, y: q.y, size: 16, life: 10, col: [255, 255, 255] });
+        }
+      } else {
+        q.vy = 0;
+        // resting: it rocks over onto its nearest flat side (upright or on its side)
+        var near = Math.round(q.r / 90) * 90;
+        q.vr += (near - q.r) * 0.06 * DT;
+        q.vr *= dtPow(0.86);
+        q.vx = q.vx * dtPow(0.86) + q.vr * 0.012 * DT; // rolling carries it along a little
+        if (__p.abs(q.vr) < 0.2 && __p.abs(near - q.r) < 0.6) {
+          q.r = near;
+          q.vr = 0;
+          q.rest += DT;
+        }
+      }
+    }
+    if (!onGround) {
+      q.vr *= dtPow(0.995);
+    }
+    var fade = q.t < 110 ? 1 : 1 - (q.t - 110) / 25;
+    if (fade <= 0 || q.y > (gy === Infinity ? q.y : gy) + 400 || q.t > 9000) {
+      return false;
+    }
+    __p.pushMatrix();
+    __p.translate(q.x, q.y);
+    __p.rotate(q.r);
+    withAlpha(fade, P.draw);
+    __p.popMatrix();
+    return true;
+  };
+  // the Sphere: swells, pops like a balloon and melts into a little heap
+  var fxBalloon = function fxBalloon(a) {
+    var t = a.t;
+    var c = a.col || [255, 0, 0];
+    if (t < 6) {
+      var sw = 1 + t / 6 * 0.3;
+      skinFxDummy(4, a.x, a.y, { tint: a.tint, sx: sw, sy: sw, hurt: true });
+      return;
+    }
+    if (!a.popped) {
+      a.popped = true;
+      fxPart({ kind: "ring", x: a.x, y: a.y, size: 22, grow: 3, w: 3, life: 10, col: [255, 255, 255] });
+      for (var d = 0; d < 12; d++) {
+        var da = Math.random() * Math.PI * 2,
+          ds = 2 + Math.random() * 4;
+        fxPart({ kind: "dot", x: a.x + Math.cos(da) * 16, y: a.y + Math.sin(da) * 16, vx: Math.cos(da) * ds, vy: Math.sin(da) * ds - 1, g: 0.3, size: 4 + Math.random() * 4, life: 40, bounce: 0.1, col: c });
+      }
+      a.blobY = a.y;
+      a.blobV = 0;
+      if (a.gy === Infinity) {
+        a.gy = a.y + 200;
+      }
+    }
+    // the goo falls to the ground and spreads out
+    a.blobV += 0.5 * DT;
+    a.blobY = __p.min(a.gy, a.blobY + a.blobV * DT);
+    var landed = a.blobY >= a.gy;
+    if (landed && a.landT === undefined) {
+      a.landT = t;
+    }
+    var lt = landed ? t - a.landT : 0;
+    var spread = __p.min(1, lt / 30);
+    var fade = t > 90 ? 1 - (t - 90) / 30 : 1;
+    if (fade <= 0) {
+      return;
+    }
+    var w = __p.lerp(24, 54, fxEase(spread)),
+      h = __p.lerp(22, 9, fxEase(spread));
+    var by = landed ? a.gy : a.blobY + 11;
+    __p.noStroke();
+    __p.fill(c[0], c[1], c[2], 255 * fade);
+    // a heap: a flat puddle with a lumpy top
+    __p.ellipse(a.x, by - h * 0.25, w, h * 0.9);
+    __p.ellipse(a.x - w * 0.18, by - h * 0.55, w * 0.42, h * 0.9);
+    __p.ellipse(a.x + w * 0.12, by - h * 0.65, w * 0.5, h * 1.1);
+    // its sad eyes, floating on top
+    __p.fill(255, 255, 255, 255 * fade);
+    __p.ellipse(a.x - 6, by - h * 0.75, 7, 5);
+    __p.ellipse(a.x + 6, by - h * 0.75, 7, 5);
+    __p.fill(0, 0, 0, 255 * fade);
+    __p.ellipse(a.x - 6, by - h * 0.72, 3, 3);
+    __p.ellipse(a.x + 6, by - h * 0.72, 3, 3);
+    // drips
+    if (landed && lt < 26 && dtEvery(6)) {
+      fxPart({ kind: "dot", x: a.x + __p.random(-w / 2, w / 2), y: by - h * 0.4, vx: __p.random(-0.4, 0.4), vy: -1.4, g: 0.2, size: 4, life: 18, col: c });
+    }
+  };
+  // the carrier swoops down, grabs the dead Dash and flies off with him
+  var fxCarrierTake = function fxCarrierTake(a) {
+    var t = a.t,
+      who = SKIN_CARRIER[a.sk];
+    var cs = who === 4 ? 46 : 40;
+    var grab = 26;
+    var cx, cy, dy;
+    if (t < grab) {
+      var k = fxEase(t / grab);
+      cx = a.x + a.dir * 260 * (1 - k);
+      cy = a.y - 86 - 160 * (1 - k) * (1 - k);
+      dy = a.y;
+      // the Dash waits, dazed, wobbling a little
+      skinFxDummy(a.sk, a.x, a.y, { tint: a.tint, hurt: true, r: Math.sin(t * 0.5) * 6 });
+    } else {
+      var kl = (t - grab) / (a.len - grab);
+      cx = a.x - a.dir * 280 * kl * kl;
+      cy = a.y - 86 - 220 * kl * kl;
+      dy = cy + 86;
+      skinFxDummy(a.sk, cx, __p.lerp(a.y, dy, __p.min(1, (t - grab) / 6)), { tint: a.tint, hurt: true, vy: 2, r: Math.sin(t * 0.3) * 10 });
+    }
+    fxCarrierDraw(who, cx, cy, cs, t);
+  };
+  // ---------- trails some skins leave while they move ----------
+  var skinTrail = function skinTrail(sk, pl, grounded) {
+    var speed = __p.abs(pl.vx || 0) + __p.abs(pl.vy || 0);
+    var x = pl.x,
+      y = pl.y;
+    if (sk === 11) {
+      // Dino Dash: bits of bone and brown dirt kicked up as he runs
+      if (grounded && __p.abs(pl.vx) > 1.5 && dtEvery(5)) {
+        var back = pl.vx > 0 ? -1 : 1;
+        if (Math.random() < 0.35) {
+          fxPart({ kind: "bone", x: x + back * 12, y: y + 17, vx: back * __p.random(0.5, 2), vy: __p.random(-3.2, -1.6), g: 0.25, vr: __p.random(-14, 14), size: 9, life: 34, bounce: 0.3 });
+        } else {
+          fxPart({ kind: "sq", x: x + back * 12, y: y + 18, vx: back * __p.random(0.5, 2.2), vy: __p.random(-2.6, -1), g: 0.2, vr: __p.random(-10, 10), size: __p.random(3, 5), life: 26, col: Math.random() < 0.5 ? [120, 78, 40] : [92, 58, 30] });
+        }
+      }
+    } else if (sk === 12) {
+      // Zapp: crackles of electricity as he moves
+      if (speed > 1.2 && dtEvery(3)) {
+        var za = Math.random() * 360;
+        fxPart({ kind: "spark", x: x + __p.random(-18, 18), y: y + __p.random(-20, 16), vx: -pl.vx * 0.15, vy: -pl.vy * 0.15, rot: za, len: __p.random(6, 12), w: 1.6, life: 8, col: Math.random() < 0.6 ? [255, 245, 90] : [160, 230, 255], glow: true });
+      }
+    } else if (sk === 16) {
+      // ECH0: purple sparks drifting off him (they fade in, then out)
+      if (dtEvery(speed > 1 ? 3 : 7)) {
+        var ea = Math.random() * Math.PI * 2;
+        fxPart({ kind: "dot", x: x + Math.cos(ea) * 16, y: y + Math.sin(ea) * 16, vx: Math.cos(ea) * 0.5 - pl.vx * 0.1, vy: Math.sin(ea) * 0.5 - 0.6, drag: 0.97, size: __p.random(2.5, 4.5), life: 40, fadeIn: 12, col: Math.random() < 0.5 ? [180, 90, 255] : [225, 185, 255] });
+      }
+    }
   };
   Player.prototype.reset = function (spawnX, spawnY) {
     // [v5] only a death during the final chase restarts the vortex. After the
@@ -41606,6 +43226,11 @@ function program() {
     buttonHovers[i] = 0;
   }
   var you = function you(x, y, sz, id) {
+    if (uiThemeK && !uiThemeHeld) {
+      return uiThemeHold(function () {
+        return you(x, y, sz, id);
+      });
+    }
     __p.pushMatrix();
     __p.translate(x, y);
 
@@ -41823,11 +43448,22 @@ function program() {
     if (world < 4) {
       drawBG = __p.color(__p.red(currentBG) + pulse, __p.green(currentBG) + pulse, __p.blue(currentBG) + pulse);
     }
-    __p.background(drawBG);
-    if (world === 4) {
-      __p.background(0);
+    // [v1.6] Dark Mode menus (the title): a dark sheet with dimmer lines
+    var wbDark = uiThemeHeld ? 0 : uiThemeK;
+    if (wbDark > 0 && world < 4) {
+      drawBG = __p.lerpColor(drawBG, __p.color(16, 22, 36), wbDark);
     }
-    __p.stroke(currentLine);
+    uiThemeHold(function () {
+      __p.background(drawBG);
+      if (world === 4) {
+        __p.background(0);
+      }
+    });
+    if (wbDark > 0) {
+      uiOrigStroke.call(__p, __p.lerpColor(currentLine, __p.color(30, 95, 150), wbDark));
+    } else {
+      __p.stroke(currentLine);
+    }
     __p.strokeWeight(currentWeight);
     __p.noFill();
     if (!settings.fancyGraphics) {
@@ -42481,6 +44117,57 @@ function program() {
     spikeWallTexture = c;
     return c;
   };
+  // [v1.6] a spike wall bursting as it reaches you: shards of it (its own greys and
+  // steel spikes) fly out toward the screen and fade
+  var drawSpikeWallBoom = function drawSpikeWallBoom(wall) {
+    if (!wall.bits) {
+      wall.bits = [];
+      for (var b = 0; b < 80; b++) {
+        var bx = Math.random() * 600,
+          by = Math.random() * 600;
+        var inHole = false;
+        for (var h = 0; h < wall.holes.length; h++) {
+          if (__p.dist(bx, by, wall.holes[h].x, wall.holes[h].y) < wall.holes[h].size / 2) {
+            inHole = true;
+          }
+        }
+        if (inHole) {
+          continue;
+        }
+        var shade = 45 + Math.floor(Math.random() * 70);
+        wall.bits.push({ x: bx, y: by, vx: (bx - 300) * 0.035 + __p.random(-2, 2), vy: (by - 300) * 0.035 + __p.random(-3, 1), r: Math.random() * 360, vr: __p.random(-14, 14), s: __p.random(10, 26), spike: b % 3 === 0, col: b % 3 === 0 ? [205, 208, 215] : [shade, shade, shade + 4] });
+      }
+      wall.bitsAt = 0;
+    }
+    var t = wall.boomT || 0;
+    var step = t - wall.bitsAt;
+    wall.bitsAt = t;
+    var fade = __p.constrain(1 - t / 38, 0, 1);
+    if (t < 6) {
+      __p.noStroke();
+      __p.fill(255, 255, 255, 120 * (1 - t / 6));
+      __p.rect(-widePad, 0, wideW, 600);
+    }
+    for (var i = 0; i < wall.bits.length; i++) {
+      var q = wall.bits[i];
+      q.vy += 0.3 * step;
+      q.x += q.vx * step;
+      q.y += q.vy * step;
+      q.r += q.vr * step;
+      var sz = q.s * (1 + t * 0.035);
+      __p.pushMatrix();
+      __p.translate(q.x, q.y);
+      __p.rotate(q.r);
+      __p.noStroke();
+      __p.fill(q.col[0], q.col[1], q.col[2], 255 * fade);
+      if (q.spike) {
+        __p.triangle(-sz / 2, sz / 3, sz / 2, sz / 3, 0, -sz / 1.6);
+      } else {
+        __p.rect(-sz / 2, -sz / 2, sz, sz * 0.8, sz * 0.12);
+      }
+      __p.popMatrix();
+    }
+  };
   var drawSpikeWall = function drawSpikeWall(wall, wallX, wallY, wallW, wallH) {
     var ctx = __p.externals.context;
     var sx = wallW / 600,
@@ -42769,8 +44456,9 @@ function program() {
           }
         } else {
           // Lerp cleanly toward the bottom of the screen
-          wall.fallY += 20 * DT;
-          if (wall.fallY > __p.height) {
+          // [v1.6] it bursts into pieces as it passes you (it used to drop away)
+          wall.boomT = (wall.boomT || 0) + DT;
+          if (wall.boomT > 38) {
             wall.isDead = true;
           }
         }
@@ -43840,7 +45528,9 @@ function program() {
       h: __p.height,
       mImg: function mImg() {
         __p.background(255);
+        drawIdleCrown.baking = true; // (the shine is drawn live, over the badge)
         drawIdleCrown(300, 400, 400);
+        drawIdleCrown.baking = false;
       }
     },
     parkourMasterIcon: {
@@ -43855,7 +45545,11 @@ function program() {
         __p.ellipse(300, 300, 470, 470);
         __p.fill(255, 238, 160);
         __p.ellipse(300, 300, 400, 400);
-        you(300, 300, 280, 21);
+        // [v1.6] the real Parkour Master (the boss), not the costume
+        var pmFancy = settings.fancyGraphics;
+        settings.fancyGraphics = false; // (his simple cape: the cloth one needs to move first)
+        parkMast(300, 285, 360, undefined);
+        settings.fancyGraphics = pmFancy;
       }
     },
     emotionalSupportIcon: {
@@ -44332,6 +46026,7 @@ function program() {
 
         //]
 
+        uiThemeBegin(); // [v1.6] Dark Mode for the menus
         switch (scene) {
           case "title":
             //[
@@ -44372,25 +46067,46 @@ function program() {
             }
             //[
             startY = __p.lerp(startY, targetY, dtLerp(0.2));
-            __p.background(0);
+            // [v1.6] the same look as the other menus: moving graph paper, a white
+            // header card with the progress bar along its bottom
+            shopBackground();
             // Draw all badges and classes
-            drawBadgesAndClasses(badgeClassOrder, 100, startY, badgeSpacing, badgeWidth);
+            drawBadgesAndClasses(badgeClassOrder, 100, startY + 34, badgeSpacing, badgeWidth);
             __p.textAlign(__p.CENTER);
             __p.textSize(16);
-            __p.fill(0, 0, 0, 200);
+            __p.fill(255);
+            __p.stroke(0);
+            __p.strokeWeight(7);
+            __p.rect(-widePad - 10, -10, wideW + 20, 206);
+            var achN = achProgress();
             __p.noStroke();
-            __p.rect(-widePad - 1, -1, wideW + 2, 190);
+            __p.fill(225);
+            __p.rect(-widePad - 10, 184, wideW + 20, 12);
+            __p.fill(211, 175, 55);
+            __p.rect(-widePad - 10, 184, (wideW + 20) * achN.got / __p.max(1, achN.all), 12, 0, 10, 10, 0);
 
             // The logo
-            __p.fill(255, 255, 0);
-            achievementsLogo(490, 70, 100);
+            __p.fill(211, 175, 55);
+            uiThemeHold(function () {
+              achievementsLogo(490, 66, 96);
+            });
+            __p.stroke(0);
+            arcSize(8);
+            arcAlign(__p.CENTER);
+            arcText(achN.got + " of " + achN.all, 538, 176);
 
             // Display the title
-            __p.stroke(184, 184, 184);
+            __p.stroke(0);
             arcSize(18);
             arcText("Achievements", __p.width / 2, 40);
 
             // Draw selected badge details if any
+            if (!selectedBadge) {
+              __p.stroke(90);
+              arcSize(8.5);
+              arcAlign(__p.LEFT);
+              arcText("Click a badge to see what it is and how to earn it.", 70 - __p.min(widePad, 30), 110, 360);
+            }
             drawBadgeDetails(100, 100, 18);
             backButton(40 - widePad, 40, 50);
             //]
@@ -44991,6 +46707,7 @@ function program() {
               if (lvlUnlock > 16) {
                 sceneButton(530, 530, "Runs", 90 + __p.sin(__p.frameCount * 2) * 10);
               }
+              uiThemeOn(); // [v1.6] Dark Mode: the map stays white, its panels go dark
               __p.stroke(0);
               __p.strokeWeight(7);
               __p.fill(255);
@@ -45008,7 +46725,8 @@ function program() {
                 voucherCountText(200 - widePad, 40, 58); // (shrinks to stay inside the corner panel)
                 lvlVoucher(150 - widePad, 30, 80);
               }
-              mpMapButton(widePad >= 45 ? 54 - widePad : 37, 136, widePad >= 45 ? 62 : 44); // (smaller on square screens, clear of the Area ONE title) // [MP] two-Dash multiplayer button
+              uiThemeOff();
+              mpMapButton(widePad >= 45 ? 80 - widePad : 52, widePad >= 45 ? 140 : 146, widePad >= 45 ? 60 : 40); // (smaller on square screens, clear of the Area ONE title; [v1.6] and well in from the screen edge, glow and all) // [MP] two-Dash multiplayer button
             } else {
               worldBackground(-__p.frameCount / 3, 0, worldSubScreen);
               arcSize(26);
@@ -45208,6 +46926,7 @@ function program() {
             //]
             break;
         }
+        uiThemeEnd();
         if (lvlUnlock > 4) {
           area2Unlocked = true;
         }
@@ -45719,7 +47438,9 @@ function program() {
             if (p.health <= 0 && !p.deathTriggered) {
               deaths++;
               p.health = 0;
-              spawnParticles(p.x, p.y, 30, "death", 5);
+              mpLocalTint();
+              skinFxDeath(currentSkin, p.x, p.y, dashTint, MP.active ? mpMyColor() : 0, p.vx, p.vy, true); // [v1.6] (each skin its own way)
+              dashTint = null;
               p.dead = true;
               p.deathTriggered = true;
               sfx("death"); // [v1.1] sound
@@ -46853,6 +48574,7 @@ function program() {
               p.draw();
               dashTint = null;
             }
+            skinFxRun(); // [v1.6] skin spawn / death animations and trails
             admDrawOver(); // [ADMIN] orbital strikes, over everyone
             if (showHitboxes) {
               // draw object hitboxes
@@ -47552,9 +49274,15 @@ function program() {
                   var centerX = 300;
                   var centerY = 300;
 
+                  if (wall.falling) {
+                    drawSpikeWallBoom(wall); // [v1.6]
+                    continue;
+                  }
                   // Calculate dynamic perspective dimension metrics
-                  var wallWidth = __p.lerp(40, __p.width, wall.z);
-                  var wallHeight = __p.lerp(40, __p.height, wall.z);
+                  // ([v1.6] it zooms in out of the vortex: grows from nothing with a pop)
+                  var wallIn = fxBack(__p.min(1, wall.z / 0.09));
+                  var wallWidth = __p.lerp(40, __p.width, wall.z) * wallIn;
+                  var wallHeight = __p.lerp(40, __p.height, wall.z) * wallIn;
 
                   // Track visual placement from center, adding gravity offsets if it's falling
                   var wallX = centerX - wallWidth / 2;
@@ -47565,7 +49293,9 @@ function program() {
                   // ellipses per wall per frame. Draw the same studded wall from a
                   // cached texture with real round holes, and mark the holes on your
                   // plane so you can line up before it arrives.
-                  drawSpikeWall(wall, wallX, wallY, wallWidth, wallHeight);
+                  withAlpha(__p.min(1, wall.z / 0.04), function () {
+                    drawSpikeWall(wall, wallX, wallY, wallWidth, wallHeight);
+                  });
                 }
 
                 // Drawing paralysis beams
@@ -47609,8 +49339,11 @@ function program() {
                     var timeSeed = __p.floor(__p.frameCount / shiftSpeed) * 0.5;
                     __p.beginShape();
                     if (beam.orientation === "horizontal") {
+                      // [v1.6] the whole width of the screen (it stopped at the edges of the
+                      // square play area on wide screens)
+                      segments = Math.ceil(20 * wideW / 600);
                       for (var j = 0; j <= segments; j++) {
-                        var x = j / segments * 600;
+                        var x = -widePad + j / segments * wideW;
                         // Map noise to create a jagged offset constrained within the beam's thickness
                         var noiseVal = __p.noise(j * 0.6, timeSeed + beam.pos);
                         var offset = (noiseVal - 0.5) * beam.thickness;
@@ -49770,6 +51503,7 @@ function program() {
   };
   var mpLeave = function mpLeave(reason) {
     var wasActive = MP.active;
+    var wasHost = MP.isHost;
     // [v1.5] the party just left: the list leaves you out of its count until the
     // server has heard from the host (it showed you still in it)
     if (wasActive && !MP.isHost && typeof SRV !== "undefined" && SRV.joinedParty) {
@@ -49824,6 +51558,11 @@ function program() {
     if (wasActive && reason) {
       mpToast(reason);
     }
+    // [v1.6] the party ended (host closed the game, lost the host, removed...) while you
+    // were in a level you haven't unlocked yourself: back to the map with you
+    if (wasActive && !wasHost && scene === "game" && currentLevel >= lvlUnlock && !(typeof admOn === "function" && admOn())) {
+      mpBackToMap();
+    }
   };
   var mpCurrentState = function mpCurrentState() {
     var inLevel = scene === "game" && !cutsceneIs && !transitionActive;
@@ -49860,6 +51599,7 @@ function program() {
       id: MP.myId,
       in: inLevel && !MP.spectating ? 1 : 0,
       spc: MP.spectating ? 1 : 0, // [v1.4] watching, not playing (gates and bosses leave them out)
+      sid: MP.spectating ? MP.specId : undefined, // [v1.6] who they watch (that game sends them its world)
       ses: MP.session,
       lv: currentLevel,
       fb: finalBossPhase,
@@ -49881,6 +51621,7 @@ function program() {
       spn: p.spawning && !p.dead ? 1 : 0, // [v1.5] (their spawn particles)
       gr: p.grounded ? 1 : 0, // [v1.5] (so prediction knows if they're falling)
       sk: currentSkin,
+      br: currentSkin === 17 && p.brR ? Math.round(p.brR) : undefined, // [v1.6] Dash Brainrot's spin
       pv: prog,
       pt: progText,
       ch: achievementStates.parkourChampion ? 1 : 0,
@@ -50094,7 +51835,20 @@ function program() {
     });
     b.mpTarget = ids[mpHash(MP.session, "target", b.mpEc) % ids.length];
   };
+  // [v1.6] spectating someone else's world: their Dash is the one the boss and the
+  // enemies go after on this screen (not this game's hidden Dash)
+  var mpSpecWatched = function mpSpecWatched() {
+    if (!MP.spectating || MP.bsync || scene !== "game") {
+      return null;
+    }
+    var pl = MP.players[MP.specId];
+    return pl && pl.ghost && pl.st && pl.st.in && !pl.st.d && pl.st.lv === currentLevel ? pl.ghost : null;
+  };
   var mpBossTarget = function mpBossTarget(b) {
+    var sw = mpSpecWatched();
+    if (sw) {
+      return sw;
+    }
     if (!mpSyncOn() || b.mpTarget === undefined || b.mpTarget === MP.myId) {
       return p;
     }
@@ -50106,6 +51860,10 @@ function program() {
   };
   // Enemies chase the closest player (in Linked mode; otherwise just you).
   var mpEnemyTarget = function mpEnemyTarget(e) {
+    var sw = mpSpecWatched();
+    if (sw) {
+      return sw;
+    }
     if (!mpSyncOn()) {
       return p;
     }
@@ -50125,7 +51883,37 @@ function program() {
   };
   // Joiners show the host's enemies instead of moving their own.
   var mpEnemyPuppet = function mpEnemyPuppet() {
-    return mpSyncOn() && !MP.isHost && MP.enemySnap && MP.enemySnap.ses === MP.session && MP.enemySnap.lv === currentLevel;
+    var src = mpWorldSrc();
+    return src >= 0 && MP.enemySnap && MP.enemySnap.ses === MP.session && MP.enemySnap.lv === currentLevel && MP.enemySnap.src === src;
+  };
+  // [v1.6] whose world (enemies and boss) this game shows: the host's in a shared
+  // Linked level; while spectating otherwise, the player being watched (their own
+  // race, their own boss); -1: this game runs its own
+  var mpWorldSrc = function mpWorldSrc() {
+    if (!MP.active || scene !== "game") {
+      return -1;
+    }
+    if (MP.bsync && !MP.isHost) {
+      return 0;
+    }
+    if (MP.spectating && !MP.bsync && MP.specId >= 0 && MP.players[MP.specId]) {
+      return MP.specId;
+    }
+    return -1;
+  };
+  // [v1.6] someone is spectating this game (and it isn't the shared Linked world,
+  // which the host already sends): send them this game's enemies and boss
+  var mpWatchedBy = function mpWatchedBy() {
+    if (!MP.active || scene !== "game" || MP.bsync || MP.spectating) {
+      return false;
+    }
+    for (var k in MP.players) {
+      var pl = MP.players[k];
+      if (pl.id !== MP.myId && pl.st && pl.st.spc && pl.st.sid === MP.myId && pl.st.ses === MP.session && pl.st.lv === currentLevel) {
+        return true;
+      }
+    }
+    return false;
   };
   var MP_ESTATES = ["idle", "jumping", "falling"];
   // [v1.1] The host's world snapshots, kept in a short buffer and shown a
@@ -50133,7 +51921,7 @@ function program() {
   // every enemy and the boss glide between snapshots (no chop, no jumps).
   var mpWorldView = function mpWorldView() {
     var buf = MP.wbuf;
-    var host = MP.players[0];
+    var host = MP.players[__p.max(0, mpWorldSrc())];
     if (!buf || !buf.length || !host || host.off === undefined) {
       return null;
     }
@@ -50248,8 +52036,9 @@ function program() {
   // raced to catch up ("glitching fast for a few frames").
   var mpBossGlide = function mpBossGlide() {
     var buf = MP.wbuf;
-    var host = MP.players[0];
-    if (MP.isHost || !mpSyncOn() || !buf || buf.length < 1 || !host || host.off === undefined) {
+    var wsrc = mpWorldSrc();
+    var host = MP.players[wsrc];
+    if (wsrc < 0 || !buf || buf.length < 1 || !host || host.off === undefined) {
       return;
     }
     var b = bosses[world - 1];
@@ -50293,7 +52082,7 @@ function program() {
   };
   // host: tell everyone where the enemies and the boss are (10 times a second)
   var mpSendWorld = function mpSendWorld() {
-    if (!MP.isHost || !mpSyncOn() || scene !== "game") {
+    if (scene !== "game" || !(MP.isHost && mpSyncOn()) && !mpWatchedBy()) {
       return;
     }
     var rows = [];
@@ -50306,6 +52095,7 @@ function program() {
       ts: __p.round(mpNow() * 10) / 10,
       ses: MP.session,
       lv: currentLevel,
+      src: MP.myId, // [v1.6] (whose world: the host's, or a watched player's)
       e: rows
     };
     var b = bosses[world - 1];
@@ -50328,16 +52118,17 @@ function program() {
     mpBroadcast(msg);
   };
   var mpApplyWorld = function mpApplyWorld(m) {
-    if (MP.isHost || m.ses !== MP.session || m.lv !== currentLevel || scene !== "game") {
+    var msrc = m.src === undefined ? 0 : m.src;
+    if (msrc !== mpWorldSrc() || m.ses !== MP.session || m.lv !== currentLevel || scene !== "game") {
       return;
     }
     var map = {};
     for (var i = 0; i < m.e.length; i++) {
       map[m.e[i][0]] = m.e[i];
     }
-    if (!MP.wbuf || MP.wbufKey !== m.ses + ":" + m.lv) {
+    if (!MP.wbuf || MP.wbufKey !== m.ses + ":" + m.lv + ":" + msrc) {
       MP.wbuf = [];
-      MP.wbufKey = m.ses + ":" + m.lv;
+      MP.wbufKey = m.ses + ":" + m.lv + ":" + msrc;
     }
     if (MP.wbuf.length && m.ts <= MP.wbuf[MP.wbuf.length - 1].ts) {
       return; // late or repeated
@@ -50352,11 +52143,12 @@ function program() {
     }
     MP.enemySnap = {
       ses: m.ses,
-      lv: m.lv
+      lv: m.lv,
+      src: msrc
     };
     var b = bosses[world - 1];
     var H = m.b;
-    if (!H || !b || !mpSyncOn() || !(bossFight || bossIntro) || b.dead || H.rs !== bossRemixStage || H.n !== b.bossNum) {
+    if (!H || !b || !(bossFight || bossIntro) || b.dead || H.rs !== bossRemixStage || H.n !== b.bossNum) {
       return;
     }
     // a game whose fight has drifted from the host's is snapped back to it
@@ -50952,6 +52744,23 @@ function program() {
         triggerScreenWipe();
       } else if (!screenWipeActive && !wantFb3 && wantRs === 2 && pl2.st.bf && !bossFight && !bossIntro && bosses[world - 1] && bosses[world - 1].startFight) {
         bosses[world - 1].startFight();
+      }
+    }
+    // [v1.6] the other boss levels: their fight starts (and resets, when they die)
+    // here too, so what you watch is the fight they are in
+    if (!MP.bsync && currentLevel % 4 === 3 && currentLevel !== 15 && pl2.st && pl2.st.lv === currentLevel && !cutsceneIs && !levelEnd) {
+      var sb = bosses[world - 1];
+      if (sb && !sb.dead && pl2.st.bf && !bossFight && !bossIntro && sb.startFight) {
+        sb.startFight();
+      } else if (sb && !sb.dead && !pl2.st.bf && !pl2.st.d && (bossFight || bossIntro) && !(pl2.st.sg === "boss")) {
+        bossFight = false;
+        bossIntro = false;
+        lvl.arenaY = 0;
+        bossIntroFrames = 0;
+        bossFloatY = 0;
+        zoomScale = 1;
+        sb.reset();
+        clearBossAttackState();
       }
     }
     var snap = mpSample(pl2) || pl2.st;
@@ -51625,7 +53434,7 @@ function program() {
       // server's "same Wi-Fi" guess can be wrong (one device reaching it over IPv6,
       // the other over IPv4), and a player on the host's Wi-Fi who only got the
       // public address was stuck at "Almost there" on routers that can't loop back.
-      return srvIceReady(); // [v1.5] (the relay logins first, if the server has a relay)
+      return srvIceReady(opt && opt.relay ? "host" : ""); // [v1.5] (the relay logins first, if the server has a relay and the joiner's game reads relay addresses)
     }).then(function () {
       return window.DashNet.createInvite(slot, {
         noRawLocal: !wantLan && !(opt && opt.both),
@@ -51963,7 +53772,7 @@ function program() {
         res(false);
       }, 6000);
     })]) : Promise.resolve(true)).then(function () {
-      return srvIceReady(); // [v1.5]
+      return srvIceReady(j.hostRelay ? "join" : ""); // [v1.5]
     }).then(function () {
       return window.DashNet.acceptInvite(MP.fields.invite, {
         relay: !!j.hostRelay // [v1.5] the host's game can read relay addresses
@@ -52347,8 +54156,8 @@ function program() {
     var now = Date.now();
     // [v1.1] Linked mode with two or more players in this level: one shared world
     MP.bsync = MP.active && MP.mode === "linked" && scene === "game" && mpCount() > 1 && mpPlayersInLevel().length > 1;
-    MP.wview = !MP.isHost && MP.bsync ? mpWorldView() : null;
-    if (MP.isHost && MP.bsync && now - (MP.lastWorld || 0) >= 50) {
+    MP.wview = mpWorldSrc() >= 0 ? mpWorldView() : null;
+    if ((MP.isHost && MP.bsync || mpWatchedBy()) && now - (MP.lastWorld || 0) >= 50) {
       MP.lastWorld = now;
       mpSendWorld();
     }
@@ -52544,18 +54353,24 @@ function program() {
           pl.deadFx = true;
           var dx = pl.ghostShown && pl.ghost ? pl.ghost.x : fx.x,
             dy = pl.ghostShown && pl.ghost ? pl.ghost.y : fx.y + fy;
-          particleSkin = st.sk | 0; // [v1.5] their skin and colour, not ours
-          particleCol = dashParticleCol(st.sk | 0, pl.color);
-          spawnParticles(dx, dy, 40, "death", 6);
-          particleSkin = particleCol = null;
+          // [v1.6] their skin's own death (their skin and colour, not ours)
+          skinFxDeath(st.sk | 0, dx, dy, mpColorOf(pl.id), pl.color, pl.ghost ? pl.ghost.vx : 0, pl.ghost ? pl.ghost.vy : 0, false);
         } else if (fx && !fx.d && pl.deadFx) {
           pl.deadFx = false;
         }
         if (fx && fx.spn && !pl.away) {
-          particleSkin = st.sk | 0;
-          particleCol = dashParticleCol(st.sk | 0, pl.color);
-          spawnParticles(fx.x, fx.y + fy, dtCount(20), "spawn", 1.5);
-          particleSkin = particleCol = null;
+          if (!pl.spnFx) {
+            // [v1.6] their skin's own way of appearing
+            pl.spnFx = true;
+            skinFxSpawn(st.sk | 0, fx.x, fx.y + fy, mpColorOf(pl.id), pl.color, false);
+            if (pl.ghost) {
+              pl.ghost.dinoCover = (st.sk | 0) === 11 ? 1 : 0;
+              pl.ghost.stacheBuild = (st.sk | 0) === 23 ? 0 : 1;
+              pl.ghost.discoDrop = (st.sk | 0) === 24 ? 1 : 0;
+            }
+          }
+        } else if (fx && !fx.spn) {
+          pl.spnFx = false;
         }
       }
       // [v1.1] a paused player (other tab, or no news for a moment) stays where
@@ -52594,6 +54409,8 @@ function program() {
       if (st.sk === 19 && dtEvery(2)) {
         spawnParticles(g.x, g.y, 2, "pi", 0, g); // [v1.1] Digitsofpi's digits
       }
+      skinTrail(st.sk | 0, { x: g.x, y: g.y, vx: st.vx || 0, vy: st.vy || 0 }, __p.abs(st.vy || 0) < 0.8); // [v1.6]
+      g.brR = st.br || 0; // [v1.6] Dash Brainrot's spin
       g.vx = st.vx;
       g.vy = st.vy;
       g.w = st.w;
@@ -52817,6 +54634,11 @@ function program() {
     return h;
   };
   var mpDashIcon = function mpDashIcon(x, y, s, col) {
+    if (uiThemeK && !uiThemeHeld) {
+      return uiThemeHold(function () {
+        return mpDashIcon(x, y, s, col);
+      });
+    }
     __p.noStroke();
     __p.fill(col);
     __p.rect(x - s / 2, y - s / 2, s, s, s * 0.25);
@@ -53781,7 +55603,12 @@ function program() {
         });
       }
     }
-    var bottom = 600 - (MP.chatOpen ? inputH + 16 : 22) - (!MP.chatOpen && mobileInLevel() ? 104 : 0); // [v1.1] above the touch arrows
+    var kbLift = mobileKeyboardLift(); // [v1.6] above the phone's keyboard while typing
+    MP.kbLift = __p.lerp(MP.kbLift || 0, kbLift, dtLerp(0.3));
+    if (__p.abs(MP.kbLift - kbLift) < 0.5) {
+      MP.kbLift = kbLift;
+    }
+    var bottom = 600 - (MP.chatOpen ? inputH + 16 + MP.kbLift : 22) - (!MP.chatOpen && mobileInLevel() ? 104 : 0); // [v1.1] above the touch arrows
     if (onMpScreen && !MP.chatOpen) {
       bottom = 512; // (clear of LEAVE / PLAY / INVITE CODES)
     }
@@ -53822,15 +55649,15 @@ function program() {
       __p.text(R.t, tx + R.prew, ly - 3);
     }
     if (MP.chatOpen) {
-      MP.chatBarRect = { x: -widePad + 8, y: 600 - 10 - inputH, w: wideW - 16, h: inputH }; // [v1.1] the phone's text box goes here
+      MP.chatBarRect = { x: -widePad + 8, y: 600 - 10 - inputH - MP.kbLift, w: wideW - 16, h: inputH }; // [v1.1] the phone's text box goes here
       __p.noStroke();
       __p.fill(0, 0, 0, 170);
-      __p.rect(-widePad + 8, 600 - 10 - inputH, wideW - 16, inputH);
+      __p.rect(-widePad + 8, 600 - 10 - inputH - MP.kbLift, wideW - 16, inputH);
       __p.fill(255);
       __p.textSize(15);
       __p.textAlign(__p.LEFT, __p.TOP);
       for (var ir = 0; ir < inputRows.length; ir++) {
-        __p.text(inputRows[ir], -widePad + 16, 600 - 10 - inputH + 5 + ir * rowH);
+        __p.text(inputRows[ir], -widePad + 16, 600 - 10 - inputH - MP.kbLift + 5 + ir * rowH);
       }
     }
     srvDrawInvite(); // [v1.5] a developer's invite
@@ -55819,10 +57646,32 @@ function program() {
   };
   // the CHAT button outside levels (in levels it sits next to MENU)
   var mobileChatRect = function mobileChatRect() {
-    if (!mobileOn() || !mobileChatButton() || scene === "game" || scene === "Multiplayer" || loading || cutsceneIs) {
+    if (!mobileOn() || !mobileChatButton() || scene === "game" || loading || cutsceneIs) {
       return null;
     }
+    if (scene === "Multiplayer") {
+      // [v1.6] the party screen too (top right: its bottom row is full of buttons)
+      return { x: 600 + widePad - 104, y: 22, w: 84, h: 36 };
+    }
     return { x: -widePad + 20, y: 548, w: 76, h: 32 };
+  };
+  // [v1.6] how much of the bottom of the game the phone's keyboard covers (screen
+  // units): the chat moves up by this much so you can see what you type
+  var mobileKeyboardLift = function mobileKeyboardLift() {
+    var vv = window.visualViewport;
+    var cv = __p.externals.canvas;
+    if (!vv || !cv || !MP.chatOpen) {
+      return 0;
+    }
+    var r = cv.getBoundingClientRect();
+    if (!r.height) {
+      return 0;
+    }
+    var hidden = r.bottom - (vv.offsetTop + vv.height);
+    if (hidden <= 4) {
+      return 0;
+    }
+    return __p.min(420, hidden * 600 / r.height);
   };
   // Things that must happen inside a real tap or click: copying to the
   // clipboard, mostly. Screens register them as they draw.
@@ -56726,6 +58575,23 @@ function program() {
       mpChatLine("", e.message, -1);
     });
   };
+  // [v1.6] closing the game: the server stops counting you as online straight away
+  // (it took 45 s, so the "online" count stayed too high), and coming back to the tab
+  // checks in at once (the count was stale after the tab had been in the background)
+  try {
+    window.addEventListener("pagehide", function () {
+      if (mpServerOn() && SRV.dev && navigator.sendBeacon) {
+        navigator.sendBeacon(srvUrl("/api/bye"), JSON.stringify({
+          dev: SRV.dev
+        }));
+      }
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) {
+        SRV.helloAt = 0;
+      }
+    });
+  } catch (e) {}
   // [v1.5] Every game on the website checks in every 15 s (for the server's stats:
   // how many play, when), and hears about a developer's invite that way.
   var srvHelloTick = function srvHelloTick() {
@@ -56945,30 +58811,60 @@ function program() {
       } catch (e) {}
     }
   }, 1000);
-  // [v1.5] The relay (TURN) logins from the party server (none if it has no relay
-  // set up): fetched once, then again every 30 minutes; a new connection waits for
-  // them (3 s at most).
-  var srvIceFetch = function srvIceFetch() {
-    if (SRV.icePending || SRV.iceAt && Date.now() - SRV.iceAt < 30 * 60 * 1000) {
-      return SRV.icePending || Promise.resolve();
-    }
-    SRV.icePending = srvFetch("GET", "/api/ice").then(function (r) {
-      SRV.iceAt = Date.now();
-      SRV.icePending = null;
-      if (window.DashNet && window.DashNet.setIce) {
-        window.DashNet.setIce(r && r.iceServers || []);
-      }
-    }, function () {
-      SRV.iceAt = Date.now() - 25 * 60 * 1000; // (try again in 5 minutes)
-      SRV.icePending = null;
-    });
-    return SRV.icePending;
-  };
-  var srvIceReady = function srvIceReady() {
-    if (!mpServerOn()) {
+  // [v1.5] The relay (TURN) logins from the party server (none if it has no relay,
+  // or its monthly budget is used up). Only a game hosting a party (its token) or
+  // asking to join one (its join request) gets one, and only when the other game can
+  // use relay addresses; a new connection waits for it (3 s at most).
+  var srvIceFetch = function srvIceFetch(q) {
+    if (!q) {
       return Promise.resolve();
     }
-    return Promise.race([srvIceFetch(), new Promise(function (res) {
+    if (SRV.iceFor === q && SRV.icePending) {
+      return SRV.icePending;
+    }
+    if (SRV.iceFor === q && SRV.iceAt && Date.now() - SRV.iceAt < 60 * 60 * 1000) {
+      if (window.DashNet && window.DashNet.setIce) {
+        window.DashNet.setIce(SRV.iceList || []);
+      }
+      return Promise.resolve();
+    }
+    SRV.iceFor = q;
+    var pend = SRV.icePending = srvFetch("GET", "/api/ice?" + q).then(function (r) {
+      if (SRV.icePending !== pend) {
+        return;
+      }
+      SRV.icePending = null;
+      var list = SRV.iceList = r && r.iceServers || [];
+      SRV.iceAt = list.length ? Date.now() : Date.now() - 55 * 60 * 1000; // (none: ask again in 5 minutes)
+      if (window.DashNet && window.DashNet.setIce) {
+        window.DashNet.setIce(list);
+      }
+    }, function () {
+      if (SRV.icePending === pend) {
+        SRV.icePending = null;
+        SRV.iceAt = Date.now() - 55 * 60 * 1000;
+      }
+    });
+    return pend;
+  };
+  // who: "host" (hosting SRV.party) or "join" (the join request in MP.join)
+  var srvIceReady = function srvIceReady(who) {
+    var q = "";
+    if (!mpServerOn()) {
+      who = "";
+    }
+    if (who === "host" && SRV.party && SRV.party.token) {
+      q = "party=" + encodeURIComponent(SRV.party.id) + "&token=" + encodeURIComponent(SRV.party.token);
+    } else if (who === "join" && SRV.join && SRV.join.rid) {
+      q = "rid=" + encodeURIComponent(SRV.join.rid);
+    }
+    if (!q) {
+      if (window.DashNet && window.DashNet.setIce) {
+        window.DashNet.setIce([]); // (no relay addresses to offer: don't wait for any)
+      }
+      return Promise.resolve();
+    }
+    return Promise.race([srvIceFetch(q), new Promise(function (res) {
       setTimeout(res, 3000);
     })]);
   };
@@ -56976,7 +58872,6 @@ function program() {
     if (!mpServerOn()) {
       return;
     }
-    srvIceFetch();
     srvHostTick();
     srvJoinTick();
     if (scene === "Multiplayer" && (MP.screen === "browse" || MP.screen === "home" || MP.screen === "create") && !MP.active) {
@@ -57135,21 +59030,58 @@ function program() {
     if (mpButton(ix, yy + 20, 130, 40, "PUBLIC", !SRV.priv ? __p.color(0, 160, 90) : __p.color(150))) {
       SRV.priv = false;
     }
+    // [v1.6] the passcode box slides out from behind the PRIVATE button (and back in)
+    SRV.privK = __p.lerp(SRV.privK || 0, SRV.priv ? 1 : 0, dtLerp(0.2));
+    if (__p.abs(SRV.privK - (SRV.priv ? 1 : 0)) < 0.01) {
+      SRV.privK = SRV.priv ? 1 : 0;
+    }
+    if (SRV.privK > 0.01) {
+      var pk = SRV.privK;
+      var pkeep = MP.click;
+      if (!SRV.priv || pk < 0.9) {
+        MP.click = false;
+      }
+      __p.pushMatrix();
+      __p.translate(-(1 - pk) * 150, 0);
+      withAlpha(__p.min(1, pk * 1.6), function () {
+        mpField("ppass", ix + 282, yy + 20, iw - 282, 40, "passcode", false, true);
+      });
+      __p.popMatrix();
+      MP.click = pkeep;
+    }
     if (mpButton(ix + 140, yy + 20, 130, 40, "PRIVATE", SRV.priv ? __p.color(235, 140, 0) : __p.color(150))) {
       SRV.priv = true;
     }
-    if (SRV.priv) {
-      mpField("ppass", ix + 282, yy + 20, iw - 282, 40, "passcode", false, true);
-    }
     yy += 76;
     mpLabel("Max players", ix, yy, 14);
+    var maxWas = SRV.max;
     if (mpButton(ix, yy + 20, 60, 40, "LESS", __p.color(120), SRV.max > 2)) {
       SRV.max--;
     }
-    mpArcLine(String(SRV.max), ix + 92, yy + 30, 13, 20, __p.CENTER);
     if (mpButton(ix + 124, yy + 20, 60, 40, "MORE", __p.color(120), SRV.max < 12)) {
       SRV.max++;
     }
+    // [v1.6] the number rolls: the old one slides away as the new one comes in
+    if (SRV.max !== maxWas) {
+      SRV.maxPrev = maxWas;
+      SRV.maxDir = SRV.max > maxWas ? 1 : -1;
+      SRV.maxAt = __p.millis();
+    }
+    var mk = SRV.maxAt ? fxEase((__p.millis() - SRV.maxAt) / 200) : 1;
+    if (mk < 1 && SRV.maxPrev !== undefined) {
+      withAlpha(1 - mk, function () {
+        mpArcLine(String(SRV.maxPrev), ix + 92, yy + 30 - mk * 16 * SRV.maxDir, 13, 20, __p.CENTER);
+      });
+    }
+    withAlpha(mk, function () {
+      __p.pushMatrix();
+      __p.translate(ix + 92, yy + 40);
+      var mpop = 1 + Math.sin(mk * Math.PI) * 0.25;
+      __p.scale(mpop);
+      __p.translate(-(ix + 92), -(yy + 40));
+      mpArcLine(String(SRV.max), ix + 92, yy + 30 + (1 - mk) * 16 * SRV.maxDir, 13, 20, __p.CENTER);
+      __p.popMatrix();
+    });
     mpParagraph(SRV.priv ? "Everyone sees it in the list, but only players with the passcode can join." : "Anyone can find it in the list and join.", ix + 200, yy + 22, iw - 200, 12, 90);
     if (mpButton(ix, y + 340, 150, 50, "CANCEL", __p.color(130))) {
       MP.screen = "home";
@@ -57165,7 +59097,7 @@ function program() {
     var py = y;
     mpArcLine(mpArcSafe(cleanText(pt.name)), ix, py, 9, __p.color(0, 120, 255));
     py += 26;
-    py += mpParagraph((pt.priv ? "Private party, passcode needed. " : "Public party. ") + "Players join it from the party list: no codes to send.", ix, py, iw, 14) + 10;
+    py += mpParagraph((pt.priv ? "Private party, passcode needed. " : "Public party. ") + "Players join it from the party list.", ix, py, iw, 14) + 10;
     mpArcLine(mpCount() + " of " + pt.max + " players", ix, py, 8, 20);
     py += 30;
     if (SRV.busy.length) {

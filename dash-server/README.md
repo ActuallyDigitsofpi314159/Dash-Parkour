@@ -225,20 +225,49 @@ can't leak them. Don't copy them into it.
 
 Games link to each other directly. Some networks (phone data, school and work
 Wi-Fi, strict routers) block that, and those joins stop at "Almost there". With a
-free Cloudflare TURN key the server hands games short-lived relay logins
-(`GET /api/ice`); they still link directly when they can and only go through
-Cloudflare's relay when that fails.
+relay the server hands games short-lived relay logins (`GET /api/ice`); they still
+link directly when they can and only go through the relay when that fails. Two
+free options:
 
-1. Cloudflare dashboard > **Realtime** > **TURN Server** > **Create**. Note the
-   **Turn Token ID** and the **API Token** (shown once).
-2. On the Pi: `dash-party turn set` and paste both. It is kept in
-   `/var/lib/dash-party/turn.json` (only the server can read it), not in setup.conf,
-   so running setup.sh again keeps it.
-3. `dash-party turn` says whether it works. No restart needed.
-   `dash-party turn off` removes it.
+### Cloudflare's relay (`dash-party turn set`)
 
-Relay addresses are only sent to games that can read them (older versions reject a
-code that has them), so mixed versions keep working without the relay.
+Free for 1,000 GB a month, then $0.05/GB, and Cloudflare has no spending cap of
+its own, so the server guards it:
+
+- Every 10 minutes it reads this month's relay traffic from Cloudflare's own
+  usage meter (the number Cloudflare bills on) and switches the relay off at your
+  budget (500 GB by default, at most 950), cancelling every login it gave out.
+- If the meter can't be read for 30 minutes, or no analytics token is set, the
+  relay is off. It never runs unwatched.
+- Logins only go to a game hosting a party (with its party token) or asking to
+  join one (with its join request), each its own 3-hour login, at most 12 a day
+  per address and 400 a day overall. A login that moves over 1 GB (a whole
+  evening of DASH is a few MB) is cancelled.
+
+You need, from the Cloudflare dashboard:
+
+1. **Realtime** > **TURN Server** > **Create**: the **Turn Token ID** and **API Token**.
+2. Your **Account ID** (Account home, the ... menu > Copy account ID).
+3. An analytics token: **My Profile** > **API Tokens** > **Create Token** > custom,
+   permission **Account / Account Analytics / Read** only.
+
+Then `dash-party turn set` and paste them. They are kept in
+`/var/lib/dash-party/turn.json` (only the server can read it), so running setup.sh
+again keeps them. `dash-party turn` shows the month's usage against the budget.
+
+### A relay on the Pi (`dash-party turn pi`)
+
+Installs coturn on the Pi. Free with no meter, but it uses your home connection and
+needs the router to forward **UDP+TCP 3478** and **UDP 49160-49200** to the Pi
+(Cloudflare's tunnel can't carry it). Players linking through it can see your home
+IP. It is limited to about 0.25 MB/s per player (a game needs well under 0.1),
+never relays into your home network, and logins are shared-secret ones from the
+server with the same bot protection as above. If your home IP changes, run
+`dash-party turn pi` again.
+
+`dash-party turn off` removes either. Relay addresses are only sent to games that
+can read them (older versions reject a code that has them), so mixed versions keep
+working without the relay.
 
 ## Joins that don't link up
 
