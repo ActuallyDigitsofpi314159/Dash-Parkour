@@ -158,6 +158,7 @@ if [ -f "$SRC/server.js" ]; then
   sudo install -m 644 "$SRC/server.js" "$APP/server.js"
   sudo install -m 755 "$SRC/dash-party" /usr/local/bin/dash-party
   sudo install -m 755 "$SRC/dash-watchdog" "$APP/dash-watchdog"
+  [ -f "$SRC/dash-relay" ] && sudo install -m 755 "$SRC/dash-relay" "$APP/dash-relay"
   ok "Installed the server, the watchdog and the dash-party command"
 else bad "The repo has no dash-server/server.js (upload the dash-server folder to GitHub first)"; fi
 

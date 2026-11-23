@@ -257,13 +257,18 @@ again keeps them. `dash-party turn` shows the month's usage against the budget.
 
 ### A relay on the Pi (`dash-party turn pi`)
 
-Installs coturn on the Pi. Free with no meter, but it uses your home connection and
-needs the router to forward **UDP+TCP 3478** and **UDP 49160-49200** to the Pi
-(Cloudflare's tunnel can't carry it). Players linking through it can see your home
-IP. It is limited to about 0.25 MB/s per player (a game needs well under 0.1),
-never relays into your home network, and logins are shared-secret ones from the
-server with the same bot protection as above. If your home IP changes, run
-`dash-party turn pi` again.
+Installs coturn on the Pi and sets it all up with no questions (`dash-relay`).
+Free with no meter, but it uses your home connection, and the router has to
+forward **UDP+TCP 3478** and **UDP 49160-49200** to the Pi (Cloudflare's tunnel
+can't carry it). The Pi asks the router to open those by itself (UPnP), and the
+watchdog keeps them open and follows your home IP (and the Pi's home address) when
+they change. If the router won't let it, `dash-party turn guide` walks through
+forwarding them by hand. If your provider shares one address between homes
+(carrier NAT), `dash-party turn` says so: use Cloudflare's relay then. Players
+linking through it can see your home IP. It is limited to about 0.25 MB/s per
+player (a game needs well under 0.1), never relays into your home network, and
+logins are shared-secret ones from the server with the same bot protection as
+above. `dash-party turn pi NAME` uses a DNS-only name instead of the IP.
 
 `dash-party turn off` removes either. Relay addresses are only sent to games that
 can read them (older versions reject a code that has them), so mixed versions keep

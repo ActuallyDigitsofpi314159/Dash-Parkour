@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# dash-relay: the relay on this Pi (coturn) for players whose networks block
+# direct links. Runs as root (dash-party turn pi and the watchdog call it).
+#   dash-relay setup [ADDRESS]  install and set up coturn, open the router's ports
+#                               for it by itself (UPnP), and turn it on. ADDRESS is
+#                               the name or IP players use (default: your home IP,
+#                               which is then followed when it changes)
+#   dash-relay check            (the watchdog, every 2 minutes) keeps coturn
+#                               running, the router's ports open, and the address
+#                               up to date when your home IP changes
+#   dash-relay off              turn it off and close the router's ports again
+set -u
+DATA=/var/lib/dash-party
+F="$DATA/turn.json"
+ST="$DATA/relay.json"
+CONF=/etc/turnserver.conf
+LOG="$DATA/watchdog.log"
+SVC_USER=dashparty
+PMIN=49160
+PMAX=49200
+note() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
+lan_ip() { ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}'; }
+pub_ip() { curl -fsS -m 8 https://api.ipify.org 2>/dev/null || curl -fsS -m 8 https://ifconfig.me/ip 2>/dev/null; }
+is_private() { # 10/8, 172.16/12, 192.168/16, 100.64/10 (carrier NAT)
+  case "$1" in
+    10.*|192.168.*) return 0 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
+  esac
+  return 1
+}
+
+write_conf() { # lan pub secret
+  cat >"$CONF.tmp" <<CONFEOF
+# DASH Parkour relay (written by dash-relay: dash-party turn pi)
+listening-port=3478
+listening-ip=$1
+external-ip=$2/$1
+min-port=$PMIN
+max-port=$PMAX
+fingerprint
+use-auth-secret
+static-auth-secret=$3
+realm=dashparkour
+no-tls
+no-dtls
+no-cli
+no-multicast-peers
+# a game uses well under 0.1 MB/s; these keep anyone else from using up the connection
+max-bps=250000
+bps-capacity=3000000
+total-quota=40
+user-quota=4
+stale-nonce=600
+# never relay into the home network
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=$2
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+syslog
+simple-log
+CONFEOF
+  chmod 644 "$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+}
+
+save_turn() { # host secret auto lan pub
+  local tmp; tmp="$(mktemp)"
+  jq -n --arg h "$1" --arg s "$2" --argjson auto "$3" --arg lan "$4" --arg pub "$5" \
+    '{kind: "pi", urls: ["turn:\($h):3478?transport=udp", "turn:\($h):3478?transport=tcp"], secret: $s, host: $h, auto: $auto, lan: $lan, pub: $pub}' >"$tmp" &&
+    install -m 600 -o "$SVC_USER" -g "$SVC_USER" "$tmp" "$F"
+  local r=$?; rm -f "$tmp"; return $r
+}
+
+# open the ports on the router (UPnP); 0 = they are open
+upnp_open() { # lan
+  command -v upnpc >/dev/null 2>&1 || return 2
+  local args="3478 UDP 3478 TCP" p list
+  for p in $(seq $PMIN $PMAX); do args="$args $p UDP"; done
+  # shellcheck disable=SC2086
+  timeout 60 upnpc -e "DASH Parkour relay" -r $args >/dev/null 2>&1
+  list="$(timeout 20 upnpc -l 2>/dev/null)"
+  echo "$list" | grep -qE "UDP +3478->$1:3478 " &&
+    echo "$list" | grep -qE "TCP +3478->$1:3478 " &&
+    echo "$list" | grep -qE "UDP +$PMAX->$1:$PMAX "
+}
+upnp_close() {
+  command -v upnpc >/dev/null 2>&1 || return 0
+  local args="3478 UDP 3478 TCP" p
+  for p in $(seq $PMIN $PMAX); do args="$args $p UDP"; done
+  # shellcheck disable=SC2086
+  timeout 60 upnpc -d $args >/dev/null 2>&1 || true
+}
+router_ip() { timeout 20 upnpc -s 2>/dev/null | awk -F'= ' '/ExternalIPAddress/ {print $2; exit}' | tr -d '[:space:]'; }
+
+save_state() { # upnp(ok|no) lan pub routerip
+  local cg=false
+  if [ -n "$4" ] && [ "$4" != "$3" ] && is_private "$4"; then cg=true; fi
+  jq -n --arg u "$1" --arg lan "$2" --arg pub "$3" --arg rip "$4" --argjson cg "$cg" --argjson at "$(date +%s)" \
+    '{upnp: $u, lan: $lan, pub: $pub, routerIp: $rip, doubleNat: $cg, at: $at}' >"$ST.tmp" && mv "$ST.tmp" "$ST"
+  chown "$SVC_USER:$SVC_USER" "$ST" 2>/dev/null
+}
+
+case "${1:-}" in
+  setup)
+    lan="$(lan_ip)"; pub="$(pub_ip)"
+    [ -z "$lan" ] && { echo "Couldn't find the Pi's address on your home network (is it connected?)."; exit 1; }
+    [ -z "$pub" ] && { echo "Couldn't find your home's internet address (is the internet working?)."; exit 1; }
+    host="$(printf '%s' "${2:-}" | tr -cd 'A-Za-z0-9.:-')"; auto=false
+    [ -z "$host" ] && { host="$pub"; auto=true; }
+    echo "Installing the relay programs (coturn, and miniupnpc to open the router's ports)..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends coturn miniupnpc >/dev/null 2>&1 ||
+      { apt-get update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends coturn miniupnpc >/dev/null 2>&1; } ||
+      { echo "Couldn't install coturn (check the internet and try again)."; exit 1; }
+    sec="$(jq -r 'select(.kind == "pi") | .secret // empty' "$F" 2>/dev/null)"
+    [ -z "$sec" ] && sec="$(head -c 32 /dev/urandom | base64 | tr -cd 'A-Za-z0-9')"
+    write_conf "$lan" "$pub" "$sec"
+    [ -f /etc/default/coturn ] && sed -i 's/^#\{0,1\}TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
+    systemctl enable coturn >/dev/null 2>&1; systemctl restart coturn
+    save_turn "$host" "$sec" "$auto" "$lan" "$pub" || { echo "Couldn't save the relay settings."; exit 1; }
+    echo "Asking your router to open the ports for it..."
+    if upnp_open "$lan"; then u=ok; else u=no; fi
+    save_state "$u" "$lan" "$pub" "$(router_ip)"
+    note "FIX relay set up on this Pi (router ports: $([ "$u" = ok ] && echo opened by themselves || echo not opened))"
+    ;;
+  check)
+    j="$(jq -c 'select(.kind == "pi")' "$F" 2>/dev/null)"
+    [ -z "$j" ] && exit 0
+    if ! systemctl is-active --quiet coturn; then
+      systemctl restart coturn && note "FIX the relay (coturn) had stopped: restarted it"
+    fi
+    # the rest every 10 minutes
+    last="$(jq -r '.at // 0' "$ST" 2>/dev/null)"; [ -z "$last" ] && last=0
+    [ $(( $(date +%s) - last )) -lt 600 ] && exit 0
+    lan="$(lan_ip)"; pub="$(pub_ip)"
+    [ -z "$lan" ] || [ -z "$pub" ] && exit 0
+    oldlan="$(echo "$j" | jq -r '.lan // empty')"; oldpub="$(echo "$j" | jq -r '.pub // empty')"
+    # (relays set up before this kept only the urls: an IP address there is followed)
+    host="$(echo "$j" | jq -r '.host // (.urls[0] | sub("^turn:"; "") | sub(":3478.*$"; ""))')"
+    auto="$(echo "$j" | jq -r 'if has("auto") then .auto else ((.host // (.urls[0] | sub("^turn:"; "") | sub(":3478.*$"; ""))) | test("^[0-9.]+$")) end')"
+    sec="$(echo "$j" | jq -r '.secret')"
+    if [ "$pub" != "$oldpub" ] || [ "$lan" != "$oldlan" ]; then
+      [ "$auto" = true ] || [ -z "$host" ] && host="$pub" && auto=true
+      write_conf "$lan" "$pub" "$sec"
+      save_turn "$host" "$sec" "$auto" "$lan" "$pub"
+      systemctl restart coturn
+      if [ "$pub" != "$oldpub" ]; then note "UPDATE your home IP changed: the relay follows it"; fi
+      if [ "$lan" != "$oldlan" ]; then note "UPDATE the Pi's home-network address changed: the relay follows it"; fi
+    fi
+    old="$(jq -r '.upnp // "no"' "$ST" 2>/dev/null)"
+    if upnp_open "$lan"; then u=ok; else u=no; fi
+    [ "$u" = ok ] && [ "$old" != ok ] && note "FIXED the router's ports for the relay are open"
+    [ "$u" = no ] && [ "$old" = ok ] && note "PROBLEM the router closed the relay's ports (will keep asking; see: dash-party turn)"
+    save_state "$u" "$lan" "$pub" "$(router_ip)"
+    ;;
+  off)
+    upnp_close
+    rm -f "$F" "$ST"
+    systemctl disable --now coturn >/dev/null 2>&1 || true
+    ;;
+  *) sed -n '2,13p' "$0" ;;
+esac

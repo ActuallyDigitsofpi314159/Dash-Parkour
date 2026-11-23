@@ -108,6 +108,12 @@ if [ "$NET" = up ] && [ -d "$APP/repo/.git" ] && [ $((now - last)) -ge 900 ]; th
   fi
 fi
 
+# ---- 6. [v1.6] the relay on this Pi (if it's on): coturn running, the router's
+# ports open, and the address following your home IP when it changes ----
+if [ "$NET" = up ] && [ -x "$APP/dash-relay" ]; then
+  "$APP/dash-relay" check >/dev/null 2>&1
+fi
+
 # ---- status for the dashboard ----
 cat >"$DATA/watchdog.json.tmp" <<EOF
 {"at":$now,"net":"$NET","local":"$LOCAL","public":"$PUBLIC","free_mb":${free_mb:-0}}

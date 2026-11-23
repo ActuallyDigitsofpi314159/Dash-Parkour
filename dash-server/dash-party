@@ -11,7 +11,7 @@
 #   dash-party stats      how the game is doing: players online, per day, peaks, busy hours
 #   dash-party unban NAME let someone back in
 #   dash-party notify     phone notices when a party is made (on | off | test)
-#   dash-party turn       the relay for players who can't link directly (set | pi | off)
+#   dash-party turn       the relay for players who can't link directly (set | pi | guide | off)
 #   dash-party restart    restart the server and the tunnel
 #   dash-party fix        run the watchdog's checks and fixes now
 #   dash-party update     get the newest version from GitHub and set it up again
@@ -208,6 +208,46 @@ setkey() {
 }
 
 # [v1.5] the Cloudflare relay (TURN): players whose networks block direct links
+# [v1.6] opening the router's ports by hand, for routers that don't let the Pi do it
+turn_guide() {
+  local lan rs; rs="$(S cat "$DATA/relay.json" 2>/dev/null)"
+  lan="$(printf '%s' "$rs" | jq -r '.lan // empty' 2>/dev/null)"; [ -z "$lan" ] && lan="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  cat <<GUIDE
+${B}Opening your router's ports for the relay, step by step${N}
+
+The Pi tried to open them itself (UPnP) and the router said no. You only do this once.
+
+${B}1. Open your router's settings page.${N}
+   On a computer or phone connected to your home Wi-Fi, open a browser and go to
+   ${B}http://$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}')${N}  (that's your router). If it asks for a password,
+   it's often printed on a sticker on the router. Some routers (Eero, Google/Nest
+   Wifi, Xfinity, Orbi...) use their phone app instead of a page.
+
+${B}2. Find "Port Forwarding".${N}
+   It can be under Advanced, NAT, Firewall, Virtual Servers or Gaming.
+   (While you're there: if there is a "UPnP" switch, turn it ${B}on${N} and run
+   ${B}dash-party turn pi${N} again instead; the Pi will do the rest itself.)
+
+${B}3. Add these rules,${N} all sending to the Pi, ${B}$lan${N}:
+     Name: DASH relay      Protocol: UDP       Ports: 3478          to $lan port 3478
+     Name: DASH relay TCP  Protocol: TCP       Ports: 3478          to $lan port 3478
+     Name: DASH relay range Protocol: UDP      Ports: 49160-49200   to $lan ports 49160-49200
+   (If it asks for "external" and "internal" ports, use the same numbers for both.
+   If it lets you pick UDP and TCP together for the first one, one rule is fine.)
+
+${B}4. Keep the Pi's address the same.${N}
+   Find "DHCP reservation", "Address reservation" or "Static IP" and reserve
+   ${B}$lan${N} for the Pi (it's listed by name, e.g. digitsofpi314159server).
+
+${B}5. Save,${N} then run ${B}dash-party turn${N} on the Pi. It checks the relay is on.
+
+${B}6. Test it:${N} make a party at home and have someone join on a phone using
+   mobile data (not Wi-Fi). If they get in, it works.
+
+Stuck, or your provider doesn't allow it? Use Cloudflare's relay instead (no
+router changes, hides your home IP): ${B}dash-party turn set${N}
+GUIDE
+}
 turn() {
   local f="$DATA/turn.json" id tok acct an bud tmp host pub sec lan j
   case "${1:-}" in
@@ -237,74 +277,23 @@ turn() {
       echo "${G}Saved.${N} Restarting the server so it reads the meter now..."
       S systemctl restart dash-party; sleep 8; turn ;;
     pi)
-      lan="$(hostname -I 2>/dev/null | awk '{print $1}')"
-      echo "A relay on this Pi (coturn): free, uses your home internet. Your router has to"
-      echo "forward these to the Pi (${lan:-its local address}):"
-      echo "  ${B}UDP and TCP 3478${N}, and ${B}UDP 49160-49200${N}"
-      echo "and players need an address that reaches your home directly (not through"
-      echo "Cloudflare's proxy): your public IP, or a DNS-only (grey cloud) name."
+      # [v1.6] all by itself: no questions, it opens the router's ports (UPnP) and
+      # follows your home IP when it changes (see /opt/dash-party/dash-relay)
+      echo "Setting up a relay on this Pi (free, uses your home internet)."
       echo "${Y}Players linking through it can see your home IP address.${N}"
-      pub="$(curl -fsS -m 8 https://api.ipify.org 2>/dev/null || true)"
-      [ -z "$pub" ] && { echo "${R}Couldn't find your public IP${N} (the relay needs it)."; exit 1; }
-      [ -z "$lan" ] && { echo "${R}Couldn't find the Pi's local address.${N}"; exit 1; }
-      printf 'Address for players [%s]: ' "$pub"; read -r host
-      host="$(printf '%s' "${host:-$pub}" | tr -cd 'A-Za-z0-9.:-')"
-      S apt-get install -y --no-install-recommends coturn >/dev/null || { echo "${R}Couldn't install coturn.${N}"; exit 1; }
-      sec="$(head -c 32 /dev/urandom | base64 | tr -cd 'A-Za-z0-9')"
-      S tee /etc/turnserver.conf >/dev/null <<CONF
-# DASH Parkour relay (written by dash-party turn pi)
-listening-port=3478
-listening-ip=$lan
-external-ip=$pub/$lan
-min-port=49160
-max-port=49200
-fingerprint
-use-auth-secret
-static-auth-secret=$sec
-realm=dashparkour
-no-tls
-no-dtls
-no-cli
-no-multicast-peers
-# a game uses well under 0.1 MB/s; these keep anyone else from using up the connection
-max-bps=250000
-bps-capacity=3000000
-total-quota=40
-user-quota=4
-stale-nonce=600
-# never relay into the home network
-denied-peer-ip=0.0.0.0-0.255.255.255
-denied-peer-ip=10.0.0.0-10.255.255.255
-denied-peer-ip=100.64.0.0-100.127.255.255
-denied-peer-ip=127.0.0.0-127.255.255.255
-denied-peer-ip=169.254.0.0-169.254.255.255
-denied-peer-ip=172.16.0.0-172.31.255.255
-denied-peer-ip=192.168.0.0-192.168.255.255
-denied-peer-ip=$pub
-denied-peer-ip=::1
-denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-syslog
-simple-log
-CONF
-      S chmod 644 /etc/turnserver.conf
-      [ -f /etc/default/coturn ] && S sed -i 's/^#\{0,1\}TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
-      S systemctl enable coturn >/dev/null 2>&1; S systemctl restart coturn
-      tmp="$(mktemp)"
-      jq -n --arg h "$host" --arg s "$sec" '{kind: "pi", urls: ["turn:\($h):3478?transport=udp", "turn:\($h):3478?transport=tcp"], secret: $s}' > "$tmp" &&
-        S install -m 600 -o dashparty -g dashparty "$tmp" "$f" || { rm -f "$tmp"; echo "${R}Couldn't save it.${N}"; exit 1; }
-      rm -f "$tmp"
-      echo "${G}Pi relay running.${N} If your home IP changes, run ${B}dash-party turn pi${N} again."
-      sleep 2; turn ;;
+      if [ ! -x /opt/dash-party/dash-relay ]; then echo "${R}This Pi has an older setup.${N} Run ${B}dash-party update${N} first, then this again."; exit 1; fi
+      S /opt/dash-party/dash-relay setup "${2:-}" || exit 1
+      echo; sleep 2; turn ;;
+    guide) turn_guide ;;
     off)
+      S /opt/dash-party/dash-relay off 2>/dev/null || { S rm -f "$f"; S systemctl disable --now coturn >/dev/null 2>&1 || true; }
       S rm -f "$f"
-      S systemctl disable --now coturn >/dev/null 2>&1 || true
       echo "Relay turned off (games link directly only, within a minute)." ;;
     *)
       if ! S test -r "$f"; then
         echo "${Y}No relay set up.${N} Players whose networks block direct links can't join."
         echo "  ${B}dash-party turn set${N}  Cloudflare's relay (free up to 1,000 GB, with a shutoff)"
-        echo "  ${B}dash-party turn pi${N}   a relay on this Pi (free, needs router port forwarding)"; return
+        echo "  ${B}dash-party turn pi${N}   a relay on this Pi (free; it opens your router's ports by itself)"; return
       fi
       j="$(curl -fsS -m 15 http://127.0.0.1:8787/api/turn 2>/dev/null)"
       if [ -z "$j" ]; then echo "${R}The server didn't answer.${N} Try: dash-party errors"; return; fi
@@ -312,6 +301,18 @@ CONF
         if [ "$(printf '%s' "$j" | jq -r .kind)" = "pi" ]; then
           echo "${G}Relay on${N} (this Pi). Logins given today: $(printf '%s' "$j" | jq -r .loginsToday)"
           S systemctl is-active --quiet coturn || echo "${R}But coturn isn't running.${N} Try: sudo systemctl restart coturn"
+          local rs; rs="$(S cat "$DATA/relay.json" 2>/dev/null)"
+          if [ "$(printf '%s' "$rs" | jq -r '.doubleNat' 2>/dev/null)" = true ]; then
+            echo "${R}Your internet provider shares one address between many homes${N} (your router's"
+            echo "internet address is a private one), so players can't reach a relay at home."
+            echo "Use Cloudflare's relay instead: ${B}dash-party turn set${N}"
+          elif [ "$(printf '%s' "$rs" | jq -r '.upnp' 2>/dev/null)" = ok ]; then
+            echo "${G}Router ports open${N} (the Pi opened them itself, and keeps them open)."
+          else
+            echo "${Y}The router's ports aren't open yet:${N} your router didn't let the Pi open them."
+            echo "Do it by hand once: ${B}dash-party turn guide${N} (step by step)"
+          fi
+          echo "${D}It follows your home IP by itself when it changes.${N}"
         else
           echo "${G}Relay on${N} (Cloudflare). This month: $(printf '%s' "$j" | jq -r .gb) GB of your $(printf '%s' "$j" | jq -r .budgetGB) GB budget."
           echo "Logins given today: $(printf '%s' "$j" | jq -r .loginsToday)"
@@ -339,7 +340,7 @@ case "${1:-}" in
   history) history "${2:-}" ;;
   stats) stats ;;
   notify) notify "${2:-}" ;;
-  turn) turn "${2:-}" ;;
+  turn) turn "${2:-}" "${3:-}" ;;
   bans) S cat "$DATA/bans.json" 2>/dev/null | jq -r '.[] | "\(.at)  \(.name)  (by \(.by))"' 2>/dev/null || echo "Nobody is banned." ;;
   unban)
     [ -z "${2:-}" ] && { echo "Use: dash-party unban NAME"; exit 1; }
