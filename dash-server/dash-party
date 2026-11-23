@@ -11,7 +11,7 @@
 #   dash-party stats      how the game is doing: players online, per day, peaks, busy hours
 #   dash-party unban NAME let someone back in
 #   dash-party notify     phone notices when a party is made (on | off | test)
-#   dash-party turn       the relay for players who can't link directly (set | pi | guide | off)
+#   dash-party turn       the relay for players who can't link directly (metered | set | pi | guide | off)
 #   dash-party restart    restart the server and the tunnel
 #   dash-party fix        run the watchdog's checks and fixes now
 #   dash-party update     get the newest version from GitHub and set it up again
@@ -285,6 +285,34 @@ turn() {
       S /opt/dash-party/dash-relay setup "${2:-}" || exit 1
       echo; sleep 2; turn ;;
     guide) turn_guide ;;
+    metered)
+      # [v1.6] Metered's free plan: no card, so it can never charge
+      echo "${B}Metered's free relay${N}: sign up WITHOUT a card, and it can never charge you."
+      echo "Past its free amount each month it just stops until the next month (games"
+      echo "then link directly only, like with no relay)."
+      echo
+      echo "  1. Go to ${B}https://www.metered.ca/stun-turn${N} and sign up for the free plan"
+      echo "     (email only). ${Y}Never add a card or pick a paid plan.${N}"
+      echo "  2. It asks for an ${B}app name${N}: your dashboard address is ${B}NAME.metered.live${N}."
+      echo "  3. In the dashboard, open ${B}TURN Server${N} > ${B}Credentials${N} (or Developers),"
+      echo "     add a credential if there isn't one, and copy its ${B}API Key${N}."
+      echo
+      printf 'App name (the NAME in NAME.metered.live): '; read -r app
+      printf 'API Key (hidden): '; read -rs key; echo
+      app="$(printf '%s' "$app" | tr -d '[:space:]' | sed -e 's#^https\{0,1\}://##' -e 's#\.metered\.live.*$##' | tr 'A-Z' 'a-z')"
+      key="$(printf '%s' "$key" | tr -d '[:space:]')"
+      if [ -z "$app" ] || [ -z "$key" ]; then echo "${R}Both are needed.${N} Nothing changed."; exit 1; fi
+      j="$(curl -fsS -m 15 "https://$app.metered.live/api/v1/turn/credentials?apiKey=$key" 2>/dev/null)"
+      if ! printf '%s' "$j" | jq -e 'map(select(.username)) | length > 0' >/dev/null 2>&1; then
+        echo "${R}Metered didn't accept those${N} (check the app name and the API key). Nothing changed."; exit 1
+      fi
+      tmp="$(mktemp)"
+      jq -n --arg a "$app" --arg k "$key" '{kind: "metered", app: $a, key: $k}' > "$tmp" &&
+        S install -m 600 -o dashparty -g dashparty "$tmp" "$f" || { rm -f "$tmp"; echo "${R}Couldn't save it.${N}"; exit 1; }
+      rm -f "$tmp"
+      S systemctl disable --now coturn >/dev/null 2>&1 || true
+      echo "${G}Saved.${N} The server uses it within a minute (no restart needed)."
+      sleep 2; turn ;;
     off)
       S /opt/dash-party/dash-relay off 2>/dev/null || { S rm -f "$f"; S systemctl disable --now coturn >/dev/null 2>&1 || true; }
       S rm -f "$f"
@@ -293,12 +321,16 @@ turn() {
       if ! S test -r "$f"; then
         echo "${Y}No relay set up.${N} Players whose networks block direct links can't join."
         echo "  ${B}dash-party turn set${N}  Cloudflare's relay (free up to 1,000 GB, with a shutoff)"
-        echo "  ${B}dash-party turn pi${N}   a relay on this Pi (free; it opens your router's ports by itself)"; return
+        echo "  ${B}dash-party turn pi${N}   a relay on this Pi (free; it opens your router's ports by itself)"
+        echo "  ${B}dash-party turn metered${N}  Metered's free plan (no card, so it can never charge)"; return
       fi
       j="$(curl -fsS -m 15 http://127.0.0.1:8787/api/turn 2>/dev/null)"
       if [ -z "$j" ]; then echo "${R}The server didn't answer.${N} Try: dash-party errors"; return; fi
       if [ "$(printf '%s' "$j" | jq -r .on)" = "true" ]; then
-        if [ "$(printf '%s' "$j" | jq -r .kind)" = "pi" ]; then
+        if [ "$(printf '%s' "$j" | jq -r .kind)" = "metered" ]; then
+          echo "${G}Relay on${N} (Metered, free plan: it can't charge). Logins given today: $(printf '%s' "$j" | jq -r .loginsToday)"
+          echo "${D}Games only use it when they can't link directly. See its usage on metered.ca.${N}"
+        elif [ "$(printf '%s' "$j" | jq -r .kind)" = "pi" ]; then
           echo "${G}Relay on${N} (this Pi). Logins given today: $(printf '%s' "$j" | jq -r .loginsToday)"
           S systemctl is-active --quiet coturn || echo "${R}But coturn isn't running.${N} Try: sudo systemctl restart coturn"
           local rs; rs="$(S cat "$DATA/relay.json" 2>/dev/null)"

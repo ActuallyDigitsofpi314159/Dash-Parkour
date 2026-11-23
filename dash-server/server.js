@@ -190,6 +190,69 @@ function limited(ip, cost, cap) {
 }
 const adminTries = new Map(); // wrong admin keys: at most 5 a minute per address
 
+// ---------------- [v1.6] bot protection ----------------
+// 1. A small puzzle (proof of work) before making or joining a party: the game asks
+//    for a puzzle, finds a number whose hash with it starts with POW_BITS zero bits
+//    (a split second for one player, but a script making thousands of parties or
+//    join requests has to do that work every time). Puzzles are signed by the server
+//    (nothing to remember until one is used), good for 3 minutes, and work once.
+// 2. Limits per home connection (IPv4 address, or IPv6 /64): parties open at once,
+//    parties made per hour, join requests per minute and join requests waiting at once.
+const POW_SECRET = crypto.randomBytes(32);
+const POW_BITS = { create: 17, join: 15 };
+const POW_MS = 3 * 60 * 1000;
+const powUsed = new Map(); // puzzle -> expiry (so each works once)
+function powHash(str) {
+  // (FNV-1a, then a final mix; the game has the same one)
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+function powMake(kind) {
+  const body = kind + "." + Date.now().toString(36) + "." + id(6);
+  const sig = crypto.createHmac("sha256", POW_SECRET).update(body).digest("base64").replace(/[+/=]/g, "").slice(0, 16);
+  return { c: body + "." + sig, bits: POW_BITS[kind] };
+}
+// "" when it's good, otherwise why not
+function powCheck(kind, pow) {
+  const c = String((pow && pow.c) || ""),
+    n = String((pow && pow.n) || "");
+  if (!c) return "old";
+  const parts = c.split(".");
+  if (parts.length !== 4 || parts[0] !== kind || n.length > 12) return "bad";
+  const sig = crypto.createHmac("sha256", POW_SECRET).update(parts.slice(0, 3).join(".")).digest("base64").replace(/[+/=]/g, "").slice(0, 16);
+  if (!sameText(sig, parts[3])) return "bad";
+  const at = parseInt(parts[1], 36);
+  if (!(Date.now() - at < POW_MS)) return "stale";
+  if (powUsed.has(c)) return "used";
+  if (powHash(c + ":" + n) >>> (32 - POW_BITS[kind]) !== 0) return "bad";
+  powUsed.set(c, at + POW_MS);
+  return "";
+}
+const POW_MSG = { old: "There's a newer version of the game: refresh the page, then try again.", stale: "That took too long. Try again.", used: "Try again.", bad: "Something went wrong. Try again." };
+const PARTIES_OPEN_PER_NET = 3;
+const PARTIES_PER_HOUR = 12;
+const JOINS_PER_MIN = 12;
+const JOINS_WAITING_PER_NET = 4;
+const netCount = new Map(); // net -> { made: [times], joins: [times] }
+function netUse(ip) {
+  const k = netKey(ip) || String(ip);
+  let u = netCount.get(k);
+  if (!u) netCount.set(k, (u = { made: [], joins: [] }));
+  const now = Date.now();
+  u.made = u.made.filter((t) => now - t < 3600e3);
+  u.joins = u.joins.filter((t) => now - t < 60e3);
+  return u;
+}
+
 // ---------------- tidy up ----------------
 setInterval(() => {
   const now = Date.now();
@@ -197,6 +260,8 @@ setInterval(() => {
   for (const [rid, r] of requests) if (now - r.seen > REQUEST_TTL || !parties.has(r.party)) requests.delete(rid);
   for (const [ip, h] of hits) if (now - h.t > 60000) hits.delete(ip);
   for (const [ip, t] of adminTries) if (now - t.t > 60000) adminTries.delete(ip);
+  for (const [c, until] of powUsed) if (until < now) powUsed.delete(c);
+  for (const [k, u] of netCount) if (!u.made.some((t) => now - t < 3600e3) && !u.joins.some((t) => now - t < 60e3)) netCount.delete(k);
 }, 5000).unref();
 // a status file for the dashboard (dash-party)
 setInterval(() => {
@@ -442,6 +507,9 @@ const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max:
 //    run on unwatched. Without an analytics token it isn't used at all.
 //  - { kind: "pi", urls, secret }: a relay on this Pi (coturn), free, using the home
 //    internet connection (dash-party turn pi sets it up).
+//  - [v1.6] { kind: "metered", app, key }: Metered's free plan (no card on the account,
+//    so it can never charge: past its free amount it simply stops for the month and
+//    games link directly only). dash-party turn metered sets it up.
 // Bot protection: logins only go to a game that is hosting a party (its party token)
 // or asking to join one (its join request), each gets its own login, a few a day per
 // address and a cap per day overall, and a login that moves more than 1 GB (no game
@@ -468,6 +536,12 @@ function turnConf() {
     return j;
   }
   if (j.kind === "pi" && j.secret && Array.isArray(j.urls) && j.urls.length) return j;
+  if (j.kind === "metered") {
+    j.app = String(j.app || "").trim().toLowerCase();
+    j.key = String(j.key || "").trim();
+    if (!/^[a-z0-9-]{1,63}$/.test(j.app) || !/^[\w-]{8,200}$/.test(j.key)) return null;
+    return j;
+  }
   return null;
 }
 let turnUse = readJson(TURN_USE_FILE, {}); // { month, bytes, at, off, why }
@@ -478,6 +552,7 @@ function turnState() {
   const c = turnConf();
   if (!c) return { on: false, why: "not set up" };
   if (c.kind === "pi") return { on: true, kind: "pi" };
+  if (c.kind === "metered") return meteredBad && Date.now() - meteredBad.at < 30 * 60 * 1000 ? { on: false, kind: "metered", why: meteredBad.why } : { on: true, kind: "metered" };
   if (!c.account || !c.analytics) return { on: false, kind: "cloudflare", why: "no usage meter (account ID and analytics token): off so it can't charge you" };
   if (turnUse.month !== turnMonth() || !turnUse.at) return { on: false, kind: "cloudflare", why: "waiting for the first usage reading" };
   if (Date.now() - turnUse.at > 30 * 60 * 1000) return { on: false, kind: "cloudflare", why: "usage meter not read for 30 minutes" };
@@ -578,6 +653,48 @@ async function readTurnMeter() {
 }
 setInterval(readTurnMeter, 10 * 60 * 1000).unref();
 setTimeout(readTurnMeter, 3000).unref();
+// [v1.6] Metered: its ICE servers list for the app's credential (fetched at most every
+// 10 minutes; the same login for everyone, handed out only as above). Just one
+// relay by UDP and one by TCP (port 443, which gets through the strictest
+// networks): every extra address makes the connection codes longer.
+let meteredCache = null; // { at, servers }
+let meteredBad = null; // { at, why }: a wrong key or app name (checked again after 30 min)
+function meteredIce(c) {
+  if (meteredCache && meteredCache.key === c.app + c.key && Date.now() - meteredCache.at < 10 * 60 * 1000) return Promise.resolve(meteredCache.servers);
+  return new Promise((resolve, reject) => {
+    const req = https.request({ method: "GET", host: c.app + ".metered.live", path: "/api/v1/turn/credentials?apiKey=" + encodeURIComponent(c.key), timeout: 10000 }, (res) => {
+      const chunks = [];
+      res.on("data", (d) => chunks.push(d));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        if (res.statusCode === 401 || res.statusCode === 400 || res.statusCode === 404) {
+          meteredBad = { at: Date.now(), why: res.statusCode === 404 ? "Metered doesn't know that app name" : "Metered says the API key isn't right" };
+          return reject(new Error(meteredBad.why));
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error("Metered said " + res.statusCode));
+        let list;
+        try {
+          list = JSON.parse(text);
+        } catch (e) {
+          return reject(e);
+        }
+        if (!Array.isArray(list)) list = list && list.iceServers;
+        const turns = [];
+        for (const x of list || []) for (const u of [].concat((x && x.urls) || [])) if (/^turns?:/.test(u) && x.username && !/:53(\?|$)/.test(u)) turns.push({ urls: u, username: x.username, credential: x.credential });
+        const udp = turns.find((t) => /^turn:/.test(t.urls) && !/transport=tcp/.test(t.urls));
+        const tcp = turns.find((t) => /:443\?transport=tcp/.test(t.urls)) || turns.find((t) => /transport=tcp/.test(t.urls));
+        const servers = [udp, tcp].filter(Boolean).map((t) => ({ urls: [t.urls], username: t.username, credential: t.credential }));
+        if (!servers.length) return reject(new Error("no relay in Metered's answer"));
+        meteredBad = null;
+        meteredCache = { at: Date.now(), key: c.app + c.key, servers };
+        resolve(servers);
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("timed out")));
+    req.on("error", reject);
+    req.end();
+  });
+}
 // a login for a relay on this Pi (coturn's shared-secret logins)
 function piIce(c) {
   const username = Math.floor(Date.now() / 1000 + TURN_TTL) + ":dash";
@@ -598,7 +715,7 @@ function getIce(owner, ip) {
   turnDay.n++;
   turnDay.ips.set(ipKey, ipN + 1);
   const c = turnConf();
-  const made = c.kind === "pi" ? Promise.resolve(piIce(c)) : cloudflareIce(c);
+  const made = c.kind === "pi" ? Promise.resolve(piIce(c)) : c.kind === "metered" ? meteredIce(c) : cloudflareIce(c);
   return made.then(
     (servers) => {
       const login = servers.find((x) => x.username);
@@ -790,6 +907,11 @@ async function handle(req, res) {
   if (req.method === "GET" && p0 === "/api/turn" && (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1")) {
     // [v1.5] for dash-party turn (on the Pi itself only)
     return send(res, 200, Object.assign({ month: turnUse.month, gb: turnUse.bytes ? Math.round(turnUse.bytes / 1e7) / 100 : 0, readAt: turnUse.at || 0, loginsToday: turnDay.n }, turnState()));
+  }
+  // [v1.6] a puzzle to solve before making or joining a party (see bot protection)
+  if (req.method === "GET" && p0 === "/api/pow") {
+    const kind = url.searchParams.get("k") === "join" ? "join" : "create";
+    return send(res, 200, powMake(kind));
   }
   if (req.method === "GET" && p0 === "/api/health") {
     return send(res, 200, { ok: true, game: "DASH Parkour party server", parties: parties.size, uptime: Math.round(process.uptime()) });
@@ -989,6 +1111,16 @@ async function handle(req, res) {
   if (p0 === "/api/parties") {
     if (isBanned(ip, bdev)) return fail(res, 403, "You can't host multiplayer games right now.", { banned: true });
     if (parties.size >= MAX_PARTIES) return fail(res, 503, "The party server is full. Try again in a bit.");
+    // [v1.6] bot protection
+    const pw = powCheck("create", body.pow);
+    if (pw) return fail(res, pw === "old" ? 426 : 403, POW_MSG[pw], { pow: pw });
+    const use = netUse(ip);
+    const hn = netKey(ip) || String(ip);
+    let open = 0;
+    for (const q of parties.values()) if ((netKey(q.hostIp) || String(q.hostIp)) === hn) open++;
+    if (open >= PARTIES_OPEN_PER_NET) return fail(res, 429, "You already have " + open + " parties open. Close one first.");
+    if (use.made.length >= PARTIES_PER_HOUR) return fail(res, 429, "That's a lot of parties in an hour. Wait a while and try again.");
+    use.made.push(Date.now());
     const name = clean(body.name, 24);
     if (!name) return fail(res, 400, "Give your party a name.");
     const priv = !!body.priv;
@@ -1044,6 +1176,16 @@ async function handle(req, res) {
       hEvent(p, "banned", jname);
       return fail(res, 403, "You can't join multiplayer games right now.", { banned: true });
     }
+    // [v1.6] bot protection
+    const pwj = powCheck("join", body.pow);
+    if (pwj) return fail(res, pwj === "old" ? 426 : 403, POW_MSG[pwj], { pow: pwj });
+    const juse = netUse(ip);
+    if (juse.joins.length >= JOINS_PER_MIN) return fail(res, 429, "That's a lot of joins in a minute. Wait a little and try again.");
+    const jn = netKey(ip) || String(ip);
+    let jw = 0;
+    for (const r of requests.values()) if (!r.done && (netKey(r.ip) || String(r.ip)) === jn) jw++;
+    if (jw >= JOINS_WAITING_PER_NET) return fail(res, 429, "You're already joining a few parties. Wait for those first.");
+    juse.joins.push(Date.now());
     const invTok = String(body.invite || "");
     let invited = !!invTok && !!p.inviteToken && Date.now() < p.inviteUntil && sameText(invTok, p.inviteToken); // [v1.5] a developer's invite
     // [v1.5] or a player's invite (good for 2 minutes, so a retried join still gets in)

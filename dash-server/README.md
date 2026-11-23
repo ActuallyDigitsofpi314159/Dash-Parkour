@@ -226,8 +226,23 @@ can't leak them. Don't copy them into it.
 Games link to each other directly. Some networks (phone data, school and work
 Wi-Fi, strict routers) block that, and those joins stop at "Almost there". With a
 relay the server hands games short-lived relay logins (`GET /api/ice`); they still
-link directly when they can and only go through the relay when that fails. Two
-free options:
+link directly when they can and only go through the relay when that fails
+(the browser always prefers a direct path, and moves off the relay if one opens
+up). Games on a relayed link also send less: 15 updates a second instead of 30,
+and world updates 10 a second instead of 20. Every game also sends only what
+changed in each update (a full one every 3 s), which is about a tenth of the data
+the full updates used. Three free options:
+
+### Metered's free plan (`dash-party turn metered`): can never charge
+
+Sign up at metered.ca for the free plan **with no card** (email only). With no card
+on the account it can't charge you: past its free amount each month it just stops
+until the next month, and games link directly only. The command asks for the app
+name (`NAME.metered.live`) and the API key of a TURN credential, checks them with
+Metered, and saves them in `/var/lib/dash-party/turn.json`. The server hands out
+one relay by UDP and one by TCP on port 443 (which gets through strict networks).
+The free amount is small (Metered lists 500 MB a month), which is why games only
+use it when they must and send as little as possible through it.
 
 ### Cloudflare's relay (`dash-party turn set`)
 
@@ -273,6 +288,23 @@ above. `dash-party turn pi NAME` uses a DNS-only name instead of the IP.
 `dash-party turn off` removes either. Relay addresses are only sent to games that
 can read them (older versions reject a code that has them), so mixed versions keep
 working without the relay.
+
+## Bot protection
+
+- **A puzzle before making or joining a party.** The game asks `GET /api/pow`,
+  finds a number whose hash with the puzzle starts with 17 (making) or 15 (joining)
+  zero bits (a few hundredths of a second in a browser), and sends it with the
+  request. Puzzles are signed by the server, work once and expire after 3 minutes,
+  so a script making thousands of parties or joins has to do that work every time.
+  A game too old to solve them is told to refresh the page.
+- **Limits per home connection** (IPv4 address or IPv6 /64): 3 parties open at
+  once, 12 made an hour, 12 join requests a minute, 4 joins waiting at once. Plus
+  the general limit on requests (150 every 10 s) and bans.
+- **In the game**, the host drops a player whose game floods it (far more messages
+  than a game sends), passes on at most 5 chat lines every 8 s from one player, and
+  cuts chat lines to 200 characters.
+- **Relay logins** only go to a game hosting a party or asking to join one, with a
+  daily cap overall and per address.
 
 ## Joins that don't link up
 

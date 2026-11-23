@@ -37825,6 +37825,11 @@ function program() {
       if (this.spawningTimer >= (this === p ? skinSpawnLen(currentSkin) : 28)) {
         // (same frame as "> 27" at 60 fps, without starting early at high fps)
         this.spawning = false;
+        if (this === p && this.spawnFx && this.spawnFx.sk === 13) {
+          // [v1.6] the Ninja keeps facing the way he slid in (his headband swung
+          // round to his last life's side as soon as he appeared)
+          this.nkBehind = this.nkBehindS = -this.spawnFx.dir;
+        }
         if (this === p && this.spawnFx && this.spawnFx.gy !== this.spawnFx.y + 20) {
           // [v1.6] he fell through the spawn point to the ground: carry on from there
           this.y = this.spawnFx.gy - this.h / 2;
@@ -40184,21 +40189,32 @@ function program() {
   var fxTintOf = function fxTintOf(sk, mpIdx) {
     return dashParticleCol(sk, mpIdx);
   };
+  // [v1.6] where a Dash spawning at (x, y) lands (his feet): the ones dropped in from
+  // the sky (Sphere, Boing, Brainrot, the carried ones) go on through a spawn point
+  // in the air to the ground under it (he then starts from there, instead of stopping
+  // on nothing and falling again). The rest appear right at the spawn point, in the
+  // air if it is (the hat and Dino ones only use the ground when it's right there).
+  var skinSpawnFeet = function skinSpawnFeet(sk, x, y) {
+    var feet = y + 20;
+    var g = fxGroundY(x, y + 14);
+    if (g === Infinity) {
+      return feet;
+    }
+    if (sk === 4 || sk === 6 || sk === 17 || SKIN_CARRIER[sk]) {
+      return g - feet < 500 ? g : feet;
+    }
+    if (SKIN_PROP[sk] || sk === 11) {
+      return g - feet < 30 ? g : feet;
+    }
+    return feet;
+  };
   var skinFxSpawn = function skinFxSpawn(sk, x, y, tint, mpIdx, local) {
     var a = { kind: "spawn", sk: sk, x: x, y: y, t: 0, tint: tint === undefined ? null : tint, mp: mpIdx || 0, local: !!local, len: skinSpawnLen(sk) };
     a.col = fxTintOf(sk, a.mp);
     // [v1.6] always land exactly where the Dash appears (landing on the ground under
     // a spawn point in the air made him drop, stop, then drop again)
-    a.gy = y + 20;
-    if (sk === 4 || sk === 6 || sk === 11 || sk === 17 || SKIN_PROP[sk] || SKIN_CARRIER[sk]) {
-      // [v1.6] the ones that fall in go on through a spawn point in the air and
-      // land on the ground under it (the Dash then starts from there), instead of
-      // stopping on nothing and falling again
-      var g = fxGroundY(x, y + 14);
-      if (g !== Infinity && g - (y + 20) < 500) {
-        a.gy = g;
-      }
-    }
+    a.gy = skinSpawnFeet(sk, x, y);
+    a.onGround = a.gy !== y + 20 || fxGroundY(x, y + 14) - (y + 20) < 4;
     a.dir = Math.random() < 0.5 ? -1 : 1;
     skinAnims.push(a);
     return a;
@@ -40220,6 +40236,16 @@ function program() {
     return a;
   };
   var fxLocalDeath = null;
+  // [v1.6] where the camera looks while you are about to appear and appearing: the
+  // spot you'll stand on (the ground, for the skins dropped in from the sky; the
+  // spawn point itself for the rest, even in the air)
+  var skinSpawnFocusY = function skinSpawnFocusY() {
+    if (!p.spawning || p.dead) {
+      return p.y;
+    }
+    var feet = p.spawnFx ? p.spawnFx.gy : skinSpawnFeet(currentSkin, p.x, p.y);
+    return feet - p.h / 2;
+  };
   // [v1.6] can your spawn start yet? (your death is over and the camera can see the spot)
   var skinFxSpawnReady = function skinFxSpawnReady(x, y) {
     var d = fxLocalDeath;
@@ -40230,7 +40256,7 @@ function program() {
     if (__p.round(zoomScale) !== 1) {
       return true; // (a zoomed camera in a cutscene: don't hold him back)
     }
-    return __p.abs(x - (cam.x + 300)) < 240 && __p.abs(y - (cam.y + 300)) < 220;
+    return __p.abs(x - (cam.x + 300)) < 240 && __p.abs(skinSpawnFocusY() - (cam.y + 300)) < 220;
   };
   var fxDefaultBurst = function fxDefaultBurst(a, n, speed) {
     particleSkin = a.sk;
@@ -40565,7 +40591,7 @@ function program() {
           ctx.rect(wallX - 400, a.y - 80, 400, 160);
         }
         ctx.clip();
-        o.vx = a.dir * 4 * (1 - __p.min(1, t / 22));
+        o.vx = a.dir * __p.max(0.5, 4 * (1 - __p.min(1, t / 22))); // ([v1.6] keeps facing the way he came)
         skinFxDummy(sk, a.x - a.dir * 46 * (1 - nk), a.y, o);
         ctx.restore();
         if (t < 1.5) {
@@ -40644,7 +40670,7 @@ function program() {
         if (a.local && fxAt(a, 0)) {
           cameraShake(6, 2);
         }
-        if (fxAt(a, 0)) {
+        if (fxAt(a, 0) && a.onGround) {
           for (var dp = 0; dp < 14; dp++) {
             var dpa = -Math.PI * (0.1 + Math.random() * 0.8),
               dps = 2 + Math.random() * 4;
@@ -40665,12 +40691,21 @@ function program() {
         var roar = t > 12 && t < 22 ? Math.sin((t - 12) * 2.2) * 0.07 : 0;
         o.sx = 1 + roar;
         o.sy = 1 - roar;
-        ctxD.save();
-        ctxD.beginPath();
-        ctxD.rect(a.x - 200, feet - 400, 400, 400); // (hidden below the ground)
-        ctxD.clip();
-        skinFxDummy(sk, a.x + (t > 12 && t < 22 ? __p.random(-1.2, 1.2) : 0), stand + 44 * (1 - rise), o);
-        ctxD.restore();
+        var shakeX = t > 12 && t < 22 ? __p.random(-1.2, 1.2) : 0;
+        if (a.onGround) {
+          ctxD.save();
+          ctxD.beginPath();
+          ctxD.rect(a.x - 200, feet - 400, 400, 400); // (hidden below the ground)
+          ctxD.clip();
+          skinFxDummy(sk, a.x + shakeX, stand + 44 * (1 - rise), o);
+          ctxD.restore();
+        } else {
+          // ([v1.6] a spawn point in the air: no ground to burst out of, so he pops
+          // into being with his jaws shut instead)
+          o.sx = __p.max(0.01, rise) * (1 + roar);
+          o.sy = __p.max(0.01, rise) * (1 - roar);
+          skinFxDummy(sk, a.x + shakeX, stand, o);
+        }
         if (t > 12 && t < 20 && dtEvery(3)) {
           fxPart({ kind: "ring", x: a.x, y: stand - 6, size: 18, grow: 2.6, w: 3, life: 12, col: [46, 139, 87] });
         }
@@ -48121,7 +48156,7 @@ function program() {
             }
 
             // TEMPORARY
-            cam.targetY = p.y - 300;
+            cam.targetY = skinSpawnFocusY() - 300; // ([v1.6] on where you'll appear, while you do)
 
             // Update camera SHAKE
             var shakeX = 0;
@@ -48144,7 +48179,7 @@ function program() {
             // Boss-fight-specific camera y centering
             if (currentLevel === 3 || currentLevel === 15 || currentLevel === 7 || currentLevel === 11) {
               if (!bossFight) {
-                cam.targetY = p.y - 350;
+                cam.targetY = skinSpawnFocusY() - 350;
               } else {
                 cam.targetY = arena.objects[0].y + lvl.arenaY - 400;
               }
@@ -52078,13 +52113,163 @@ function program() {
     }
   };
   // Send to everyone (host: all joiners, joiner: the host, who relays it).
+  // ([v1.6] a link going through the relay gets world updates half as often)
   var mpBroadcast = function mpBroadcast(obj, exceptId) {
     var s = JSON.stringify(obj);
+    var now = Date.now();
     for (var i = 0; i < MP.links.length; i++) {
-      if (MP.links[i].id !== exceptId) {
-        mpSendRaw(MP.links[i], s);
+      var lk = MP.links[i];
+      if (lk.id !== exceptId) {
+        if (obj.t === "wld" && lk.relayed) {
+          if (now - (lk.lastWld || 0) < 95) {
+            continue;
+          }
+          lk.lastWld = now;
+        }
+        mpSendRaw(lk, s);
       }
     }
+  };
+  // [v1.6] less data: a game that says it can (cv 2) gets a player's full state now
+  // and then (every 3 s, and first), and in between only what changed since the last
+  // one it was sent ("dl"; "un" lists what went away). The channel is reliable and in
+  // order, so nothing is missed. Older games still get every state in full. A link
+  // going through the relay (the free one has a small monthly amount) also gets them
+  // 15 times a second instead of 30; the other player is drawn smoothly either way.
+  var MP_CV = 2;
+  var mpStEncode = function mpStEncode(link, src, full, now) {
+    if (!(link.cv >= 2)) {
+      return full;
+    }
+    var c = link.stc || (link.stc = {});
+    var e = c[src];
+    if (!e || now - e.at > 3000) {
+      c[src] = { base: full, at: now };
+      return full;
+    }
+    var d = { t: "st", dl: 1, id: full.id, ts: full.ts },
+      un = null,
+      k;
+    for (k in full) {
+      if (full[k] !== undefined && full[k] !== e.base[k]) {
+        d[k] = full[k];
+      }
+    }
+    for (k in e.base) {
+      if (e.base[k] !== undefined && full[k] === undefined) {
+        (un || (un = [])).push(k);
+      }
+    }
+    if (un) {
+      d.un = un;
+    }
+    e.base = full;
+    return d;
+  };
+  // a state as it came in, made whole again (null: a change with nothing to apply it to yet)
+  var mpStMerge = function mpStMerge(m) {
+    var have = MP.stIn || (MP.stIn = {});
+    if (m.dl) {
+      var b = have[m.id];
+      if (!b) {
+        return null;
+      }
+      var o = {},
+        k;
+      for (k in b) {
+        o[k] = b[k];
+      }
+      for (k in m) {
+        if (k !== "dl" && k !== "un") {
+          o[k] = m[k];
+        }
+      }
+      if (m.un) {
+        for (var i = 0; i < m.un.length; i++) {
+          delete o[m.un[i]];
+        }
+      }
+      m = o;
+    }
+    have[m.id] = m;
+    return m;
+  };
+  // send a player's state to one link (if it's due on that link)
+  var mpSendStateTo = function mpSendStateTo(link, src, full, now) {
+    var due = link.relayed ? 62 : 0;
+    var lt = link.stSent || (link.stSent = {});
+    if (due && now - (lt[src] || 0) < due) {
+      return;
+    }
+    lt[src] = now;
+    mpSendRaw(link, mpStEncode(link, src, full, now));
+  };
+  // [v1.6] bot protection in the game: the host drops a joiner that floods it (far
+  // more messages than any game sends: a broken or hostile one), and passes on at
+  // most 5 chat lines every 8 s from one player (the rest are dropped), each cut to
+  // 200 characters
+  var mpFlooding = function mpFlooding(link, m) {
+    var now = Date.now();
+    var f = link.flood || (link.flood = { at: now, n: 0, chat: [] });
+    if (now - f.at > 1000) {
+      f.at = now;
+      f.n = 0;
+    }
+    f.n++;
+    if (f.n > 240) {
+      if (!link.floodCut) {
+        link.floodCut = true;
+        var fp = MP.players[link.id];
+        mpChatLine("", (fp ? fp.name : "A player") + " was disconnected (their game sent far too much)", -1);
+        try {
+          link.ch.close();
+        } catch (e) {}
+      }
+      return true;
+    }
+    if (m.t === "chat") {
+      f.chat = f.chat.filter(function (t) {
+        return now - t < 8000;
+      });
+      if (f.chat.length >= 5) {
+        return true;
+      }
+      f.chat.push(now);
+      m.x = String(m.x || "").slice(0, 200);
+    }
+    return false;
+  };
+  // which links go through the relay (checked every few seconds; the browser itself
+  // always prefers a direct path and moves off the relay when one opens up)
+  var mpCheckRelayed = function mpCheckRelayed() {
+    MP.links.forEach(function (lk) {
+      if (!lk.pc || !lk.pc.getStats) {
+        return;
+      }
+      lk.pc.getStats().then(function (st) {
+        var pairId = null,
+          types = {},
+          pair = null;
+        st.forEach(function (v) {
+          if (v.type === "transport" && v.selectedCandidatePairId) {
+            pairId = v.selectedCandidatePairId;
+          }
+          if (v.type === "local-candidate" || v.type === "remote-candidate") {
+            types[v.id] = v.candidateType;
+          }
+        });
+        st.forEach(function (v) {
+          if (v.type === "candidate-pair" && (v.id === pairId || !pairId && v.nominated && v.state === "succeeded")) {
+            pair = v;
+          }
+        });
+        var was = !!lk.relayed;
+        lk.relayed = !!pair && (types[pair.localCandidateId] === "relay" || types[pair.remoteCandidateId] === "relay");
+        if (lk.relayed !== was && typeof console !== "undefined") {
+          console.log("[DASH] link " + lk.id + (lk.relayed ? " goes through the relay" : " is direct"));
+        }
+      }, function () {});
+    });
   };
   var mpRoster = function mpRoster() {
     var list = [];
@@ -52107,6 +52292,7 @@ function program() {
       mpSendRaw(MP.links[i], {
         t: "roster",
         you: MP.links[i].id,
+        hcv: MP_CV, // [v1.6] (this host reads changes-only states)
         mode: MP.mode,
         unlock: lvlUnlock,
         p: mpRoster()
@@ -53486,6 +53672,10 @@ function program() {
     switch (m.t) {
       case "hi":
         // host: a joiner introduced itself
+        var hiLink = mpLinkById(fromId);
+        if (hiLink) {
+          hiLink.cv = m.cv | 0; // [v1.6]
+        }
         pl = mpAddPlayer(fromId, String(m.n || "Player").slice(0, 16), MP.players[fromId] ? MP.players[fromId].color : mpFreeColor(), m.sk | 0);
         if (mpDevName(pl)) {
           mpAssignColors(); // [v1.4] Digitsofpi red, Kineto blue
@@ -53512,6 +53702,9 @@ function program() {
       case "roster":
         // joiner: everyone in the lobby
         MP.myId = m.you;
+        if (MP.links[0]) {
+          MP.links[0].cv = m.hcv | 0; // [v1.6]
+        }
         MP.mode = m.mode;
         MP.hostUnlock = m.unlock || 1;
         var seen = {};
@@ -53937,6 +54130,29 @@ function program() {
       }
       if (MP.isHost) {
         m.id = link.id; // never trust a sender's claimed id
+        // [v1.6] a joiner flooding the host (a broken or hostile game) is dropped
+        if (mpFlooding(link, m)) {
+          return;
+        }
+      }
+      if (m.t === "st") {
+        // [v1.6] made whole again (see mpStEncode), and passed on per player
+        m = mpStMerge(m);
+        if (!m) {
+          return;
+        }
+        if (MP.isHost) {
+          var snow = Date.now();
+          for (var sl = 0; sl < MP.links.length; sl++) {
+            if (MP.links[sl].id !== link.id) {
+              mpSendStateTo(MP.links[sl], m.id, m, snow);
+            }
+          }
+        }
+        mpHandle(m, MP.isHost ? link.id : 0);
+        return;
+      }
+      if (MP.isHost) {
         if (m.t !== "hi" && m.t !== "fin" && m.t !== "bye" && m.t !== "kick") {
           mpBroadcast(m, link.id);
         }
@@ -53974,6 +54190,11 @@ function program() {
     } catch (e) {}
     if (!MP.links.length) {
       return;
+    }
+    // [v1.6] which links go through the relay (every 4 s)
+    MP.relayTick = (MP.relayTick || 0) + 1;
+    if (MP.relayTick % 4 === 1) {
+      mpCheckRelayed();
     }
     if (MP.isHost) {
       // [v1.5] each player also gets their own ping (prediction uses it)
@@ -54435,7 +54656,8 @@ function program() {
           mpSendRaw(link, {
             t: "hi",
             n: MP.fields.name || "Player",
-            sk: currentSkin
+            sk: currentSkin,
+            cv: MP_CV // [v1.6] (this game reads changes-only states)
           });
           mpChatLine("", "Connected! The host picks the levels.", -1);
           mpChatHint();
@@ -54797,7 +55019,10 @@ function program() {
     }
     if (now - MP.lastSend >= 33 && MP.links.length) {
       MP.lastSend = now;
-      mpBroadcast(mpCurrentState());
+      var myState = mpCurrentState();
+      for (var msl = 0; msl < MP.links.length; msl++) {
+        mpSendStateTo(MP.links[msl], MP.myId, myState, now);
+      }
     }
     if (MP.race) {
       MP.race.t += DT;
@@ -58652,6 +58877,56 @@ function program() {
       throw new Error("Can't reach the party server. Check the address at the top of the file, or that the server is running.");
     });
   };
+  // [v1.6] bot protection: before making or joining a party the server hands out a
+  // small puzzle (find a number whose hash with it starts with some zero bits). It
+  // takes this game a split second, but a script making thousands of parties has to
+  // do the work every time. Solved a slice at a time so the game keeps running.
+  // (An older party server has no puzzles: then it just goes ahead without one.)
+  var srvPowHash = function srvPowHash(str) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    h ^= h >>> 16;
+    h = Math.imul(h, 0x85ebca6b);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0xc2b2ae35);
+    h ^= h >>> 16;
+    return h >>> 0;
+  };
+  var srvPow = function srvPow(kind) {
+    return srvFetch("GET", "/api/pow?k=" + kind).then(function (j) {
+      if (!j || !j.c || !(j.bits > 0 && j.bits <= 24)) {
+        return null;
+      }
+      return new Promise(function (resolve) {
+        var n = Math.floor(Math.random() * 1e6),
+          shift = 32 - j.bits,
+          pre = j.c + ":";
+        var slice = function () {
+          for (var k = 0; k < 40000; k++, n++) {
+            if (srvPowHash(pre + n) >>> shift === 0) {
+              return resolve({ c: j.c, n: String(n) });
+            }
+          }
+          setTimeout(slice, 0);
+        };
+        slice();
+      });
+    }, function () {
+      return null;
+    });
+  };
+  // a POST that carries a solved puzzle
+  var srvFetchPow = function srvFetchPow(kind, path, body) {
+    return srvPow(kind).then(function (pow) {
+      if (pow) {
+        body.pow = pow;
+      }
+      return srvFetch("POST", path, body);
+    });
+  };
   // ---------------- party list (joiners) ----------------
   var srvRefreshList = function srvRefreshList(force) {
     if (SRV.listing || !force && __p.millis() - SRV.listAt < 3000) {
@@ -58688,7 +58963,7 @@ function program() {
     j.key = key || "";
     j.invite = inviteTok || ""; // [v1.5] a developer's invite lets you into a private party
     j.status = "asking";
-    srvFetch("POST", "/api/parties/" + encodeURIComponent(party.id) + "/join", {
+    srvFetchPow("join", "/api/parties/" + encodeURIComponent(party.id) + "/join", {
       name: srvTxt(MP.fields.name || "Player"),
       pass: pass || "",
       key: key || "",
@@ -58883,7 +59158,7 @@ function program() {
       return;
     }
     SRV.creating = true;
-    srvFetch("POST", "/api/parties", {
+    srvFetchPow("create", "/api/parties", {
       name: srvTxt(name),
       priv: SRV.priv,
       pass: SRV.priv ? String(MP.fields.ppass).slice(0, 24) : "",
@@ -58914,7 +59189,7 @@ function program() {
       return;
     }
     pt.reregistering = true;
-    srvFetch("POST", "/api/parties", {
+    srvFetchPow("create", "/api/parties", {
       name: srvTxt(pt.name),
       priv: pt.priv,
       pass: pt.pass || "",
