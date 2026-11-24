@@ -83,7 +83,8 @@ details summary { cursor: pointer; color: var(--dim); }
     <h2>New save code</h2>
     <div class="row" style="margin-top:0">
       <select id="format">
-        <option value="V">1.1 code ("uu…", this version)</option>
+        <option value="W">1.5 code ("uuu…", this version)</option>
+        <option value="V">1.1 code ("uu…")</option>
         <option value="11">1.1 test code ("u…")</option>
         <option value="10">1.0 code (for the original game)</option>
       </select>
@@ -128,11 +129,19 @@ details summary { cursor: pointer; color: var(--dim); }
       <label for="f-renderScale">Resolution: <span id="rsv"></span>%</label>
       <input type="range" id="f-renderScale" min="50" max="100" step="5" style="accent-color:var(--accent)">
     </div>
+    <div class="field" style="margin-top:12px; max-width: 320px">
+      <label for="f-musicVolume">Music volume: <span id="mvv"></span>% <span style="color:var(--dim)">(1.5 codes)</span></label>
+      <input type="range" id="f-musicVolume" min="0" max="100" step="5" style="accent-color:var(--accent)">
+    </div>
+    <div class="field" style="margin-top:12px; max-width: 320px">
+      <label for="f-sfxVolume">Sound effects volume: <span id="svv"></span>% <span style="color:var(--dim)">(1.5 codes)</span></label>
+      <input type="range" id="f-sfxVolume" min="0" max="100" step="5" style="accent-color:var(--accent)">
+    </div>
   </section>
 
   <section class="times">
     <h2>Speedruns</h2>
-    <p class="note" style="margin-top:0">Best time per level (minutes:seconds, whole seconds). Leave a box empty for no time. "Beaten" ticks count toward Parkour Master.</p>
+    <p class="note" style="margin-top:0">Best time per level, as minutes:seconds.hundredths (like 1:05.42; the hundredths can be left off). Leave a box empty for no time. "Beaten" ticks count toward Parkour Master.</p>
     <table>
       <thead><tr><th>Level</th><th>Best time</th><th>Beaten own best</th></tr></thead>
       <tbody id="times"></tbody>
@@ -212,7 +221,9 @@ details summary { cursor: pointer; color: var(--dim); }
     ["areaXUnlocked", B], ["allAreasComplete", B], ["allRunsComplete", B], ["speedruns", S]);
   var L11 = L10.concat([["emotionalSupport", B], ["thatsNew", B], ["mpChat", B], ["playerName", S]]);
   var LV = L11.concat([["skin_22", B], ["renderScale", N]]);
-  var LAYOUTS = { "10": { keys: L10, prefix: "", name: "1.0 code" }, "11": { keys: L11, prefix: "u", name: "1.1 test code" }, "V": { keys: LV, prefix: "uu", name: "1.1 code" } };
+  // 1.5 ("uuu..."): Receive Invites and the two volume sliders
+  var LW = LV.concat([["mpInvites", B], ["musicVolume", N], ["sfxVolume", N]]);
+  var LAYOUTS = { "10": { keys: L10, prefix: "", name: "1.0 code" }, "11": { keys: L11, prefix: "u", name: "1.1 test code" }, "V": { keys: LV, prefix: "uu", name: "1.1 code" }, "W": { keys: LW, prefix: "uuu", name: "1.5 code" } };
 
   function saveData(layout, obj) {
     var m1 = 0, m2 = 0, bi = 0, body, i;
@@ -272,30 +283,50 @@ details summary { cursor: pointer; color: var(--dim); }
     if (decl) str = decl[1].charAt(0) === '"' ? JSON.parse(decl[1]) : decl[1].slice(1, -1);
     str = str.replace(/^\s+|\s+$/g, "");
     if (!str) throw new Error("There is no code to read.");
-    var fmt = str.slice(0, 2) === "uu" ? "V" : str.charAt(0) === "u" ? "11" : "10";
+    var fmt = str.slice(0, 3) === "uuu" ? "W" : str.slice(0, 2) === "uu" ? "V" : str.charAt(0) === "u" ? "11" : "10";
     var r = loadData(LAYOUTS[fmt].keys, str.slice(LAYOUTS[fmt].prefix.length), force);
     r.format = fmt;
     return r;
   }
   function encode(fmt, obj) { return LAYOUTS[fmt].prefix + saveData(LAYOUTS[fmt].keys, obj); }
 
-  // speedruns: "a-b-c...(.<1-1 time>.<beaten mask>)", whole seconds in base 36 (from packTimes)
+  // speedruns: "a-b-c...(.<1-1 time>.<beaten mask>(.<rest>))" (from packTimes): whole
+  // seconds in base 36, and since 1.7 each time's leftover frames (-30..29, two base-36
+  // letters after adding 30, level 1-1 first) so the exact time is kept. Times here
+  // are in frames (60 a second).
   var PM_LEVELS = 16;
   function unpackRuns(str) {
-    var secs = [], ext = (str || "").split("."), parts = ext[0] ? ext[0].split("-") : [];
-    for (var i = 0; i < parts.length; i++) secs[i + 1] = parseInt(parts[i], 36) || 0;
-    if (ext.length > 1) secs[0] = parseInt(ext[1], 36) || 0;
+    var fr = [], ext = (str || "").split("."), parts = ext[0] ? ext[0].split("-") : [], i;
+    for (i = 0; i < parts.length; i++) fr[i + 1] = (parseInt(parts[i], 36) || 0) * 60;
+    if (ext.length > 1) fr[0] = (parseInt(ext[1], 36) || 0) * 60;
+    if (ext.length > 3 && /^[0-9a-z]*$/.test(ext[3])) {
+      for (i = 0; i * 2 + 1 < ext[3].length; i++) {
+        var rest = (parseInt(ext[3].substr(i * 2, 2), 36) || 0) - 30;
+        if (fr[i] > 0 && rest >= -30 && rest <= 29) fr[i] += rest;
+      }
+    }
     var mask = ext.length > 2 ? parseInt(ext[2], 36) || 0 : 0, improved = [];
     for (var m = 0; m < PM_LEVELS; m++) improved[m] = Math.floor(mask / Math.pow(2, m)) % 2 === 1;
-    return { secs: secs, improved: improved };
+    return { frames: fr, improved: improved };
   }
-  function packRuns(secs, improved) {
+  function packRuns(fr, improved) {
     var last = 0, i, out = [];
-    for (i = 1; i < secs.length; i++) if ((secs[i] || 0) > 0) last = i;
-    for (i = 1; i <= last; i++) out.push((secs[i] || 0).toString(36));
-    var packed = out.join("-"), first = secs[0] || 0, mask = 0;
+    for (i = 1; i < 17; i++) if (Math.round((fr[i] || 0) / 60) > 0) last = i;
+    for (i = 1; i <= last; i++) out.push(Math.round((fr[i] || 0) / 60).toString(36));
+    var packed = out.join("-"), first = Math.round((fr[0] || 0) / 60), mask = 0, rest = "", any = false, anyRest = false;
     for (var m = 0; m < PM_LEVELS; m++) if (improved[m]) mask += Math.pow(2, m);
-    if (first > 0 || mask > 0) packed += "." + first.toString(36) + "." + mask.toString(36);
+    for (i = 0; i <= last; i++) {
+      var f = Math.round(fr[i] || 0);
+      if (f > 0) any = true;
+      var left = f > 0 ? f - Math.round(f / 60) * 60 : 0;
+      if (left !== 0) anyRest = true;
+      var code = (Math.max(-30, Math.min(29, left)) + 30).toString(36);
+      rest += code.length < 2 ? "0" + code : code;
+    }
+    if (first > 0 || mask > 0 || anyRest) {
+      packed += "." + first.toString(36) + "." + mask.toString(36);
+      if (anyRest) packed += "." + rest; // (whole seconds only: left off)
+    }
     return packed;
   }
 
@@ -333,7 +364,8 @@ details summary { cursor: pointer; color: var(--dim); }
     ["fancyGraphics", "Fancy Graphics", "Particles, cape, lava and background details."],
     ["particles", "V-Sync", "One frame per screen refresh (this slot used to be Particles)."],
     ["soundEffects", "Sound Effects", "Game sounds."],
-    ["playMusic", "Play Music", "Background music."]
+    ["playMusic", "Play Music", "Background music."],
+    ["mpInvites", "Receive Invites", "Invites from other players (1.5 codes only)."]
   ];
   var FLAGS = [
     ["area2Unlocked", "Area 2 unlocked"], ["area3Unlocked", "Area 3 unlocked"], ["areaXUnlocked", "Area X unlocked"],
@@ -347,7 +379,7 @@ details summary { cursor: pointer; color: var(--dim); }
     [16, "ECH0 Costume", "X", 2], [17, "Dash Brainrot", "X", 2], [18, "Kineto Costume", "X", 3], [19, "Digitsofpi Costume", "X", 3],
     [20, "Champion Dash", "X", null], [21, "Parkour Master Costume", "Special", null], [22, "Skull Costume", "Special", "achievement"],
     // "coming soon" skins: saved in the three unused achievement slots
-    [23, "Coming Soon (area 2, 1st)", "2", 1, "lightwork"], [24, "Coming Soon (area 2, 2nd)", "2", 3, "twentyTwo"], [25, "Coming Soon (area 3)", "3", 2, "trueDedication"]
+    [23, "Mustachioed Dash", "2", 1, "lightwork"], [24, "Party Dash", "2", 3, "twentyTwo"], [25, "Money Dash", "3", 2, "trueDedication"]
   ];
   function skinKey(sk) { return sk[4] || "skin_" + sk[0]; }
   var LEVELS = [];
@@ -357,12 +389,12 @@ details summary { cursor: pointer; color: var(--dim); }
   // Page
   // ------------------------------------------------------------------
   var $ = function (id) { return document.getElementById(id); };
-  var state = {}, runs = { secs: [], improved: [] };
+  var state = {}, runs = { frames: [], improved: [] };
   function freshState() {
     var s = {};
-    LV.forEach(function (k) { s[k[0]] = k[1] === B ? false : k[1] === S ? "" : 0; });
-    ["sceneTransitions", "fancyGraphics", "particles", "soundEffects", "playMusic", "mpChat", "skin_0"].forEach(function (k) { s[k] = true; });
-    s.lvlUnlock = 1; s.renderScale = 100;
+    LW.forEach(function (k) { s[k[0]] = k[1] === B ? false : k[1] === S ? "" : 0; });
+    ["sceneTransitions", "fancyGraphics", "particles", "soundEffects", "playMusic", "mpChat", "mpInvites", "skin_0"].forEach(function (k) { s[k] = true; });
+    s.lvlUnlock = 1; s.renderScale = 100; s.musicVolume = 100; s.sfxVolume = 100;
     return s;
   }
   function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
@@ -386,35 +418,44 @@ details summary { cursor: pointer; color: var(--dim); }
       '<td><input type="checkbox" data-imp="' + i + '" style="accent-color:var(--accent)"></td></tr>';
   }).join("");
 
-  function fmtTime(s) { if (!s) return ""; return Math.floor(s / 60) + ":" + ("0" + s % 60).slice(-2); }
+  // frames <-> "m:ss.hh" (as the game shows it)
+  function fmtTime(f) {
+    if (!f) return "";
+    var s = Math.floor(f / 60), h = Math.floor((f % 60) * 100 / 60);
+    return Math.floor(s / 60) + ":" + ("0" + s % 60).slice(-2) + "." + ("0" + h).slice(-2);
+  }
   function parseTime(t) {
     t = String(t).replace(/\s+/g, "");
     if (!t) return 0;
-    var m = /^(?:(\d+):)?(\d+)$/.exec(t);
+    var m = /^(?:(\d+):)?(\d+)(?:\.(\d{1,2}))?$/.exec(t);
     if (!m) return null;
-    return (m[1] ? parseInt(m[1], 10) * 60 : 0) + parseInt(m[2], 10);
+    var secs = (m[1] ? parseInt(m[1], 10) * 60 : 0) + parseInt(m[2], 10);
+    var hund = m[3] ? parseInt((m[3] + "0").slice(0, 2), 10) : 0;
+    return secs * 60 + Math.ceil(hund * 60 / 100 - 1e-9); // (shows back as the same hundredths)
   }
 
   function render() {
     var n;
     document.querySelectorAll("[data-key]").forEach(function (el) { el.checked = !!state[el.getAttribute("data-key")]; });
-    ["lvlUnlock", "vouchers", "deaths", "playerName", "renderScale", "speedruns"].forEach(function (k) {
+    ["lvlUnlock", "vouchers", "deaths", "playerName", "renderScale", "musicVolume", "sfxVolume", "speedruns"].forEach(function (k) {
       if (document.activeElement !== $("f-" + k)) $("f-" + k).value = state[k];
     });
     $("rsv").textContent = state.renderScale;
+    $("mvv").textContent = state.musicVolume;
+    $("svv").textContent = state.sfxVolume;
     document.querySelectorAll("input[name=wear]").forEach(function (el) { el.checked = +el.value === state.currentSkin; });
     document.querySelectorAll("[data-time]").forEach(function (el) {
       var i = +el.getAttribute("data-time");
-      if (document.activeElement !== el) el.value = fmtTime(runs.secs[i] || 0);
+      if (document.activeElement !== el) el.value = fmtTime(runs.frames[i] || 0);
       el.style.borderColor = "";
-      document.querySelector('[data-secs="' + i + '"]').textContent = runs.secs[i] ? runs.secs[i] + " s" : "";
+      document.querySelector('[data-secs="' + i + '"]').textContent = runs.frames[i] ? (runs.frames[i] / 60).toFixed(2) + " s" : "";
     });
     document.querySelectorAll("[data-imp]").forEach(function (el) { el.checked = !!runs.improved[+el.getAttribute("data-imp")]; });
     n = ACH.filter(function (a) { return state[a[0]] && a[3]; }).length;
     $("achCount").textContent = n + " / " + ACH.filter(function (a) { return a[3]; }).length + " earned";
     n = SKINS.filter(function (s) { return state[skinKey(s)]; }).length;
     $("skinCount").textContent = n + " / " + SKINS.length + " owned";
-    $("raw").innerHTML = LV.map(function (k, i) {
+    $("raw").innerHTML = LW.map(function (k, i) {
       var v = state[k[0]];
       return "<tr><td style=\"color:var(--dim)\">" + (i + 1) + '</td><td class="mono">' + k[0] + "</td><td>" +
         (k[1] === B ? "on/off" : k[1] === N ? "number" : "text") + '</td><td class="mono">' + esc(k[1] === S ? JSON.stringify(v) : String(v)) + "</td></tr>";
@@ -425,8 +466,8 @@ details summary { cursor: pointer; color: var(--dim); }
   function updateOutput() {
     var fmt = $("format").value, code = encode(fmt, state), notes = [];
     $("output").textContent = code;
-    if (fmt !== "V") {
-      var left = LV.filter(function (k) { return LAYOUTS[fmt].keys.every(function (o) { return o[0] !== k[0]; }); }).map(function (k) { return k[0]; });
+    if (fmt !== "W") {
+      var left = LW.filter(function (k) { return LAYOUTS[fmt].keys.every(function (o) { return o[0] !== k[0]; }); }).map(function (k) { return k[0]; });
       notes.push("This older format has no room for: " + left.join(", ") + ".");
     }
     if (!state.skin_0) notes.push("Tip: the default skin (#0) is normally always owned.");
@@ -443,9 +484,9 @@ details summary { cursor: pointer; color: var(--dim); }
       state = freshState();
       for (var k in r.data) if (r.data.hasOwnProperty(k)) state[k] = r.data[k];
       runs = unpackRuns(state.speedruns);
-      $("format").value = "V";
+      $("format").value = "W";
       setStatus("Loaded a " + LAYOUTS[r.format].name + (r.checkOk ? " (checksum OK)." : " — the checksum was wrong, so some values may be off.") +
-        (r.format !== "V" ? " Values it didn't have are set to their defaults." : ""), r.checkOk ? "ok" : "err");
+        (r.format !== "W" ? " Values it didn't have are set to their defaults." : ""), r.checkOk ? "ok" : "err");
       render();
     } catch (e) {
       setStatus(e.message || String(e), "err");
@@ -459,7 +500,7 @@ details summary { cursor: pointer; color: var(--dim); }
     var el = e.target, key = el.getAttribute && el.getAttribute("data-key");
     if (key) { state[key] = el.checked; render(); return; }
     if (el.name === "wear") { state.currentSkin = +el.value; render(); return; }
-    if (el.hasAttribute("data-imp")) { runs.improved[+el.getAttribute("data-imp")] = el.checked; state.speedruns = packRuns(runs.secs, runs.improved); render(); }
+    if (el.hasAttribute("data-imp")) { runs.improved[+el.getAttribute("data-imp")] = el.checked; state.speedruns = packRuns(runs.frames, runs.improved); render(); }
   });
   document.addEventListener("input", function (e) {
     var el = e.target, id = el.id || "";
@@ -468,17 +509,18 @@ details summary { cursor: pointer; color: var(--dim); }
     } else if (id === "f-speedruns") {
       state.speedruns = el.value.replace(/[^0-9a-z.\-]/gi, "").toLowerCase();
       runs = unpackRuns(state.speedruns);
-    } else if (/^f-(lvlUnlock|vouchers|deaths|renderScale)$/.test(id)) {
+    } else if (/^f-(lvlUnlock|vouchers|deaths|renderScale|musicVolume|sfxVolume)$/.test(id)) {
       var v = Math.round(+el.value || 0);
       if (id === "f-lvlUnlock") v = Math.max(1, Math.min(17, v));
       if (id === "f-renderScale") v = Math.max(50, Math.min(100, v));
+      if (id === "f-musicVolume" || id === "f-sfxVolume") v = Math.max(0, Math.min(100, v));
       if (id !== "f-lvlUnlock" && id !== "f-renderScale") v = Math.max(0, v);
       state[id.slice(2)] = v;
     } else if (el.hasAttribute && el.hasAttribute("data-time")) {
       var s = parseTime(el.value);
       if (s === null) { el.style.borderColor = "var(--bad)"; return; }
-      runs.secs[+el.getAttribute("data-time")] = s;
-      state.speedruns = packRuns(runs.secs, runs.improved);
+      runs.frames[+el.getAttribute("data-time")] = s;
+      state.speedruns = packRuns(runs.frames, runs.improved);
     } else {
       return;
     }

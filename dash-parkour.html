@@ -26711,19 +26711,19 @@ function program() {
     // saved. This adds each time's leftover frames (-30..29, as two base-36 letters
     // after adding 30), levels 1-1, 1-2, ... in order. Older versions ignore it.
     var frac = "",
-      anyTime = false;
+      anyRest = false; // (whole seconds only: nothing to add)
     for (var fi = 0; fi <= __p.max(lastNonZero, 0); fi++) {
       var fr = Math.round(times[fi] || 0);
-      if (fr > 0) {
-        anyTime = true;
-      }
       var rest = fr > 0 ? fr - Math.round(fr / 60) * 60 : 0;
+      if (rest !== 0) {
+        anyRest = true;
+      }
       var code = (__p.constrain(rest, -30, 29) + 30).toString(36);
       frac += code.length < 2 ? "0" + code : code;
     }
-    if (firstLevel > 0 || improvedMask > 0 || anyTime) {
+    if (firstLevel > 0 || improvedMask > 0 || anyRest) {
       packed += "." + firstLevel.toString(36) + "." + improvedMask.toString(36);
-      if (anyTime) {
+      if (anyRest) {
         packed += "." + frac;
       }
     }
@@ -38146,11 +38146,14 @@ function program() {
       }
     }
     this.grounded = false;
-    if (currentSkin === 19 && dtEvery(2)) {
+    // [v1.7] not while your Dash is hidden: spectating, or waiting to appear (the
+    // digits floated round a spectator's hidden Dash)
+    var hiddenDash = this === p && (this.spawnWaiting || typeof mpSpecOn === "function" && mpSpecOn());
+    if (currentSkin === 19 && dtEvery(2) && !hiddenDash) {
       // Pass 'this' as the 6th argument so the particle can attach to you
       spawnParticles(this.x, this.y, 2, "pi", 0, this);
     }
-    if (this === p) {
+    if (this === p && !hiddenDash) {
       skinTrail(currentSkin, this, this.prevGrounded); // [v1.6]
     }
     this.ballRot = (this.ballRot || 0) + this.vx * 2.5 * DT;
@@ -40511,6 +40514,17 @@ function program() {
   var skinFxRun = function skinFxRun() {
     for (var i = skinAnims.length - 1; i >= 0; i--) {
       var a = skinAnims[i];
+      // [v1.7] another player's (a.owner): gone once they aren't where you are any
+      // more (a boss arena rising, another X-4 part, they left). A dropped crown kept
+      // rolling around a boss arena that player was never in.
+      if (a.owner !== undefined && typeof MP !== "undefined") {
+        var ao = MP.players[a.owner],
+          aos = ao && ao.st;
+        if (!MP.active || !aos || aos.lv !== currentLevel || aos.ses !== MP.session || !mpSameStage(aos)) {
+          skinAnims.splice(i, 1);
+          continue;
+        }
+      }
       var keep = a.kind === "spawn" ? skinFxSpawnStep(a) : skinFxDeathStep(a);
       a.t += DT;
       if (!keep && a.t > (a.len || 1)) {
@@ -48035,6 +48049,7 @@ function program() {
                         p.launchTargetX = o.targetX;
                         p.launchTargetY = o.targetY;
                         spawnParticles(o.x, o.y, 100, 'launch', 30);
+                        mpSendLaunch(o); // [v1.7] (the others see it too)
                       }
                     } else if (mtv.y > 0 && p.vy < 0) {
                       var impact = __p.constrain(__p.abs(p.vy) * 3, 0, 40);
@@ -52428,8 +52443,9 @@ function program() {
   // [v1.6] Messages as bytes (mpPack / mpUnpack), only between games that both
   // have this (cv 3). Each value starts with a byte saying what it is: 0-127 is
   // that number; numbers with 1-3 decimals are sent as whole numbers; common names
-  // and words are one byte (from the lists below: ONLY ADD TO THEIR ENDS, older
-  // games read them by position).
+  // and words are one byte (from the lists below; any other name is sent as text).
+  // NEVER CHANGE THESE LISTS without a new cv: a game reads them by position, and one
+  // with a shorter list drops a whole bundle that uses a number it doesn't know.
   var MP_BK = ["t", "ts", "id", "dl", "un", "ol", "adm", "dm", "in", "spc", "sid", "ses", "lv", "fb", "rs", "lf", "bf", "x", "y", "vx", "vy", "w", "h", "r", "vw", "vh", "hf", "m", "d", "spn", "sw", "gr", "sk", "br", "af", "pv", "pt", "ch", "pz", "fz", "ay", "sg", "md", "sp", "nt", "to", "iv", "giv", "rb", "bm", "bi", "src", "e", "b", "n", "ec", "st", "ca", "at", "cs", "tg", "k", "dir", "rtt", "on", "mode", "lives", "ms", "c", "p", "you", "hcv", "unlock", "cv"];
   var MP_BS = ["st", "wld", "fx", "hb", "hbr", "chat", "sys", "die", "away", "gate", "count", "go", "rdy", "mode", "linked", "race", "closed", "open", "idle", "jumping", "falling", "attack", "s", "d", "", "digitsofpi", "kineto"];
   var MP_BKI = {},
@@ -52797,6 +52813,22 @@ function program() {
       ay: lvl && lvl.arenaY !== undefined ? __p.round(lvl.arenaY) : undefined
     });
   };
+  // [v1.7] a launcher you used: the others' games show its burst too (in a race
+  // nobody else saw it). Its own message type, which older games just ignore.
+  var mpSendLaunch = function mpSendLaunch(o) {
+    if (typeof MP === "undefined" || !MP.active || !MP.links.length || !o) {
+      return;
+    }
+    mpBroadcast({
+      t: "lch",
+      id: MP.myId,
+      x: __p.round(o.x * 10) / 10,
+      y: __p.round(o.y * 10) / 10,
+      ses: MP.session,
+      lv: currentLevel,
+      ay: lvl && lvl.arenaY !== undefined ? __p.round(lvl.arenaY) : undefined
+    });
+  };
   // play the ones that are due (see above)
   var mpPlayFx = function mpPlayFx(pl, st) {
     var q = pl.fxq;
@@ -52820,9 +52852,10 @@ function program() {
       }
       var fy = m.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - m.ay : 0;
       if (m.k === "d") {
-        skinFxDeath(m.sk | 0, m.x, m.y + fy, mpColorOf(pl.id), pl.color, m.vx, m.vy, false);
+        skinFxDeath(m.sk | 0, m.x, m.y + fy, mpColorOf(pl.id), pl.color, m.vx, m.vy, false).owner = pl.id;
       } else {
         var sa = skinFxSpawn(m.sk | 0, m.x, m.y + fy, mpColorOf(pl.id), pl.color, false);
+        sa.owner = pl.id;
         if (m.dir === 1 || m.dir === -1) {
           sa.dir = m.dir;
         }
@@ -53082,6 +53115,7 @@ function program() {
       rs: currentLevel === 15 ? bossRemixStage : 0, // [v1.5] which X-4 stage
       lf: MP.lifeN || 0, // [v1.5] this game's life count (see mpOnLocalDeath)
       bf: bossFight || bossIntro ? 1 : 0, // [v1.5] in a boss fight (spectators start it too)
+      bin: bossIntro ? 1 : undefined, // [v1.7] in the boss intro (rising): hidden in a race
       x: __p.round(p.x * 10) / 10,
       y: __p.round(p.y * 10) / 10,
       vx: __p.round(p.vx * 100) / 100,
@@ -54479,6 +54513,16 @@ function program() {
           pl.skin = m.sk;
         }
         return;
+      case "lch":
+        // [v1.7] another player used a launcher (see mpSendLaunch). In Linked mode
+        // the team launches together, so not when this game is launching too.
+        pl = MP.players[m.id];
+        if (pl && m.id !== MP.myId && scene === "game" && m.ses === MP.session && m.lv === currentLevel && pl.st && !pl.away && mpSameStage(pl.st) && !(MP.mode === "linked" && p && p.launching)) {
+          var lfy = m.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - m.ay : 0;
+          spawnParticles(m.x, m.y + lfy, 100, "launch", 30);
+          sfxAt("launcher", m.x, m.y + lfy, 0.6);
+        }
+        return;
       case "fx":
         // [v1.6] another player's death or spawn (see mpSendFx)
         pl = MP.players[m.id];
@@ -54619,13 +54663,17 @@ function program() {
         // crown, from the player who really finished first)
         var finPl = MP.players[m.id];
         var finSpec = m.id === MP.myId ? MP.spectating || MP.specRun : !!finPl && (finPl.spec || !!(finPl.st && finPl.st.spc));
-        if (MP.isHost && m.ses === MP.session && !MP.raceDecided && !finSpec) {
+        // [v1.7] one result per race: after the results closed, a late finish
+        // decided it again (a second RACE OVER, with new percents, and its unlock)
+        if (MP.isHost && m.ses === MP.session && !MP.raceDecided && !finSpec && MP.raceDoneSes !== m.ses) {
           MP.raceDecided = true;
+          MP.raceDoneSes = m.ses;
           mpEndRace(m.id);
         }
         return;
       case "race":
-        if (m.ses === MP.session) {
+        if (m.ses === MP.session && MP.raceShownSes !== m.ses) {
+          MP.raceShownSes = m.ses; // [v1.7] (only the first result of a race)
           MP.race = {
             rows: m.r,
             t: 0
@@ -55967,6 +56015,11 @@ function program() {
     // in the ground (and they saw the others in the air). Each side now only sees
     // the ones on the same side, like the final boss's stages. (A spectator sees
     // whoever they watch.)
+    // [v1.7] a race: everyone has their own boss, so nobody is shown during anyone's
+    // boss intro (the rising looked buggy over someone else's fight)
+    if (st && MP.mode === "race" && st.lv === currentLevel && currentLevel % 4 === 3 && !mpSpecOn() && (bossIntro || st.bin)) {
+      return false;
+    }
     if (st && st.lv === currentLevel && currentLevel % 4 === 3 && !mpSpecOn()) {
       var meUp = (bossFight || bossIntro) && lvl && lvl.arenaY < -1;
       var themUp = !!st.bf && st.ay !== undefined && st.ay < -1;
@@ -56009,7 +56062,7 @@ function program() {
           var dx = pl.ghostShown && pl.ghost ? pl.ghost.x : fx.x,
             dy = pl.ghostShown && pl.ghost ? pl.ghost.y : fx.y + fy;
           // [v1.6] their skin's own death (their skin and colour, not ours)
-          skinFxDeath(st.sk | 0, dx, dy, mpColorOf(pl.id), pl.color, pl.ghost ? pl.ghost.vx : 0, pl.ghost ? pl.ghost.vy : 0, false);
+          skinFxDeath(st.sk | 0, dx, dy, mpColorOf(pl.id), pl.color, pl.ghost ? pl.ghost.vx : 0, pl.ghost ? pl.ghost.vy : 0, false).owner = pl.id;
           }
         } else if (fx && !fx.d && pl.deadFx) {
           pl.deadFx = false;
@@ -56020,7 +56073,7 @@ function program() {
           } else if (!pl.spnFx) {
             // [v1.6] their skin's own way of appearing
             pl.spnFx = true;
-            skinFxSpawn(st.sk | 0, fx.x, fx.y + fy, mpColorOf(pl.id), pl.color, false);
+            skinFxSpawn(st.sk | 0, fx.x, fx.y + fy, mpColorOf(pl.id), pl.color, false).owner = pl.id;
             if (pl.ghost) {
               pl.ghost.dinoCover = 0;
               pl.ghost.stacheBuild = (st.sk | 0) === 23 ? 0 : 1;
@@ -57371,6 +57424,98 @@ function program() {
     out.push(cur);
     return out;
   };
+  // [v1.7] Hold Tab in a party: a list of everyone, where they are and their ping
+  var mpLevelLabel = function mpLevelLabel(lv) {
+    if (lv === 16) {
+      return "X-4 final chase";
+    }
+    var w = __p.floor(lv / 4) + 1;
+    return (w === 4 ? "X" : w) + "-" + (lv % 4 + 1);
+  };
+  var mpTabWhere = function mpTabWhere(pl) {
+    var mine = pl.id === MP.myId;
+    var st = mine ? scene === "game" ? mpCurrentState() : null : pl.st;
+    if (!mine && pl.away) {
+      return "paused (another tab)";
+    }
+    if (mine ? MP.spectating && scene === "game" : st && st.spc && st.ses === MP.session) {
+      return "spectating";
+    }
+    if (st && (mine || st.ses === MP.session) && (st.in || st.d || st.sw)) {
+      return mpLevelLabel(st.lv) + (st.pt ? ": " + st.pt : "");
+    }
+    return mine ? scene === "game" ? "in a level" : "on the map" : "on the map";
+  };
+  var mpDrawTabList = function mpDrawTabList() {
+    if (!MP.active || !MP.tabHeld || MP.chatOpen) {
+      return;
+    }
+    var ids = Object.keys(MP.players).map(Number).sort(function (a, b) {
+      return a - b;
+    });
+    var rh = ids.length > 8 ? 26 : 32,
+      w = 460,
+      h = 58 + ids.length * rh + 10,
+      x = 300 - w / 2,
+      y = 70;
+    __p.noStroke();
+    __p.fill(0, 0, 0, 185);
+    __p.rect(x, y, w, h, 14);
+    mpArcLine((MP.mode === "race" ? "RACE" : "LINKED") + "  -  " + ids.length + " PLAYER" + (ids.length === 1 ? "" : "S"), 300, y + 12, 8, 255, __p.CENTER);
+    __p.textFont(mpSans, 15);
+    for (var i = 0; i < ids.length; i++) {
+      var pl = MP.players[ids[i]],
+        ry = y + 52 + i * rh;
+      if (!pl) {
+        continue;
+      }
+      __p.noStroke();
+      if (i % 2 === 0) {
+        __p.fill(255, 255, 255, 18);
+        __p.rect(x + 8, ry - 2, w - 16, rh - 2, 8);
+      }
+      mpDashIcon(x + 26, ry + rh / 2 - 1, rh * 0.62, mpColorOf(pl.id));
+      var c = MP_COLORS[pl.color % MP_COLORS.length];
+      var nm = cleanText(mpShownName(pl));
+      while (__p.textWidth(nm) > 150 && nm.length > 1) {
+        nm = nm.slice(0, -1);
+      }
+      __p.textAlign(__p.LEFT, __p.CENTER);
+      __p.fill(c[0], c[1], c[2]);
+      __p.text(nm, x + 44, ry + rh / 2 - 2);
+      var nx = x + 48 + __p.textWidth(nm);
+      var mine = pl.id === MP.myId;
+      var dev = mine ? admOn() ? ADM.who : "" : mpAdmOf(pl);
+      if (dev) {
+        mpDevTag(nx, ry + rh / 2 - 12, dev);
+        nx += 38;
+      }
+      __p.fill(170);
+      __p.textSize(12);
+      __p.text((pl.id === 0 ? "host" : "") + (mine ? (pl.id === 0 ? ", " : "") + "you" : ""), nx + 2, ry + rh / 2 - 1);
+      __p.textSize(13);
+      __p.fill(225);
+      var where = mpTabWhere(pl);
+      while (__p.textWidth(where) > 170 && where.length > 1) {
+        where = where.slice(0, -1);
+      }
+      __p.text(where, x + 230, ry + rh / 2 - 1);
+      // ping: the host knows everyone's; a joiner knows theirs to the host
+      var ping;
+      if (MP.isHost && !mine) {
+        var lk = mpLinkById(pl.id);
+        ping = lk && lk.rtt !== undefined ? lk.rtt : undefined;
+      } else if (!MP.isHost && (pl.id === 0 || mine)) {
+        ping = MP.hostRtt;
+      }
+      __p.textAlign(__p.RIGHT, __p.CENTER);
+      if (ping !== undefined) {
+        __p.fill(ping < 80 ? __p.color(90, 220, 120) : ping < 180 ? __p.color(240, 200, 60) : __p.color(240, 90, 80));
+        __p.text(__p.round(ping) + " ms", x + w - 16, ry + rh / 2 - 1);
+      }
+    }
+    __p.textAlign(__p.LEFT, __p.BASELINE);
+  };
   var mpDrawOverlay = function mpDrawOverlay() {
     // chat (Minecraft style, bottom-left); long messages wrap onto more rows.
     // [v1.4] The size goes in the textFont call: textFont(mpSans) alone brings back
@@ -57535,6 +57680,7 @@ function program() {
         }
       }
     }
+    mpDrawTabList(); // [v1.7] held Tab: everyone in the party
     srvDrawInvite(); // [v1.5] a developer's invite
     // [v1.5] on the map while the host plays a level: watch it (spectate)
     if (scene === "Play" && !transitionActive && mpHostLevelOn() && !MP.chatOpen) {
@@ -57666,7 +57812,21 @@ function program() {
         keys[k] = false;
       }
     };
+    // [v1.7] Tab (held): the player list
+    window.addEventListener("keyup", function (e) {
+      if (e.key === "Tab") {
+        MP.tabHeld = false;
+      }
+    }, true);
+    window.addEventListener("blur", function () {
+      MP.tabHeld = false;
+    });
     window.addEventListener("keydown", function (e) {
+      if (e.key === "Tab" && MP.active && !typing() && !loading) {
+        MP.tabHeld = true;
+        e.preventDefault(); // (not the browser's move-to-next-thing)
+        return;
+      }
       if (!typing()) {
         if (MP.active && e.key === "/" && !loading && !mpChatOn()) {
           mpChatLine("", "Multiplayer Chat is off (Settings, General).", -1);
