@@ -46663,6 +46663,11 @@ function program() {
     // still (DT = 0, frame counter held) while the menu itself keeps animating.
     gameRealDT = DT;
     gamePaused = !loading && scene === "game" && qMenuActive && !MP.active && !transitionActive && !levelEnd && !cutsceneIs && !p.gameOver;
+    // [v1.7] a race someone else won: everyone else's game stands still while the
+    // results show, and the camera goes to the winner
+    if (typeof mpRacePaused === "function" && mpRacePaused()) {
+      gamePaused = true;
+    }
     if (gamePaused) {
       DT = 0;
       __p.frameCount = gamePauseFrame;
@@ -48325,6 +48330,7 @@ function program() {
             }
             mpSpectateCam(); // [v1.3] the camera follows the player being watched
             updateCamera();
+            mpRaceCam(); // [v1.7] (to the winner when a race is won)
             admCamera(); // [ADMIN] freecam
 
             // Render
@@ -53124,6 +53130,15 @@ function program() {
       mpBackToMap();
     }
   };
+  // [v1.7] how far from the start to the end you are (0-1), whichever way the level
+  // goes: X-2 runs to the left, and every player there showed 0%
+  var mpProgAlong = function mpProgAlong(from, to) {
+    var d = to - from;
+    if (__p.abs(d) < 1) {
+      return 0;
+    }
+    return __p.constrain((p.x - from) / d, 0, 1);
+  };
   var mpCurrentState = function mpCurrentState() {
     var inLevel = scene === "game" && !cutsceneIs && !transitionActive;
     var prog = 0,
@@ -53143,10 +53158,10 @@ function program() {
           progText = (currentLevel === 15 ? "Boss stage " + (stage + 1) + ", " : "Boss ") + "wave " + (b ? __p.min(b.wave, b.maxWaves) : 1) + " of " + (b ? b.maxWaves : 3);
         } else if (currentLevel % 4 === 3) {
           var arena = world === 4 ? bossArena[world - 1].levels[bossRemixStage].objects[0] : bossArena[world - 1].objects[0];
-          prog = __p.constrain((p.x - lvl.spawn.x) / __p.max(1, arena.x - lvl.spawn.x), 0, 1) + (currentLevel === 15 ? bossRemixStage * 10 : 0);
-          progText = __p.round(__p.constrain((p.x - lvl.spawn.x) / __p.max(1, arena.x - lvl.spawn.x), 0, 1) * 100) + "% of the way to the boss";
+          prog = mpProgAlong(lvl.spawn.x, arena.x) + (currentLevel === 15 ? bossRemixStage * 10 : 0);
+          progText = __p.round(mpProgAlong(lvl.spawn.x, arena.x) * 100) + "% of the way to the boss";
         } else if (lvl.portal && lvl.spawn) {
-          prog = __p.constrain((p.x - lvl.spawn.x) / __p.max(1, lvl.portal.x - lvl.spawn.x), 0, 1);
+          prog = mpProgAlong(lvl.spawn.x, lvl.portal.x);
           progText = __p.round(prog * 100) + "% of the way";
         }
       } catch (err) {}
@@ -54326,6 +54341,31 @@ function program() {
     return list;
   };
   var mpSpecKeyPrev = 0;
+  // [v1.7] after a race is won (see the pause in the frame setup)
+  var mpRaceLowCard = function mpRaceLowCard(h) {
+    return mpRacePaused() && h <= 430;
+  };
+  var mpRacePaused = function mpRacePaused() {
+    return MP.active && MP.mode === "race" && !!MP.race && MP.raceWinner !== undefined && MP.raceWinner !== null && MP.raceWinner !== MP.myId && scene === "game" && !transitionActive && !cutsceneIs;
+  };
+  var mpRaceCam = function mpRaceCam() {
+    if (!mpRacePaused()) {
+      return;
+    }
+    var wpl = MP.players[MP.raceWinner];
+    var ws = wpl && (mpSample(wpl) || wpl.st);
+    if (!ws || ws.lv !== currentLevel) {
+      return;
+    }
+    var wy = ws.y + (ws.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - ws.ay : 0);
+    cam.targetX = ws.x - 300;
+    var rh = 150 + (MP.race.rows ? MP.race.rows.length : 1) * 52;
+    cam.targetY = wy - (mpRaceLowCard(rh) ? __p.max(70, (600 - rh - 14) / 2) : 300);
+    // (the game's own camera stands still while paused: glide in real time)
+    var ck = 1 - Math.pow(0.9, gameRealDT);
+    cam.x = __p.lerp(cam.x, cam.targetX, ck);
+    cam.y = __p.lerp(cam.y, cam.targetY, ck);
+  };
   var mpSpectateCam = function mpSpectateCam() {
     if (!mpSpecOn()) {
       return;
@@ -55970,7 +56010,7 @@ function program() {
       }
     }
     if (MP.race) {
-      MP.race.t += DT;
+      MP.race.t += gameRealDT; // ([v1.7] real time: the game is paused meanwhile)
       if (MP.race.t > 60 * 7 || MP.race.t > 60 && MP.click) {
         MP.race = null;
         MP.raceDecided = false;
@@ -57881,11 +57921,14 @@ function program() {
     if (MP.race) {
       var r = MP.race.rows;
       var k = __p.constrain(MP.race.t / 20, 0, 1);
-      __p.noStroke();
-      __p.fill(0, 0, 0, 170 * k);
-      __p.rect(-widePad - 10, -10, wideW + 20, 620);
       var h = 150 + r.length * 52;
-      var y0 = 300 - h / 2 + (1 - k) * 60;
+      // [v1.7] someone else won: the card sits at the bottom, under the winner
+      // (the camera shows them above it), and the screen is dimmed less
+      var raceLow = mpRaceLowCard(h);
+      __p.noStroke();
+      __p.fill(0, 0, 0, (raceLow ? 110 : 170) * k);
+      __p.rect(-widePad - 10, -10, wideW + 20, 620);
+      var y0 = (raceLow ? 600 - h - 14 : 300 - h / 2) + (1 - k) * 60;
       __p.stroke(0);
       __p.strokeWeight(7);
       __p.fill(255);
