@@ -49222,8 +49222,21 @@ function program() {
                 }
               }
             }
+            // [v1.7] a wave that's finished (or whose attack ended) slides on and fades
+            // out: it used to vanish at once, still on screen in X-4's first stage
+            var waveLive = (currentBoss.waveState === "rising" || currentBoss.waveState === "moving") && !currentBoss.attackFresh && bossFight && currentBoss.state === "attack" && currentBoss.currentAttack === "poisonWave";
+            if (waveLive) {
+              currentBoss.waveFade = 1;
+            } else if (currentBoss.waveFade > 0 && currentBoss.waveX !== undefined) {
+              currentBoss.waveFade = bossFight ? __p.max(0, currentBoss.waveFade - DT / 35) : 0;
+              currentBoss.waveX += 5 * DT;
+              var wfk = currentBoss.waveFade;
+              withAlpha(wfk * wfk * (3 - 2 * wfk), function () {
+                bossPoisonWave(currentBoss.waveX + 65, currentBoss.waveY + 60, 190);
+              });
+            }
             // Boss Poison Wave + collision
-            if ((currentBoss.waveState === "rising" || currentBoss.waveState === "moving") && !currentBoss.attackFresh && bossFight && currentBoss.state === "attack" && currentBoss.currentAttack === "poisonWave") {
+            if (waveLive) {
               // Execute your custom wave layout drawing assignment
               bossPoisonWave(currentBoss.waveX + 65, currentBoss.waveY + 60, 190);
 
@@ -49829,9 +49842,45 @@ function program() {
               debugLine("Particles", particles.length, dbg);
               debugLine("Enemies", enemies.length, dbg);
               debugLine("Checkpoint Reached", checkpointReached, dbg);
+              // [v1.7] more
+              debugLine("Skin", currentSkin + (skins[currentSkin] ? " " + String(skins[currentSkin].name).replace(/\n/g, " ") : ""), dbg);
+              debugLine("Spawning", p.spawning ? p.spawnWaiting ? "waiting" : "yes" : "no", dbg);
+              debugLine("Deaths", deaths, dbg);
+              debugLine("Run time", framesToTime(speedClock.getSeconds()), dbg);
+              debugLine("DT", roundTo(DT, 2), dbg);
+              debugLine("Skin FX", skinAnims.length + " anims, " + fxParts.length + " bits", dbg);
+              var dbB = bosses[world - 1];
+              if (bossFight || bossIntro) {
+                debugLine("Boss", (bossIntro ? "intro" : "fight") + (dbB ? ", wave " + dbB.wave + ", " + dbB.state + (dbB.currentAttack ? " (" + dbB.currentAttack + ")" : "") : ""), dbg);
+              }
+              if (lvl && lvl.arenaY !== undefined) {
+                debugLine("Arena Y", __p.round(lvl.arenaY), dbg);
+              }
+              if (currentLevel >= 15) {
+                debugLine("X-4", "stage " + (bossRemixStage + 1) + ", phase " + finalBossPhase + (finalBossPhase === 3 ? ", vortex " + FinalPhase.livesRemaining : ""), dbg);
+              }
+              if (typeof MP !== "undefined" && MP.active) {
+                debugLine("MP", (MP.isHost ? "host" : "joiner") + ", " + MP.mode + ", " + mpCount() + " players, ses " + MP.session, dbg);
+                var dbRel = 0;
+                for (var dbl = 0; dbl < MP.links.length; dbl++) {
+                  if (MP.links[dbl].relayed) {
+                    dbRel++;
+                  }
+                }
+                debugLine("Links", MP.links.length + (dbRel ? " (" + dbRel + " relayed)" : "") + (!MP.isHost && MP.hostRtt !== undefined ? ", ping " + __p.round(MP.hostRtt) + " ms" : ""), dbg);
+                if (MP.spectating) {
+                  debugLine("Spectating", MP.players[MP.specId] ? mpShownName(MP.players[MP.specId]) : "-", dbg);
+                }
+              }
               debugFlush(dbg);
               __p.popMatrix();
-            } else if (!levelEnd && !p.gameOver && !bossIntro && finalBossPhase !== 4) {
+            }
+            // [v1.7] the health stays up with the debug info on (it took the health's place)
+            if (showDebugInfo && !levelEnd && !p.gameOver && !bossIntro && finalBossPhase !== 4 && !mpSpecOn()) {
+              hudRight();
+              drawHealthBox(440, 20, visualHealth, p.health);
+              __p.popMatrix();
+            } else if (!showDebugInfo && !levelEnd && !p.gameOver && !bossIntro && finalBossPhase !== 4 && !mpSpecOn()) {
               // [WIDE] HUD hugs the screen edges
               hudRight();
               drawHealthBox(440, 20, visualHealth, p.health);
@@ -49860,7 +49909,9 @@ function program() {
               // and short spawn animations are no faster)
               speedClock.update();
             }
-            if (finalBossPhase === 4) {
+            // [v1.7] no boss / Master HUD while the screen wipes to another X-4 part
+            var specHudOff = screenWipeActive || mpSpecOn() && !!specWipeTo;
+            if (finalBossPhase === 4 && !specHudOff) {
               if (widePad > 0) {
                 hudLeft();
                 FinalPhase.drawHUD(135, 100, 120);
@@ -49871,7 +49922,7 @@ function program() {
             }
 
             // Boss health meter (before the Q menu, so the menu covers it)
-            if (bossFight && !levelEnd) {
+            if (bossFight && !levelEnd && !specHudOff) {
               hudLeft();
               drawBossHealth(80, 570, 130, currentBoss);
               __p.popMatrix();
@@ -53249,6 +53300,44 @@ function program() {
   // from the others, which erased a teammate's new arrival; then a shared death count
   // that could differ between games. Either way one game waited for ever: stuck at
   // a launcher, or in the air at a boss whose intro never started.)
+  // [v1.7] Dash Brainrot's own death messages (just for fun). The area bosses are
+  // Tung Tung Tung Sahur; in X-4 the Parkour Master is the 67 Aura King.
+  var BRAINROT_DEATHS = {
+    "burned in lava": "fell in poop",
+    "fell into poison": "fell into smelly poop",
+    "was dissolved by poison": "got dissolved by smelly poop",
+    "was impaled by a spike": "sat on a skibidi toilet",
+    "was impaled by a falling spike": "got hit by a falling skibidi toilet",
+    "was pricked by a thorn": "got pricked by a giant skibidi toilet",
+    "fell into the void": "fell to Ohio",
+    "fell off the arena": "fell off the arena to Ohio",
+    "decayed away": "decayed to 0 aura",
+    "was jumped by a Boing": "got mogged by an alpha Boing",
+    "was zapped by Zapp": "got Fanum taxed by Zapp",
+    "was caught by ECH0": "got Fanum taxed by ECH0",
+    "lost the race to ECH0": "got mogged by ECH0 in a race",
+    "was obliterated by an orbital strike": "took a -67 aura orbital strike",
+    "was flattened by the boss": "got flattened by BOSS",
+    "was crushed by a boss dive": "got body slammed by BOSS",
+    "was shot with a laser": "got lasered by BOSS",
+    "was shot by the boss": "got sniped by BOSS",
+    "exploded from a bomb": "ate BOSS's bomb",
+    "was frozen by an icicle": "lost their sigma to an icicle",
+    "was slammed by the poison wave": "got slammed by a wave of smelly poop",
+    "was caught by a shadow clone": "got mogged by a 67 Aura King clone",
+    "was scorched by a fireball": "got cooked by the 67 Aura King's fireball",
+    "crashed into a wall": "hit a wall of pure aura",
+    "was zapped by a beam": "got zapped by the 67 Aura King's sigma beam",
+    "was swallowed by the vortex": "got sucked into Ohio by the vortex",
+    "was hit by debris": "got Fanum taxed by flying debris"
+  };
+  var brainrotDeath = function brainrotDeath(msg) {
+    var b = msg ? BRAINROT_DEATHS[msg] : "lost all their aura";
+    if (!b) {
+      return msg;
+    }
+    return b.replace("BOSS", currentLevel >= 15 ? "the 67 Aura King" : "Tung Tung Tung Sahur");
+  };
   var mpOnLocalDeath = function mpOnLocalDeath() {
     MP.lifeN = (MP.lifeN || 0) + 1;
     if (!MP.active || mpCount() < 2) {
@@ -53265,7 +53354,7 @@ function program() {
     }
     // "jamal burned in lava" in everyone's chat
     var who = MP.players[MP.myId] ? MP.players[MP.myId].name : "Player";
-    var line = who + " " + (p.lastHurtBy || "died");
+    var line = who + " " + (currentSkin === 17 ? brainrotDeath(p.lastHurtBy) : p.lastHurtBy || "died");
     p.lastHurtBy = undefined;
     mpChatLine("", line, -1);
     mpBroadcast({
@@ -53672,7 +53761,14 @@ function program() {
     // [v1.1] a short difference is normal (one game is a moment ahead): only a
     // difference that lasts half a second is corrected, and the position glides
     b.mpOff = differs ? (b.mpOff || 0) + 1 : 0;
-    if (b.mpOff >= 20) {
+    // ([v1.7] a spectator isn't playing: it follows the game it watches at once, so
+    // it never shows a different attack from the one that player is in)
+    if (b.mpOff >= (MP.spectating ? 1 : 20)) {
+      if (MP.spectating && H.st === "attack" && (b.state !== "attack" || (b.currentAttack || "") !== H.ca)) {
+        clearBossAttackState();
+        b.wavePlatforms = [];
+        b.waveFade = 0;
+      }
       b.mpOff = 0;
       if (H.st === "attack" && (b.state !== "attack" || (b.currentAttack || "") !== H.ca)) {
         b.attackStart = true; // [v1.5] a different attack: it sets itself up first
@@ -54259,6 +54355,16 @@ function program() {
     }
     MP.specId = list[idx].id;
     var pl2 = list[idx];
+    if (MP.specShown !== MP.specId) {
+      // [v1.7] someone else to watch: what was shown for the last one goes (their
+      // attack's bits, the world snapshots), and the boss follows the new one at once
+      MP.specShown = MP.specId;
+      MP.wbuf = null;
+      clearBossAttackState();
+      if (bosses[world - 1]) {
+        bosses[world - 1].mpOff = 0;
+      }
+    }
     // [v1.5] X-4: go to the part (or the vortex) they're in, with the platform wipe;
     // and if they're fighting the boss, start it here too so it can be seen
     if (currentLevel === 15 && pl2.st && pl2.st.lv === 15 && !cutsceneIs) {
@@ -54272,6 +54378,17 @@ function program() {
         triggerScreenWipe();
       } else if (!screenWipeActive && !wantFb3 && wantRs === 2 && pl2.st.bf && !bossFight && !bossIntro && bosses[world - 1] && bosses[world - 1].startFight) {
         bosses[world - 1].startFight();
+      } else if (!screenWipeActive && !wantFb3 && wantRs === 2 && !pl2.st.bf && !pl2.st.d && (bossFight || bossIntro) && bosses[world - 1] && !bosses[world - 1].dead) {
+        // [v1.7] they aren't in the fight (it reset, or they're on their way up):
+        // nor is this screen
+        bossFight = false;
+        bossIntro = false;
+        lvl.arenaY = 0;
+        bossIntroFrames = 0;
+        bossFloatY = 0;
+        zoomScale = 1;
+        bosses[world - 1].reset();
+        clearBossAttackState();
       }
     }
     // [v1.7] the player being watched went on from the vortex into the final chase:
@@ -57637,8 +57754,13 @@ function program() {
       if (R.pre) {
         var c = MP_COLORS[R.L.c % MP_COLORS.length];
         var nx = tx;
+        // [v1.7] the crown and DEV tag fade out with their line
+        var bctx = __p.externals.context,
+          bga = bctx.globalAlpha;
         if (R.L.ch) {
+          bctx.globalAlpha = bga * R.a / 255;
           drawIdleCrown(nx + 7, ly - 6, 14);
+          bctx.globalAlpha = bga;
           nx += 18;
         }
         __p.textFont(mpSans, 15);
@@ -57649,7 +57771,9 @@ function program() {
         __p.text(nameOnly, nx, ly - 3);
         nx += __p.textWidth(nameOnly) + 4;
         if (R.L.dv) {
+          bctx.globalAlpha = bga * R.a / 255;
           mpDevTag(nx, ly - 17, R.L.dv);
+          bctx.globalAlpha = bga;
           nx += 36;
         }
       }
