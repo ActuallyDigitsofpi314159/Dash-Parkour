@@ -244,7 +244,11 @@ the relay: it says on screen when it did. Three free options:
 
 ### Metered's free plan (`dash-party turn metered`): can never charge
 
-Sign up at metered.ca for the free plan **with no card** (email only). With no card
+Sign up at metered.ca for the free plan **with no card** (email only). The easiest
+way to connect it: open `https://party.YOURSITE/relay` in a browser, log into Metered
+in another tab, copy the line or example from **TURN Server > Developers** (it has
+`NAME.metered.live` and `apiKey=` in it), and paste it there with your admin key. The
+server checks it with Metered and turns the relay on. Or, on the Pi: With no card
 on the account it can't charge you: past its free amount each month it just stops
 until the next month, and games link directly only. The command asks for the app
 name (`NAME.metered.live`) and the API key of a TURN credential, checks them with

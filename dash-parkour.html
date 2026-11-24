@@ -26706,8 +26706,26 @@ function program() {
         improvedMask += Math.pow(2, m);
       }
     }
-    if (firstLevel > 0 || improvedMask > 0) {
+    // [v1.7] ".<the rest of each time>": the times above are whole seconds (older
+    // versions read only those), so the milliseconds were lost every time the game
+    // saved. This adds each time's leftover frames (-30..29, as two base-36 letters
+    // after adding 30), levels 1-1, 1-2, ... in order. Older versions ignore it.
+    var frac = "",
+      anyTime = false;
+    for (var fi = 0; fi <= __p.max(lastNonZero, 0); fi++) {
+      var fr = Math.round(times[fi] || 0);
+      if (fr > 0) {
+        anyTime = true;
+      }
+      var rest = fr > 0 ? fr - Math.round(fr / 60) * 60 : 0;
+      var code = (__p.constrain(rest, -30, 29) + 30).toString(36);
+      frac += code.length < 2 ? "0" + code : code;
+    }
+    if (firstLevel > 0 || improvedMask > 0 || anyTime) {
       packed += "." + firstLevel.toString(36) + "." + improvedMask.toString(36);
+      if (anyTime) {
+        packed += "." + frac;
+      }
     }
     return packed;
   };
@@ -26726,6 +26744,15 @@ function program() {
     }
     if (ext.length > 1) {
       times[0] = (__p.parseInt(ext[1], 36) || 0) * 60; // [v5] level 1-1
+    }
+    // [v1.7] the rest of each time (see packTimes): the exact time again
+    if (ext.length > 3 && /^[0-9a-z]*$/.test(ext[3])) {
+      for (var fi = 0; fi * 2 + 1 < ext[3].length; fi++) {
+        var rest = (__p.parseInt(ext[3].substr(fi * 2, 2), 36) || 0) - 30;
+        if (times[fi] > 0 && rest >= -30 && rest <= 29) {
+          times[fi] += rest;
+        }
+      }
     }
     return times;
   };
@@ -39375,12 +39402,12 @@ function program() {
         var kfl = this.kFlap > 0 ? Math.sin((1 - this.kFlap) * Math.PI * 2) * (this.kFlap + 0.25) : 0;
         // [v1.6] kGrow (his spawn): a small oval with his eyes, that swells into his
         // square body while the wings and face markings swirl out of it and grow
-        // ([v1.7] they turn in from a third of a turn back as they grow)
+        // ([v1.7] he swirls round once as they grow)
         var kGrow = this.kGrow === undefined ? 1 : this.kGrow;
         var kBody = kGrow >= 1 ? 1 : __p.lerp(0.62, 1, fxBack(kGrow));
         var kLayT = __p.constrain((kGrow - 0.1) / 0.9, 0, 1);
         var kLay = kGrow >= 1 ? 1 : __p.max(0.001, __p.lerp(fxEase(kLayT), fxBack(kLayT), 0.3));
-        var kSpin = kGrow >= 1 ? 0 : (1 - fxEase(kLayT)) * -110;
+        var kSpin = kGrow >= 1 ? 0 : fxEase(kLayT) * -360; // (one whole turn, upright before and after)
         // [v1.6] flying (admin): the wings keep up a gentle flap
         var kFlying = this === p ? typeof admFlying === "function" && admFlying() : !!this.admFly;
         if (kFlying && this.kFlap <= 0) {
@@ -39436,6 +39463,13 @@ function program() {
         __p.vertex(373, 251);
         __p.endShape();
         __p.popMatrix();
+        // [v1.7] during his spawn the body, eyes and face markings turn with the wings
+        if (kSpin) {
+          __p.pushMatrix();
+          __p.translate(0, -this.visualH / 2);
+          __p.rotate(kSpin);
+          __p.translate(0, this.visualH / 2);
+        }
         __p.fill(0, 200, 255);
         __p.noStroke();
         if (kGrow < 1) {
@@ -39449,9 +39483,6 @@ function program() {
         __p.pushMatrix();
         if (kGrow < 1) {
           __p.translate(0, -this.visualH / 2);
-          if (kSpin) {
-            __p.rotate(kSpin); // (turning with the wings: one swirl)
-          }
           __p.scale(kLay);
           __p.translate(0, this.visualH / 2);
         }
@@ -39513,6 +39544,9 @@ function program() {
         __p.ellipse(-this.w * 0.2 + faceX / 2, kEyeY + this.h * 0.03, this.w / 13, this.h / 13);
         __p.ellipse(this.w * 0.2 + faceX / 2, kEyeY + this.h * 0.03, this.w / 13, this.h / 13);
         if (kGrow < 1) {
+          __p.popMatrix();
+        }
+        if (kSpin) {
           __p.popMatrix();
         }
         break;
@@ -48972,7 +49006,19 @@ function program() {
               }
             }
             if (currentLevel === 16) {
-              p.vx = 7;
+              // [v1.7] a spectator's Dash doesn't run the chase: it used to catch the
+              // Master by itself in a few seconds, which won it for everyone (and in a
+              // race, gave the spectator the win and the crown)
+              var chaseWatch = mpSpecOn() || typeof MP !== "undefined" && MP.active && MP.spectating;
+              p.vx = chaseWatch ? 0 : 7;
+              if (chaseWatch) {
+                // (the Master stays just ahead of the player being watched)
+                var cwPl = MP.players[MP.specId],
+                  cwSt = cwPl && (mpSample(cwPl) || cwPl.st);
+                if (cwSt && cwSt.lv === 16) {
+                  masterXScroll = __p.lerp(masterXScroll, __p.max(0, cwSt.x - 140), dtLerp(0.12));
+                }
+              }
               var finalBossX = 300 + masterXScroll;
               var masterXHitbox = {
                 x: finalBossX,
@@ -48980,7 +49026,7 @@ function program() {
                 w: 100,
                 h: 100
               };
-              if (checkDiamondHit(p, masterXHitbox) && p.health > 0 && !cutsceneIs && mpGate("victory")) {
+              if (!chaseWatch && checkDiamondHit(p, masterXHitbox) && p.health > 0 && !cutsceneIs && mpGate("victory")) {
                 recordLevelTime(15); // [v5] X-4's time (it never reaches the normal level end)
                 sfx("victoryCatch"); // [v1.2] sound
                 cutsceneIs = true;
@@ -52185,7 +52231,7 @@ function program() {
       C.line.ref = row;
     }
     MP.chatLines.push(row);
-    if (MP.chatLines.length > 40) {
+    if (MP.chatLines.length > 120) { // [v1.7] (more to scroll back through)
       MP.chatLines.shift();
     }
   };
@@ -53105,6 +53151,9 @@ function program() {
       }
       return true;
     }
+    if (name === "victory" && (MP.spectating || MP.specRun)) {
+      return false; // [v1.7] (a spectator doesn't end the chase for the players)
+    }
     if (name === "victory") {
       // the final chase: whoever catches the Master wins it for the team
       mpBroadcast({
@@ -53845,6 +53894,9 @@ function program() {
   // The race winner gets the unlock straight away (the race screen may send
   // everyone back to the map before the normal level ending gets there).
   var mpAwardRaceWin = function mpAwardRaceWin() {
+    if (MP.specRun) {
+      return; // [v1.7] (watched: nothing unlocks)
+    }
     if (currentLevel >= 15) {
       if (lvlUnlock >= 16) {
         lvlUnlock = 17;
@@ -53909,8 +53961,8 @@ function program() {
     return MP.active ? mpColorOf(MP.myId) : __p.color(255, 0, 0);
   };
   var mpRaceFinish = function mpRaceFinish() {
-    if (MP.finished) {
-      return;
+    if (MP.finished || MP.spectating || MP.specRun) {
+      return; // [v1.7] (spectators aren't in the race: one used to win it)
     }
     MP.finished = true;
     var msg = {
@@ -53955,6 +54007,9 @@ function program() {
     mpHandle(msg, MP.myId);
   };
   var mpStartLevelFromHost = function mpStartLevelFromHost(m) {
+    if (m.lv >= 16 && !m.spec) {
+      m.lv = 15; // [v1.7] the final chase only comes after X-4's vortex: start X-4
+    }
     MP.session = m.ses;
     MP.hostLives = m.lives;
     currentLevel = m.lv;
@@ -54184,6 +54239,16 @@ function program() {
       } else if (!screenWipeActive && !wantFb3 && wantRs === 2 && pl2.st.bf && !bossFight && !bossIntro && bosses[world - 1] && bosses[world - 1].startFight) {
         bosses[world - 1].startFight();
       }
+    }
+    // [v1.7] the player being watched went on from the vortex into the final chase:
+    // follow them there (a spectator used to stay in the vortex, seeing nothing)
+    if (currentLevel === 15 && pl2.st && pl2.st.lv === 16 && !cutsceneIs && !screenWipeActive && finalBossPhase !== 4) {
+      bossFight = false;
+      bossIntro = false;
+      clearBossAttackState();
+      finalBossPhase = 4;
+      finalChallengeInit = false; // (the level loop moves on to the chase)
+      masterXScroll = 0;
     }
     // [v1.6] the other boss levels: their fight starts (and resets, when they die)
     // here too, so what you watch is the fight they are in
@@ -54499,7 +54564,7 @@ function program() {
       case "admlv":
         // [v1.5] a developer in the party chose a level: start it for everyone
         pl = MP.players[fromId];
-        if (MP.isHost && pl && mpAdmOf(pl) && !transitionActive && typeof m.lv === "number" && m.lv >= 0 && m.lv < levels.length && m.w >= 1 && m.w <= 4) {
+        if (MP.isHost && pl && mpAdmOf(pl) && !transitionActive && typeof m.lv === "number" && m.lv >= 0 && m.lv <= 15 && m.w >= 1 && m.w <= 4) {
           currentLevel = m.lv;
           world = m.w;
           worldSubScreen = m.w;
@@ -54550,7 +54615,11 @@ function program() {
         MP.mode = m.mode;
         return;
       case "fin":
-        if (MP.isHost && m.ses === MP.session && !MP.raceDecided) {
+        // [v1.7] a spectator's finish doesn't count (it took the win, and the
+        // crown, from the player who really finished first)
+        var finPl = MP.players[m.id];
+        var finSpec = m.id === MP.myId ? MP.spectating || MP.specRun : !!finPl && (finPl.spec || !!(finPl.st && finPl.st.spc));
+        if (MP.isHost && m.ses === MP.session && !MP.raceDecided && !finSpec) {
           MP.raceDecided = true;
           mpEndRace(m.id);
         }
@@ -54643,8 +54712,17 @@ function program() {
     return 1 + mpCount() % (MP_COLORS.length - 1);
   };
   // [v1.1] the host removes a player
+  // [v1.7] a developer in the party (their name needs the admin key, which the
+  // party server checked when they joined) can't be removed
+  var mpIsAdminPl = function mpIsAdminPl(pl) {
+    return !!pl && !!mpProtName(pl.name) && !!(SRV.slotAdm && SRV.slotAdm[pl.id]);
+  };
   var mpKick = function mpKick(id) {
     if (!MP.isHost || id === MP.myId || !MP.players[id]) {
+      return;
+    }
+    if (!MP.players[id].lockKick && mpIsAdminPl(MP.players[id])) {
+      mpChatLine("", mpShownName(MP.players[id]) + " is a developer and can't be removed from the party.", -1);
       return;
     }
     var name = mpShownName(MP.players[id]);
@@ -54847,6 +54925,10 @@ function program() {
         return;
       }
       if (MP.isHost) {
+        var cutPl = MP.players[link.id];
+        if (m.t === "cut" && cutPl && (cutPl.spec || cutPl.st && cutPl.st.spc)) {
+          return; // [v1.7] (a spectator's game doesn't end the chase for everyone)
+        }
         if (m.t !== "hi" && m.t !== "fin" && m.t !== "bye" && m.t !== "kick") {
           mpBroadcast(m, link.id);
         }
@@ -55599,6 +55681,7 @@ function program() {
       txtLoad(); // [v1.1] the bad-word filter (once)
     }
     srvTick(); // [v1.1 beta] server mode
+    mpLinkTick(); // [v1.7] opened with a party link
     mpLinkedUnlock(); // [v1.1]
     // a press is latched by the mousedown event too, so very slow frames can't miss it
     MP.click = MP.clickLatch || __p.mouseIsPressed && !MP.mousePrev;
@@ -56377,7 +56460,7 @@ function program() {
       var champ = mine ? achievementStates.parkourChampion : pl.st && pl.st.ch;
       var dev = mine ? admOn() ? ADM.who : "" : mpAdmOf(pl);
       // [v1.1] the name, its tags and the badges all fit in the column
-      var kickable = MP.isHost && !mine && !pl.kicked;
+      var kickable = MP.isHost && !mine && !pl.kicked && !mpIsAdminPl(pl); // [v1.7] (not a developer)
       var room = 218 - (champ ? 22 : 0) - (dev ? 36 : 0) - (kickable ? 56 : 0);
       var s = 9;
       while (s > 4.5 && mpArcW(label, s) > room) {
@@ -56717,6 +56800,162 @@ function program() {
     MP.click = false; // (nothing under the panel)
     mpPopEnd();
   };
+  // [v1.7] SHARE: a link that opens the game and joins this party
+  // (https://digitsandkineto.com/dash-parkour/?party=ID), to copy or send
+  var MP_SHARE_TEXT = "Join me on DASH Parkour:";
+  var mpPartyLink = function mpPartyLink() {
+    var id = mpInvParty();
+    return id ? "https://digitsandkineto.com/dash-parkour/?party=" + encodeURIComponent(id) : "";
+  };
+  var mpOpenHref = function mpOpenHref(href) {
+    try {
+      var a = document.createElement("a");
+      a.href = href;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e) {}
+  };
+  var mpDrawSharePanel = function mpDrawSharePanel() {
+    var click = MP.click;
+    var url = mpPartyLink();
+    if (!url) {
+      MP.sharePanel = null;
+      return;
+    }
+    var msg = MP_SHARE_TEXT + " " + url;
+    __p.noStroke();
+    __p.fill(0, 0, 0, 140);
+    __p.rect(-widePad - 10, 94, wideW + 20, 520);
+    mpPop("sharePanel", 300, 320);
+    var x = 90,
+      y = 140,
+      w = 420,
+      canSend = typeof navigator !== "undefined" && typeof navigator.share === "function";
+    var priv = !!(SRV.party ? SRV.party.priv : MP.joinPriv);
+    var h = 352 + (canSend ? 52 : 0) + (priv ? 30 : 0);
+    __p.stroke(0);
+    __p.strokeWeight(6);
+    __p.fill(255);
+    __p.rect(x, y, w, h, 24);
+    mpArcLine("SHARE THIS PARTY", 300, y + 16, 12, __p.color(0, 120, 255), __p.CENTER);
+    // what they get
+    __p.noStroke();
+    __p.fill(240);
+    __p.rect(x + 24, y + 58, w - 48, 84, 12);
+    __p.fill(20);
+    __p.textFont(mpSans, 16);
+    __p.textAlign(__p.LEFT, __p.TOP);
+    __p.text(MP_SHARE_TEXT, x + 38, y + 68);
+    __p.fill(0, 100, 220);
+    __p.textFont(mpSans, 14);
+    var urows = mpTextWrap(url.replace(/^https:\/\//, ""), w - 76, 0);
+    for (var ur = 0; ur < urows.length && ur < 2; ur++) {
+      __p.text(urows[ur], x + 38, y + 92 + ur * 18);
+    }
+    var by = y + 158;
+    if (priv) {
+      mpParagraph("It's a private party: they'll still need its passcode.", x + 24, by, w - 48, 12, __p.color(200, 110, 0));
+      by += 30;
+    }
+    MP.click = click;
+    if (mpButton(x + 24, by, w - 48, 44, mpCopyLabel("share", "COPY LINK"), __p.color(0, 120, 255))) {
+      mpCopy(msg, "share");
+    }
+    by += 52;
+    if (canSend) {
+      if (mpButton(x + 24, by, w - 48, 44, "SEND TO...", __p.color(0, 160, 90))) {
+        try {
+          navigator.share({ title: "DASH Parkour", text: MP_SHARE_TEXT, url: url }).catch(function () {});
+        } catch (e) {}
+      }
+      by += 52;
+    }
+    if (mpButton(x + 24, by, (w - 56) / 2, 44, "EMAIL", __p.color(110))) {
+      mpOpenHref("mailto:?subject=" + encodeURIComponent("Join me on DASH Parkour") + "&body=" + encodeURIComponent(msg));
+    }
+    if (mpButton(x + 32 + (w - 56) / 2, by, (w - 56) / 2, 44, "TEXT MESSAGE", __p.color(110))) {
+      mpOpenHref("sms:?&body=" + encodeURIComponent(msg));
+    }
+    by += 60;
+    var done = mpButton(x + w / 2 - 70, by, 140, 44, "DONE", __p.color(130));
+    // (a click outside the card closes it too)
+    var outside = click && (worldMouseX < x || worldMouseX > x + w || worldMouseY < y || worldMouseY > y + h);
+    if (done || outside) {
+      MP.sharePanel = null;
+    }
+    MP.click = false; // (nothing under the panel)
+    mpPopEnd();
+  };
+  // [v1.7] opened with a party link: go to Multiplayer (once you have a name there)
+  // and join that party
+  var mpLinkParty = "";
+  try {
+    var mpLinkM = /[?&]party=([\w-]{4,20})/.exec(window.location.search || "");
+    if (mpLinkM) {
+      mpLinkParty = mpLinkM[1];
+    }
+  } catch (e) {}
+  var mpLinkDone = function mpLinkDone(note) {
+    mpLinkParty = "";
+    MP.linkLooking = false;
+    try {
+      // (a reload doesn't join it again)
+      var u = window.location.href.replace(/([?&])party=[\w-]+&?/, "$1").replace(/[?&]$/, "");
+      window.history.replaceState(null, "", u);
+    } catch (e) {}
+    if (note) {
+      mpToast(note);
+    }
+  };
+  var mpLinkTick = function mpLinkTick() {
+    if (!mpLinkParty || loading || MP.linkLooking) {
+      return;
+    }
+    if (MP.active) {
+      mpLinkDone(""); // (already in a party)
+      return;
+    }
+    if (scene === "title" && !transitionActive && !cutsceneIs) {
+      transitionActive = true;
+      sceneToTransition = "Multiplayer";
+      return;
+    }
+    if (scene !== "Multiplayer" || transitionActive || MP.join || MP.modal) {
+      return;
+    }
+    MP.linkSince = MP.linkSince || Date.now();
+    if (!mpServerOn()) {
+      if (Date.now() - MP.linkSince > 15000) {
+        mpLinkDone("Can't reach the party server, so that party link can't be opened right now.");
+      }
+      return;
+    }
+    if (!String(MP.fields.name || "").replace(/\s+/g, "")) {
+      return; // (it asks for your name first)
+    }
+    MP.linkLooking = true;
+    var want = mpLinkParty;
+    srvFetch("GET", "/api/parties?id=" + encodeURIComponent(want) + "&dev=" + SRV.dev).then(function (j) {
+      var found = null,
+        list = j && j.parties || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === want) {
+          found = list[i];
+        }
+      }
+      if (!found) {
+        mpLinkDone("That party has closed (or the link is old).");
+        return;
+      }
+      mpLinkDone("");
+      MP.joinPriv = !!found.priv;
+      srvJoinParty(found);
+    }, function (e) {
+      mpLinkDone(e.message);
+    });
+  };
   var mpDrawScreen = function mpDrawScreen() {
     var modalClick = MP.click;
     if (MP.modal) {
@@ -56727,8 +56966,11 @@ function program() {
     if (!invOn) {
       MP.invPanel = null;
     }
-    if (MP.invPanel) {
-      MP.click = false; // the invite panel takes the clicks
+    if (MP.invPanel || MP.sharePanel) {
+      MP.click = false; // the invite (or share) panel takes the clicks
+    }
+    if (!invOn) {
+      MP.sharePanel = null;
     }
     mpDrawScreenFrame();
     // [v1.5] the screens slide in (from the right going forward, from the left going
@@ -56753,7 +56995,14 @@ function program() {
     mpDrawScreenBody();
     // [v1.5] INVITE PLAYERS, for everyone in a party (Digitsofpi and Kineto also get
     // INVITE EVERYONE inside it)
-    if (invOn && mpButton(178, 520, 214, 50, "INVITE PLAYERS", __p.color(255, 140, 0))) {
+    // [v1.7] SHARE (a link to this party) beside it
+    if (invOn && mpButton(288, 520, 104, 50, "SHARE", __p.color(0, 160, 90))) {
+      MP.sharePanel = { at: __p.millis() };
+      MP.focus = null;
+      MP.click = false;
+      panelClick = false;
+    }
+    if (invOn && mpButton(178, 520, 104, 50, "INVITE", __p.color(255, 140, 0))) {
       MP.invPanel = {
         list: [],
         at: 0,
@@ -56770,6 +57019,9 @@ function program() {
     if (MP.invPanel) {
       MP.click = panelClick;
       mpDrawInvPanel();
+    } else if (MP.sharePanel) {
+      MP.click = panelClick;
+      mpDrawSharePanel();
     }
     // [v1.5] closing animations: what was open last frame and isn't now
     if (MP.lastInv && !MP.invPanel) {
@@ -57129,10 +57381,22 @@ function program() {
     var boxW = 420,
       rowH = 21;
     var inputRows = [];
+    // [v1.7] the cursor can be anywhere in the line: a marker character goes where it
+    // is, so after wrapping its row and spot can be found (drawn as a thin bar)
+    var CHAT_MARK = "\u0001";
     if (MP.chatOpen) {
-      inputRows = mpTextWrap(MP.chatText + (__p.floor(__p.millis() / 500) % 2 === 0 ? "_" : " "), wideW - 40, 0);
+      var ct = String(MP.chatText || ""),
+        cc = MP.chatCur === undefined ? ct.length : __p.constrain(MP.chatCur, 0, ct.length);
+      inputRows = mpTextWrap(ct.slice(0, cc) + CHAT_MARK + ct.slice(cc) + " ", wideW - 40, 0);
       if (inputRows.length > 4) {
-        inputRows = inputRows.slice(inputRows.length - 4);
+        var markRow = 0;
+        for (var mr = 0; mr < inputRows.length; mr++) {
+          if (inputRows[mr].indexOf(CHAT_MARK) >= 0) {
+            markRow = mr;
+          }
+        }
+        var firstRow = __p.constrain(markRow - 3, 0, inputRows.length - 4);
+        inputRows = inputRows.slice(firstRow, firstRow + 4);
       }
     }
     var inputH = MP.chatOpen ? inputRows.length * rowH + 10 : 0;
@@ -57159,7 +57423,14 @@ function program() {
         });
       }
     }
-    for (var i = lines.length - 1; i >= 0 && rows.length < maxRows; i--) {
+    // [v1.7] scrolled back (mouse wheel or Page Up while the chat is open): the
+    // newest rows are skipped
+    var skipRows = MP.chatOpen ? MP.chatScroll || 0 : 0;
+    if (!MP.chatOpen) {
+      MP.chatScroll = 0;
+    }
+    var wantRows = maxRows + skipRows;
+    for (var i = lines.length - 1; i >= 0 && rows.length < wantRows; i--) {
       var L = lines[i];
       var a = MP.chatOpen ? 255 : L.t < 420 ? 255 : 255 - (L.t - 420) * 4;
       if (a <= 0) {
@@ -57170,7 +57441,7 @@ function program() {
       var badgeW = pre ? (L.ch ? 18 : 0) + (L.dv ? 36 : 0) : 0;
       var prew = pre ? __p.textWidth(pre) + badgeW : 0;
       var wr = mpTextWrap(L.x, boxW - 12, prew);
-      for (var q = wr.length - 1; q >= 0 && rows.length < maxRows; q--) {
+      for (var q = wr.length - 1; q >= 0 && rows.length < wantRows; q--) {
         rows.push({
           t: wr[q],
           pre: q === 0 ? pre : "",
@@ -57179,6 +57450,25 @@ function program() {
           a: a
         });
       }
+    }
+    if (skipRows) {
+      // (not past the oldest)
+      var canSkip = __p.max(0, rows.length - maxRows);
+      if (skipRows > canSkip) {
+        MP.chatScroll = skipRows = canSkip;
+      }
+      rows = rows.slice(skipRows, skipRows + maxRows - 1);
+      // (the bottom row says how to get back to the newest)
+      rows.unshift({
+        t: "\u25bc  " + skipRows + " newer row" + (skipRows === 1 ? "" : "s") + " below (scroll down or Page Down)",
+        pre: "",
+        prew: 0,
+        L: {
+          n: "",
+          c: 0
+        },
+        a: 255
+      });
     }
     var kbLift = mobileKeyboardLift(); // [v1.6] above the phone's keyboard while typing
     MP.kbLift = __p.lerp(MP.kbLift || 0, kbLift, dtLerp(0.3));
@@ -57234,7 +57524,15 @@ function program() {
       __p.textSize(15);
       __p.textAlign(__p.LEFT, __p.TOP);
       for (var ir = 0; ir < inputRows.length; ir++) {
-        __p.text(inputRows[ir], -widePad + 16, 600 - 10 - inputH - MP.kbLift + 5 + ir * rowH);
+        var irow = inputRows[ir],
+          iy = 600 - 10 - inputH - MP.kbLift + 5 + ir * rowH,
+          mk = irow.indexOf(CHAT_MARK);
+        __p.fill(255);
+        __p.text(irow.replace(CHAT_MARK, ""), -widePad + 16, iy);
+        if (mk >= 0 && __p.floor(__p.millis() / 500) % 2 === 0) {
+          var cx2 = -widePad + 16 + __p.textWidth(irow.slice(0, mk));
+          __p.rect(__p.round(cx2) - 1, iy + 2, 2, rowH - 4);
+        }
       }
     }
     srvDrawInvite(); // [v1.5] a developer's invite
@@ -57394,6 +57692,17 @@ function program() {
         e.preventDefault();
         return;
       }
+      // [v1.7] the chat: arrows move the cursor (Ctrl/Alt: a word, Cmd: to the end),
+      // Up / Down bring back what you sent before, Page Up / Page Down scroll the chat
+      if (MP.chatOpen && /^(ArrowLeft|ArrowRight|Home|End|Delete|ArrowUp|ArrowDown|PageUp|PageDown)$/.test(e.key)) {
+        var ak = { key: e.key, word: e.ctrlKey || e.altKey, line: e.metaKey };
+        editKey(ak);
+        if (/^(ArrowLeft|ArrowRight|Delete)$/.test(e.key)) {
+          holdKey(e.code, ak); // held down: it repeats
+        }
+        e.preventDefault();
+        return;
+      }
       if (e.key === "Backspace" && (e.ctrlKey || e.altKey || e.metaKey)) {
         // Ctrl+Backspace (Alt on a Mac) deletes a word, Cmd+Backspace the whole line
         var wk = { key: "Backspace", word: !e.metaKey, line: e.metaKey };
@@ -57409,12 +57718,28 @@ function program() {
       if (e.key === "Escape") {
         if (MP.chatOpen) {
           MP.chatOpen = false;
+          MP.chatHistI = -1;
+          MP.chatCur = undefined;
+          MP.chatScroll = 0;
         } else {
           MP.focus = null;
         }
       } else if (e.key === "Enter") {
         if (MP.chatOpen) {
           var msg = MP.chatText.replace(/^\s+|\s+$/g, "");
+          if (msg) {
+            // [v1.7] what you sent comes back with Up (commands too)
+            MP.chatHist = MP.chatHist || [];
+            if (MP.chatHist[MP.chatHist.length - 1] !== msg) {
+              MP.chatHist.push(msg);
+              if (MP.chatHist.length > 30) {
+                MP.chatHist.shift();
+              }
+            }
+          }
+          MP.chatHistI = -1;
+          MP.chatCur = undefined;
+          MP.chatScroll = 0;
           if (msg && mpCommand(msg)) {
             msg = ""; // [v1.1] a /command, not a chat message
           }
@@ -57453,6 +57778,9 @@ function program() {
       if (!target) {
         return false;
       }
+      if (target === "chat") {
+        return chatKey(k);
+      }
       var val = String((target === "chat" ? MP.chatText : MP.fields[target]) || "");
       var maxLen = target === "name" || target === "invq" ? 16 : target === "chat" ? 200 : target === "pass" ? 24 : 200;
       var code = target === "invite" || target === "reply";
@@ -57487,6 +57815,84 @@ function program() {
         }
       }
       return val !== before;
+    };
+    // [v1.7] The chat line has a cursor (MP.chatCur, undefined: at the end), and
+    // Up / Down go through what you sent (MP.chatHist; MP.chatHistI -1: what you
+    // were typing, kept in MP.chatDraft).
+    var chatWordLeft = function (t, i) {
+      while (i > 0 && /\s/.test(t.charAt(i - 1))) {
+        i--;
+      }
+      while (i > 0 && !/\s/.test(t.charAt(i - 1))) {
+        i--;
+      }
+      return i;
+    };
+    var chatWordRight = function (t, i) {
+      while (i < t.length && /\s/.test(t.charAt(i))) {
+        i++;
+      }
+      while (i < t.length && !/\s/.test(t.charAt(i))) {
+        i++;
+      }
+      return i;
+    };
+    var chatKey = function chatKey(k) {
+      var t = String(MP.chatText || ""),
+        before = t;
+      var c = MP.chatCur === undefined ? t.length : __p.constrain(MP.chatCur, 0, t.length);
+      var hist = MP.chatHist || [];
+      if (MP.chatHistI === undefined) {
+        MP.chatHistI = -1;
+      }
+      switch (k.key) {
+        case "ArrowLeft":
+          c = k.line ? 0 : k.word ? chatWordLeft(t, c) : __p.max(0, c - 1);
+          break;
+        case "ArrowRight":
+          c = k.line ? t.length : k.word ? chatWordRight(t, c) : __p.min(t.length, c + 1);
+          break;
+        case "Home":
+          c = 0;
+          break;
+        case "End":
+          c = t.length;
+          break;
+        case "Delete":
+          t = t.slice(0, c) + t.slice(k.word ? chatWordRight(t, c) : c + 1);
+          break;
+        case "Backspace":
+          var from = k.line ? 0 : k.word ? chatWordLeft(t, c) : __p.max(0, c - 1);
+          t = t.slice(0, from) + t.slice(c);
+          c = from;
+          break;
+        case "ArrowUp":
+        case "ArrowDown":
+          var up = k.key === "ArrowUp";
+          var ni = MP.chatHistI + (up ? 1 : -1);
+          if (ni >= hist.length || ni < -1) {
+            break;
+          }
+          if (MP.chatHistI === -1) {
+            MP.chatDraft = t;
+          }
+          MP.chatHistI = ni;
+          t = ni === -1 ? MP.chatDraft || "" : hist[hist.length - 1 - ni];
+          c = t.length;
+          break;
+        case "PageUp":
+        case "PageDown":
+          MP.chatScroll = __p.max(0, (MP.chatScroll || 0) + (k.key === "PageUp" ? 6 : -6));
+          break;
+        default:
+          if (k.key.length === 1 && t.length < 200) {
+            t = t.slice(0, c) + k.key + t.slice(c);
+            c++;
+          }
+      }
+      MP.chatText = t;
+      MP.chatCur = c >= t.length ? undefined : c;
+      return t !== before;
     };
     // [v1.4] A held key repeats: after 0.42 s, then 25 times a second, until it is
     // let go, the typing stops or another key is pressed.
@@ -57573,7 +57979,11 @@ function program() {
       var t = (e.clipboardData || window.clipboardData).getData("text") || "";
       t = t.replace(/[\r\n]+/g, " ");
       if (MP.chatOpen) {
-        MP.chatText = (MP.chatText + t).slice(0, 200);
+        var pt0 = String(MP.chatText || ""),
+          pc = MP.chatCur === undefined ? pt0.length : __p.constrain(MP.chatCur, 0, pt0.length);
+        t = t.slice(0, __p.max(0, 200 - pt0.length));
+        MP.chatText = pt0.slice(0, pc) + t + pt0.slice(pc);
+        MP.chatCur = pc + t.length >= MP.chatText.length ? undefined : pc + t.length;
       } else if (MP.focus) {
         MP.fields[MP.focus] = (MP.fields[MP.focus] + mpArcSafe(t)).slice(0, MP.focus === "name" ? 16 : 200);
         if (MP.focus === "invite" || MP.focus === "reply") {
@@ -59593,7 +60003,7 @@ function program() {
       });
     }, function () {
       done();
-      throw new Error("Can't reach the party server. Check the address at the top of the file, or that the server is running.");
+      throw new Error("Can't reach the party server right now. Check your internet connection: it keeps trying."); // [v1.7] (for players, not the developer)
     });
   };
   // [v1.6] bot protection: before making or joining a party the server hands out a
@@ -59715,6 +60125,7 @@ function program() {
     });
   };
   var srvJoinParty = function srvJoinParty(party) {
+    MP.joinPriv = !!(party && party.priv); // [v1.7] (SHARE says a private party needs its passcode)
     // [v1.3] Digitsofpi and Kineto can join any party (private, full, banned...) at any
     // time. The server checks their admin key, so nobody else can do it.
     if (admOn()) {
@@ -60381,10 +60792,17 @@ function program() {
     // the words
     var from = cleanText(iv.from || (iv.dev ? "A developer" : "A player")),
       party = cleanText(iv.name || "their party");
+    // [v1.7] the heading in the game's own ArcDash letters
+    var ivAlign = arcDashAlign,
+      ivSize = arcDashSize;
+    arcAlign(__p.LEFT);
+    arcSize(11);
+    __p.stroke(iv.dev ? __p.color(220, 110, 0) : __p.color(0, 110, 230));
+    arcText(iv.dev ? "INVITE FROM A DEVELOPER" : "PARTY INVITE", x + 96, y + 20);
+    arcAlign(ivAlign);
+    arcSize(ivSize);
+    __p.noStroke();
     __p.textAlign(__p.LEFT, __p.TOP);
-    __p.textFont(mpSans, 12);
-    __p.fill(iv.dev ? __p.color(220, 110, 0) : __p.color(0, 110, 230));
-    __p.text(iv.dev ? "INVITE FROM A DEVELOPER" : "PARTY INVITE", x + 96, y + 14);
     __p.textFont(mpSans, 16);
     __p.fill(20);
     var tw = w - 96 - 132;
@@ -60566,7 +60984,11 @@ function program() {
     SRV.page = __p.constrain(SRV.page, 0, pages - 1);
     mpArcLine(rows.length ? rows.length + (rows.length === 1 ? " PARTY" : " PARTIES") : "PARTIES", 40, y, 7, 70); // (ArcDash has no brackets)
     y += 22;
-    if (SRV.listErr) {
+    if (SRV.listErr && rows.length) {
+      // [v1.7] the last list is still shown: the note goes on the line above it, to
+      // the right (it was drawn over the first party)
+      mpArcLine("Can't reach the server - trying again", 560, y - 22, 6, __p.color(200, 40, 0), __p.RIGHT);
+    } else if (SRV.listErr) {
       mpParagraph(SRV.listErr, 40, y + 6, 520, 14, __p.color(200, 40, 0));
     } else if (!rows.length) {
       __p.noStroke();
@@ -61181,6 +61603,11 @@ function program() {
     e.preventDefault();
   };
   __p.mouseScrolled = function mouseScrolled() {
+    if (typeof MP !== "undefined" && MP.chatOpen) {
+      // [v1.7] the chat scrolls back through older messages
+      MP.chatScroll = __p.max(0, (MP.chatScroll || 0) + (__p.mouseScroll > 0 ? 2 : __p.mouseScroll < 0 ? -2 : 0));
+      return;
+    }
     targetY = __p.constrain(targetY + __p.mouseScroll * 20, goalsMinY, 300);
     targetScroll = __p.constrain(targetScroll - __p.mouseScroll * 50, 0, 1000);
   };

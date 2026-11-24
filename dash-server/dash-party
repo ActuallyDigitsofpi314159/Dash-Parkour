@@ -288,6 +288,9 @@ turn() {
     metered)
       # [v1.6] Metered's free plan: no card, so it can never charge
       echo "${B}Metered's free relay${N}: sign up WITHOUT a card, and it can never charge you."
+      echo
+      echo "${G}Easiest:${N} open ${B}https://${PARTY_HOST:-party.YOURSITE}/relay${N} in a browser, log into"
+      echo "Metered in another tab, and paste from there (with your admin key). Or paste here:"
       echo "Past its free amount each month it just stops until the next month (games"
       echo "then link directly only, like with no relay)."
       echo
@@ -297,8 +300,13 @@ turn() {
       echo "  3. In the dashboard, open ${B}TURN Server${N} > ${B}Credentials${N} (or Developers),"
       echo "     add a credential if there isn't one, and copy its ${B}API Key${N}."
       echo
-      printf 'App name (the NAME in NAME.metered.live): '; read -r app
-      printf 'API Key (hidden): '; read -rs key; echo
+      # [v1.7] one paste: the line or example from Metered's Developers page (it has
+      # NAME.metered.live and apiKey=KEY in it); typing them in was too fiddly
+      printf 'Paste the line from Metered (with .metered.live and apiKey=): '; read -r line
+      app="$(printf '%s' "$line" | grep -oiE '[a-z0-9-]+\.metered\.live' | head -1 | sed 's/\.metered\.live//I')"
+      key="$(printf '%s' "$line" | grep -oE 'apiKey=[A-Za-z0-9_-]+' | head -1 | cut -d= -f2)"
+      if [ -z "$app" ]; then printf 'App name (the NAME in NAME.metered.live): '; read -r app; fi
+      if [ -z "$key" ]; then printf 'API Key: '; read -r key; fi
       app="$(printf '%s' "$app" | tr -d '[:space:]' | sed -e 's#^https\{0,1\}://##' -e 's#\.metered\.live.*$##' | tr 'A-Z' 'a-z')"
       key="$(printf '%s' "$key" | tr -d '[:space:]')"
       if [ -z "$app" ] || [ -z "$key" ]; then echo "${R}Both are needed.${N} Nothing changed."; exit 1; fi

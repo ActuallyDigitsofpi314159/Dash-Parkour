@@ -844,6 +844,30 @@ const fmtUp = (sec) => {
   const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
   return (d ? d + "d " : "") + (d || h ? h + "h " : "") + m + "m";
 };
+// [v1.7] Setting up the Metered relay from a browser (typing the key on the Pi was
+// too fiddly): log into Metered in another tab, copy the line with your app name and
+// API key, and paste it here with an admin key. The server checks it with Metered
+// and saves it (the same file as "dash-party turn metered").
+function relayPage(res) {
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>DASH Parkour relay setup</title>
+<style>:root{color-scheme:dark}body{font:17px/1.5 system-ui,-apple-system,sans-serif;background:#0d0f16;color:#f5f4f0;max-width:620px;margin:0 auto;padding:32px 16px}h1{font-size:26px;margin:0 0 6px}ol{padding-left:22px}li{margin:6px 0}code{background:#1b1f2c;padding:1px 6px;border-radius:6px;font-size:15px}label{display:block;font-weight:600;margin:18px 0 6px}input,textarea{width:100%;box-sizing:border-box;font:16px ui-monospace,monospace;background:#151927;color:#f5f4f0;border:2px solid #2c3247;border-radius:10px;padding:10px}textarea{height:110px}button{margin-top:18px;width:100%;font:700 19px system-ui;background:#e11;color:#fff;border:3px solid #000;border-radius:14px;padding:12px;cursor:pointer}button:disabled{opacity:.6}#out{margin-top:18px;padding:12px 14px;border-radius:10px;display:none}.good{background:#14361f;border:1px solid #1f8a4c}.bad{background:#3a1416;border:1px solid #b3261e}small{color:#9aa0b4}</style></head>
+<body><h1>Relay setup</h1><p>For players whose networks block direct links. Uses Metered's free plan: <b>never add a card</b> there, and it can never charge you.</p>
+<ol><li>Log into <a href="https://dashboard.metered.ca" target="_blank" rel="noopener" style="color:#7ab8ff">your Metered dashboard</a> in another tab.</li>
+<li>Open <b>TURN Server</b>, then <b>Developers</b> (or <b>Credentials</b>; add a credential if there isn't one).</li>
+<li>Copy the line or code example that has <code>.metered.live</code> and <code>apiKey=</code> in it (copying the whole example is fine), and paste it below.</li></ol>
+<form id="f"><label for="t">Paste from Metered</label><textarea id="t" autocomplete="off" spellcheck="false" placeholder="https://YOURAPP.metered.live/api/v1/turn/credentials?apiKey=..."></textarea>
+<label for="k">Your admin key <small>(from dash-party keys / setkey)</small></label><input id="k" type="password" autocomplete="off">
+<button id="b" type="submit">Turn the relay on</button></form><div id="out"></div>
+<script>
+var f=document.getElementById("f"),o=document.getElementById("out"),b=document.getElementById("b");
+f.onsubmit=function(e){e.preventDefault();b.disabled=true;o.style.display="none";
+fetch("/api/turnset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:document.getElementById("t").value,key:document.getElementById("k").value.replace(/\\s+/g,"")})})
+.then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(x){o.className=x.ok?"good":"bad";o.textContent=x.ok?x.j.text:(x.j.error||"That didn't work.");o.style.display="block";b.disabled=false})
+.catch(function(){o.className="bad";o.textContent="Couldn't reach the party server. Try again.";o.style.display="block";b.disabled=false})};
+</script></body></html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer" });
+  res.end(body);
+}
 function statusPage(req, res) {
   const players = [...parties.values()].reduce((a, p) => a + p.n, 0);
   const playing = [...parties.values()].filter((p) => p.playing).length;
@@ -879,6 +903,7 @@ async function handle(req, res) {
     // [v1.1] the party address: just the status page (the game is on the website)
     if (host === PARTY_HOST || host.startsWith("party.") || !SITE_DIR) {
       if (p0 === "/") return statusPage(req, res);
+      if (p0 === "/relay") return relayPage(res); // [v1.7]
       res.writeHead(302, { Location: "https://" + SITE_DOMAIN + GAME_PATH, "Cache-Control": "no-store" });
       return res.end();
     }
@@ -931,8 +956,10 @@ async function handle(req, res) {
   // list (and search) parties
   if (req.method === "GET" && p0 === "/api/parties") {
     const q = clean(url.searchParams.get("q"), 24).toLowerCase();
+    // [v1.7] ?id=: just that party (a party link from SHARE in the game)
+    const want = String(url.searchParams.get("id") || "").slice(0, 20);
     const list = [...parties.values()]
-      .filter((p) => !p.modClosed && (!q || p.name.toLowerCase().includes(q)))
+      .filter((p) => !p.modClosed && (want ? p.id === want : !q || p.name.toLowerCase().includes(q)))
       .sort((a, b) => (a.n >= a.max) - (b.n >= b.max) || b.n - a.n || b.made - a.made)
       .slice(0, 60)
       .map(publicParty);
@@ -1119,6 +1146,37 @@ async function handle(req, res) {
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
     return send(res, 200, { ok: true });
+  }
+
+  // [v1.7] the relay setup page (/relay): an admin key and the line pasted from Metered
+  if (p0 === "/api/turnset") {
+    const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+    if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+    const who = adminFor(String(body.key || "").replace(/\s+/g, ""));
+    if (!who) {
+      t.n++;
+      adminTries.set(ip, t);
+      log("ADMIN: wrong key (relay setup) from", ipKey(ip).slice(0, 8));
+      return fail(res, 403, "That admin key isn't right.", { badKey: true });
+    }
+    const text = String(body.text || "").slice(0, 6000);
+    const am = /(?:https?:\/\/)?([a-z0-9-]{1,63})\.metered\.live/i.exec(text);
+    const km = /apiKey=([\w-]{8,200})/.exec(text);
+    if (!am || !km) {
+      return fail(res, 400, "Couldn't find " + (!am ? "your app name (the part before .metered.live)" : "the API key (apiKey=...)") + " in that. Copy the whole line or example from Metered's Developers page.");
+    }
+    const c = { kind: "metered", app: am[1].toLowerCase(), key: km[1] };
+    const prevBad = meteredBad, prevCache = meteredCache;
+    meteredCache = null;
+    return meteredIce(c).then(() => {
+      writeJson(TURN_FILE, c);
+      log("RELAY: Metered set up from the relay page by", who.name, "(app " + c.app + ")");
+      send(res, 200, { ok: true, text: "Done! The relay is on: Metered, app " + c.app + ". Test it by joining a party from the game with ?relaytest at the end of its address." });
+    }, (e) => {
+      meteredBad = prevBad;
+      meteredCache = prevCache;
+      fail(res, 400, "Metered didn't accept that (" + e.message + "). Check you copied it from the right app, and try again.");
+    });
   }
 
   // moderators: /kick and /ban (and unban) from the game
@@ -1366,6 +1424,12 @@ function adminAction(res, who, body) {
   const p = parties.get(String(body.party || ""));
   if (!p) return fail(res, 404, "That party isn't on the server (or has closed).");
   let ipList = [], devList = [], found = null;
+  // [v1.7] the developers can't be kicked or banned (from their own party, or one
+  // they joined with their admin key)
+  if (norm(p.host) === target && p.hostAdmin) return fail(res, 403, p.host + " is a developer and can't be removed.");
+  const admEntry = p.roster.find((x) => norm(x.name) === target);
+  const admReq = admEntry && requests.get(admEntry.rid);
+  if (admReq && admReq.admin) return fail(res, 403, admEntry.name + " is a developer and can't be removed.");
   if (norm(p.host) === target) {
     found = { host: true, name: p.host };
     ipList = [p.hostIp];
