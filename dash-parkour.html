@@ -20677,7 +20677,8 @@ SOFTWARE.
             e.preventDefault();
             return;
           }
-          if (!T.inLevel() && !touchTap && ptrId === null) {
+          // ([v1.6] except on a slider: that finger holds and drags it, like a mouse)
+          if (!T.inLevel() && !touchTap && ptrId === null && !(T.grabs && T.grabs(e.clientX, e.clientY))) {
             ptrPos(e);
             touchTap = { id: e.pointerId, x0: e.clientX, y0: e.clientY, y: e.clientY, drag: false };
             try {
@@ -21915,7 +21916,9 @@ function program() {
       baseY = Math.floor(pixelY + 0.0000001);
     var fracX = Math.round((pixelX - baseX) * 4) / 4,
       fracY = Math.round((pixelY - baseY) * 4) / 4;
-    var key = layout.key + JSON.stringify([style.currentStrokeColor, style.ellipseMode, style.strokeCap, style.lineJoin, style.crispLines, style.renderSmooth, sx, sy, fracX, fracY].concat(style.renderSmooth ? [] : [x, y]));
+    // ([v1.6] drawn at exact positions now, so like smooth text the same bitmap
+    // works wherever it goes)
+    var key = layout.key + JSON.stringify([style.currentStrokeColor, style.ellipseMode, style.strokeCap, style.lineJoin, style.crispLines, true, sx, sy, fracX, fracY]);
     var tile = arcRasterCache[key];
     if (!tile) {
       var left = 0,
@@ -21966,6 +21969,7 @@ function program() {
       } else {
         g.noSmooth();
       }
+      g.__exactGeom = true; // [v1.6] (as above)
       g.noFill();
       // Packed transparent colors overlap Processing's grayscale overload.
       // Explicit RGBA preserves fading text, including alpha exactly zero.
@@ -22010,8 +22014,16 @@ function program() {
     __p.strokeWeight(s / 4);
     var layout = arcGetLayout(txt, s, arcDashAlign || __p.LEFT, maxWidth);
     layout.uses++;
-    if (!arcDrawCached(layout, x, y, s)) {
-      arcDrawLayout(layout, x, y, s);
+    // [v1.6] exact positions: Processing rounded each stroke of a letter to whole
+    // units on its own, so small letters came out bent and moving text shimmered
+    var keepExact = __p.__exactGeom;
+    __p.__exactGeom = true;
+    try {
+      if (!arcDrawCached(layout, x, y, s)) {
+        arcDrawLayout(layout, x, y, s);
+      }
+    } finally {
+      __p.__exactGeom = keepExact;
     }
   };
 
@@ -26339,6 +26351,7 @@ function program() {
   };
 
   // [v1.1] a slider setting (drag the knob; the value shows on it)
+  var sliderSpots = [];
   var Slider = function Slider(h, key, initialVal, opt) {
     this.h = h;
     this.w = h * 3.2;
@@ -26359,6 +26372,11 @@ function program() {
     var hov = worldMouseX > x - 6 && worldMouseX < x + this.w + 6 && worldMouseY > y - 6 && worldMouseY < y + this.h + 6;
     if (hov) {
       __p.cursor(__p.HAND);
+    }
+    // [v1.6] where it is, so a finger in Mobile mode can grab it (see __dashTouch.grabs)
+    sliderSpots.push({ x0: x - 10, x1: x + this.w + 10, y0: y - 8, y1: y + this.h + 8, f: __p.frameCount });
+    if (sliderSpots.length > 12) {
+      sliderSpots.shift();
     }
     if (__p.mouseIsPressed && (hov || this.drag)) {
       this.drag = true;
@@ -26762,6 +26780,10 @@ function program() {
   // [v5] Saves the time of a finished level, and counts beating your own best toward
   // Parkour Master (this counts from the start, before the badge is even shown).
   var recordLevelTime = function recordLevelTime(index) {
+    // [v1.6] (not a level you only watched: it isn't your time)
+    if (typeof MP !== "undefined" && MP.active && MP.specRun) {
+      return;
+    }
     var currentRun = speedClock.getSeconds();
     if (levelTimeSaved || !(currentRun > 0)) {
       return;
@@ -37813,6 +37835,7 @@ function program() {
         this.spawnWait = 0;
         mpLocalTint();
         this.spawnFx = skinFxSpawn(currentSkin, this.x, this.y, dashTint, typeof MP !== "undefined" && MP.active ? mpMyColor() : 0, true);
+        mpSendFx("s", this.spawnFx); // [v1.6] (other players see it exactly)
         dashTint = null;
         this.dinoCover = 0; // ([v1.6] his spawn opens the jaws itself)
         this.stacheBuild = currentSkin === 23 ? 0 : 1;
@@ -37964,7 +37987,7 @@ function program() {
         }
         activeSprite = imgs.pixelSkinLeft;
         marioDir = "left";
-        ballSkinRotation -= 2 * DT;
+        this.ballRot = (this.ballRot || 0) - 2 * DT; // ([v1.6] each Dash's own)
         if (this.grounded && __p.abs(this.vx) > 2 && dtEvery(5)) {
           // dust
           spawnParticles(this.x, this.y + this.h / 2, 1, "dust", 0.5);
@@ -37975,7 +37998,7 @@ function program() {
         if (DT === 1) {
           this.vx += this.grounded ? this.accel : this.accel * 0.5;
         }
-        ballSkinRotation += 2 * DT;
+        this.ballRot = (this.ballRot || 0) + 2 * DT;
         activeSprite = imgs.pixelSkinRight;
         marioDir = "right";
         if (this.grounded && __p.abs(this.vx) > 2 && dtEvery(5)) {
@@ -38103,7 +38126,8 @@ function program() {
     if (this === p) {
       skinTrail(currentSkin, this, this.prevGrounded); // [v1.6]
     }
-    ballSkinRotation += this.vx * 2.5 * DT;
+    this.ballRot = (this.ballRot || 0) + this.vx * 2.5 * DT;
+    this.ballRotF = __p.frameCount; // (updated here: see the Sphere's drawing)
   };
   // [v1.6] Multi-Platform Dash: the Emerald Guard's stack of platforms, squarer
   var drawMultiPlat = function drawMultiPlat(w, h, u) {
@@ -38783,7 +38807,18 @@ function program() {
 
         // Rotate the face texture independently INSIDE the squashed space
         __p.pushMatrix();
-        __p.rotate(ballSkinRotation);
+        // [v1.6] each Dash rolls by his own movement (every Sphere turned with
+        // yours): one that isn't updated here (another player) rolls by how far
+        // he moved since he was last drawn
+        if (__p.frameCount - (this.ballRotF || -9) > 2 && this !== fxDummy) {
+          var bdx = this.ballLX === undefined ? 0 : this.x - this.ballLX;
+          if (this.ballDF !== __p.frameCount && __p.abs(bdx) < 80) {
+            this.ballRot = (this.ballRot || 0) + bdx * 2.6;
+          }
+          this.ballDF = __p.frameCount;
+        }
+        this.ballLX = this.x;
+        __p.rotate(this.ballRot || 0);
 
         // Draw features using standard base dimensions (scale handles the deformation)
         __p.fill(255);
@@ -41376,7 +41411,7 @@ function program() {
     this.spawnFx = null;
     this.brR = 0; // [v1.6] Dash Brainrot lands square (a spin left from before he died tilted him into the floor)
     this.brAir = false;
-    ballSkinRotation = 0;
+    this.ballRot = 0;
     if (currentLevel === 14) {
       lastLoadedLevel = -1;
       ECH0 = null;
@@ -45481,7 +45516,7 @@ function program() {
       // [v1.5] once Dash is dying (the vortex swallowed them, or anything else got
       // them) the circles can't be collected any more: grabbing the last one during
       // the fade used to start the next cutscene with Dash already dead
-      var canTouch = p.health > 0 && !p.dead && !p.deathTriggered && this.vortexStability > 0;
+      var canTouch = p.health > 0 && !p.dead && !p.deathTriggered && this.vortexStability > 0 && !mpSpecOn(); // ([v1.6] not a spectator's hidden Dash)
       for (var i = 0; i < this.touchpoints.length; i++) {
         var tp = this.touchpoints[i];
         if (!tp.isHit) {
@@ -48087,7 +48122,7 @@ function program() {
               deaths++;
               p.health = 0;
               mpLocalTint();
-              skinFxDeath(currentSkin, p.x, p.y, dashTint, MP.active ? mpMyColor() : 0, p.vx, p.vy, true); // [v1.6] (each skin its own way)
+              mpSendFx("d", skinFxDeath(currentSkin, p.x, p.y, dashTint, MP.active ? mpMyColor() : 0, p.vx, p.vy, true)); // [v1.6] (each skin its own way; sent to the others too)
               dashTint = null;
               p.dead = true;
               p.deathTriggered = true;
@@ -48524,8 +48559,21 @@ function program() {
               }
               drawVisibleWorldEnemy(enemies[i]);
             }
-            for (var i = 0; i < levelObjects.length; i++) {
-              var o = levelObjects[i];
+            // [v1.6] conveyor belts and hyperbelts are drawn last, over any spikes
+            // they touch (whichever came later in the level's list covered the other)
+            var drawObjs = levelObjects;
+            if (levelObjects.__beltOrderOf !== levelObjects.length) {
+              var dBack = [],
+                dBelts = [];
+              for (var di = 0; di < levelObjects.length; di++) {
+                (levelObjects[di].type === 'conveyorbelt' || levelObjects[di].type === 'hyperbelt' ? dBelts : dBack).push(levelObjects[di]);
+              }
+              levelObjects.__beltOrder = dBack.concat(dBelts);
+              levelObjects.__beltOrderOf = levelObjects.length;
+            }
+            drawObjs = levelObjects.__beltOrder;
+            for (var i = 0; i < drawObjs.length; i++) {
+              var o = drawObjs[i];
               worldRenderStats.objectsTested++;
               if (!worldObjectVisible(o)) {
                 worldRenderStats.objectsCulled++;
@@ -49724,6 +49772,7 @@ function program() {
             }
           } else {
             admGuard(); // [ADMIN] invincible in the vortex
+            mpGuardWaiting(); // [v1.6] (a spectator can't be hurt here either)
             if (p.health <= 0) {
               if (p.health < 0) {
                 p.health = 0;
@@ -49832,7 +49881,13 @@ function program() {
               p.vx = 0;
               p.vy = 0;
             }
-            if (!admVortexUpdate()) {
+            if (mpSpecOn()) {
+              // [v1.6] a spectator in the vortex just watches: it moved them with
+              // the vortex controls and let the vortex kill them, after which they
+              // were playing
+              p.vx = p.vy = 0;
+              mpGuardWaiting();
+            } else if (!admVortexUpdate()) {
               p.finalBossUpdate();
             }
 
@@ -50074,12 +50129,14 @@ function program() {
             }
             // [BUGFIX] Draw the player centered on its hitbox (it was drawn from the
             // top-left corner, half a body away from where hits are checked).
-            spawnParticles(p.x, p.y, dtCount(1), 'masterParticles', 4);
+            if (!mpSpecOn()) {
+              spawnParticles(p.x, p.y, dtCount(1), 'masterParticles', 4);
+            }
             mpDrawGhosts(); // [MP]
             __p.fill(mpLocalBody());
             __p.noStroke();
             __p.rectMode(__p.CORNER);
-            if (!admVortexPlayer()) {
+            if (!admVortexPlayer() && !mpSpecOn()) {
               __p.rect(p.x - p.w / 2, p.y - p.h / 2, p.w, p.h, 8);
             }
             if (p.paralyzed) {
@@ -51449,6 +51506,12 @@ function program() {
               cutsceneReset();
             }
           } else if (cutsceneName === "victory") {
+            // [v1.6] the crown (all areas complete) as soon as the ending starts: it
+            // came at its very end, and in multiplayer the host's game finishing first
+            // sent everyone back to the map before theirs got there
+            if (lvlUnlock < 17 && mpMayUnlock(15)) {
+              lvlUnlock = 17;
+            }
             cutsceneSkinSaved = null; // the ending equips the Champion skin on purpose
             currentSkin = 0;
             if (cFrames > 1670) {
@@ -51715,6 +51778,10 @@ function program() {
               __p.rectMode(__p.LEFT);
             }
           } else if (cutsceneName === "victory?") {
+            // [v1.6] (Area X unlocks as soon as this starts, like the crown above)
+            if (lvlUnlock < 13 && mpMayUnlock(11)) {
+              lvlUnlock = 13;
+            }
             //cFrames = 410;
 
             if (cFrames <= 750) {
@@ -52106,10 +52173,410 @@ function program() {
   };
   // ---------------- networking ----------------
   var mpSendRaw = function mpSendRaw(link, obj) {
-    if (link && link.ch && link.ch.readyState === "open") {
+    if (!link) {
+      return;
+    }
+    // [v1.6] a relayed link to a game that reads them: everything goes in bundles
+    if (link.bPend || mpBundling(link)) {
+      if (typeof obj === "string") {
+        try {
+          obj = JSON.parse(obj);
+        } catch (e) {
+          return;
+        }
+      }
+      mpBundleFlush(link, Date.now(), obj);
+      return;
+    }
+    if (link.ch && link.ch.readyState === "open") {
       try {
         link.ch.send(typeof obj === "string" ? obj : JSON.stringify(obj));
       } catch (e) {}
+    }
+  };
+  // [v1.6] Less data through the relay (the free one has a small monthly amount).
+  // On a relayed link to a game that can read them (cv 3):
+  //  - one packet 15 times a second carries the newest state of every player and
+  //    the world (each packet also costs ~90 bytes of wrapping, so one per player
+  //    and one per world update added up). Other messages go at once (with
+  //    whatever was waiting, in order).
+  //  - a state (of a Dash at rest) or world that hasn't changed isn't sent
+  //    again, except 3 times a second (so they don't look paused). When it changes again, the last
+  //    unchanged one goes first ("ol": not news, so the timing isn't thrown off),
+  //    so the other game sees the moment it started to move.
+  //  - it's packed as bytes, not text (mpPack): about a third of the size.
+  // Direct links (free) are as before.
+  var mpBundling = function mpBundling(link) {
+    return !!(link && link.relayed && link.cv >= 3 && link.ch && link.ch.readyState === "open");
+  };
+  var mpBundleLater = function mpBundleLater(link, now) {
+    link.bPend = true;
+    if (link.bAt === undefined) {
+      link.bAt = now - 66;
+    }
+    if (!link.bTimer) {
+      link.bTimer = setTimeout(function () {
+        link.bTimer = null;
+        mpBundleFlush(link, Date.now(), null);
+      }, Math.max(0, 66 - (now - link.bAt)));
+    }
+  };
+  // the same as the last state sent on this link, apart from the time
+  var mpStSame = function mpStSame(link, src, full) {
+    var e = link.stc && link.stc[src];
+    if (!e) {
+      return false;
+    }
+    var b = e.base,
+      k;
+    for (k in full) {
+      if (k !== "ts" && full[k] !== undefined && full[k] !== b[k]) {
+        return false;
+      }
+    }
+    for (k in b) {
+      if (k !== "ts" && b[k] !== undefined && full[k] === undefined) {
+        return false;
+      }
+    }
+    return true;
+  };
+  var mpObjCopy = function mpObjCopy(o) {
+    var c = {};
+    for (var k in o) {
+      c[k] = o[k];
+    }
+    return c;
+  };
+  var mpWldKey = function mpWldKey(w) {
+    var c = mpObjCopy(w);
+    delete c.ts;
+    return JSON.stringify(c);
+  };
+  var mpBundleFlush = function mpBundleFlush(link, now, extra) {
+    var out = [],
+      k,
+      left = false;
+    if (link.bst) {
+      var keep = link.bKeep || (link.bKeep = {}),
+        idle = link.bIdle || (link.bIdle = {});
+      for (k in link.bst) {
+        var full = link.bst[k],
+          src = +k,
+          // (only a Dash at rest: one pushing into a wall still has a speed, and
+          // the other game would carry it on through the wall while waiting)
+          same = !full.vx && !full.vy && (full.gr || full.d || !full.in) && mpStSame(link, src, full);
+        if (same && now - (keep[src] || 0) < 300) {
+          idle[src] = full;
+          continue;
+        }
+        if (idle[src] && !same) {
+          var pre = mpObjCopy(mpStEncode(link, src, idle[src], now));
+          pre.ol = 1;
+          out.push(pre);
+        }
+        idle[src] = null;
+        out.push(mpStEncode(link, src, full, now));
+        keep[src] = now;
+      }
+      link.bst = null;
+    }
+    if (link.bw) {
+      link.wAcc = Math.min(1.5, (link.wAcc || 0) + (now - link.bAt) / 100);
+      if (link.wAcc >= 1) {
+        link.wAcc -= 1;
+        var wk = link.bwKey || (link.bwKey = {}),
+          wkeep = link.bwKeep || (link.bwKeep = {}),
+          widle = link.bwIdle || (link.bwIdle = {});
+        for (k in link.bw) {
+          var w = link.bw[k],
+            key = mpWldKey(w);
+          if (key === wk[k] && now - (wkeep[k] || 0) < 300) {
+            widle[k] = w;
+            continue;
+          }
+          if (widle[k] && key !== wk[k]) {
+            out.push(widle[k]);
+          }
+          widle[k] = null;
+          wk[k] = key;
+          wkeep[k] = now;
+          out.push(w);
+        }
+        link.bw = null;
+      } else {
+        left = true;
+      }
+    }
+    link.bAt = now;
+    if (extra) {
+      out.push(extra);
+    }
+    link.bPend = left;
+    if (out.length && link.ch && link.ch.readyState === "open") {
+      try {
+        link.ch.send(mpPack(out));
+      } catch (e) {}
+    }
+    if (left) {
+      mpBundleLater(link, now);
+    }
+  };
+  // [v1.6] Messages as bytes (mpPack / mpUnpack), only between games that both
+  // have this (cv 3). Each value starts with a byte saying what it is: 0-127 is
+  // that number; numbers with 1-3 decimals are sent as whole numbers; common names
+  // and words are one byte (from the lists below: ONLY ADD TO THEIR ENDS, older
+  // games read them by position).
+  var MP_BK = ["t", "ts", "id", "dl", "un", "ol", "adm", "dm", "in", "spc", "sid", "ses", "lv", "fb", "rs", "lf", "bf", "x", "y", "vx", "vy", "w", "h", "r", "vw", "vh", "hf", "m", "d", "spn", "sw", "gr", "sk", "br", "af", "pv", "pt", "ch", "pz", "fz", "ay", "sg", "md", "sp", "nt", "to", "iv", "giv", "rb", "bm", "bi", "src", "e", "b", "n", "ec", "st", "ca", "at", "cs", "tg", "k", "dir", "rtt", "on", "mode", "lives", "ms", "c", "p", "you", "hcv", "unlock", "cv"];
+  var MP_BS = ["st", "wld", "fx", "hb", "hbr", "chat", "sys", "die", "away", "gate", "count", "go", "rdy", "mode", "linked", "race", "closed", "open", "idle", "jumping", "falling", "attack", "s", "d", "", "digitsofpi", "kineto"];
+  var MP_BKI = {},
+    MP_BSI = {};
+  MP_BK.forEach(function (k, i) {
+    MP_BKI[k] = i;
+  });
+  MP_BS.forEach(function (k, i) {
+    MP_BSI[k] = i;
+  });
+  var mpTE = typeof TextEncoder !== "undefined" ? new TextEncoder() : null,
+    mpTD = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
+  var mpUtf8 = function mpUtf8(str) {
+    if (mpTE) {
+      return mpTE.encode(str);
+    }
+    var b = unescape(encodeURIComponent(str)),
+      a = [];
+    for (var i = 0; i < b.length; i++) {
+      a.push(b.charCodeAt(i));
+    }
+    return a;
+  };
+  var mpUtf8Read = function mpUtf8Read(u) {
+    if (mpTD) {
+      return mpTD.decode(u);
+    }
+    var s = "";
+    for (var i = 0; i < u.length; i++) {
+      s += String.fromCharCode(u[i]);
+    }
+    return decodeURIComponent(escape(s));
+  };
+  var mpPackNum = function mpPackNum(o, n) {
+    // (a whole number 0 or more, up to 2^53)
+    while (n >= 128) {
+      o.push(n % 128 + 128);
+      n = Math.floor(n / 128);
+    }
+    o.push(n);
+  };
+  var mpPackZz = function mpPackZz(o, n) {
+    mpPackNum(o, n >= 0 ? n * 2 : -n * 2 - 1);
+  };
+  var mpPackStr = function mpPackStr(o, str) {
+    var b = mpUtf8(str);
+    mpPackNum(o, b.length);
+    for (var i = 0; i < b.length; i++) {
+      o.push(b[i]);
+    }
+  };
+  var mpPackVal = function mpPackVal(o, v, depth) {
+    if (v === null || v === undefined || typeof v === "number" && !isFinite(v)) {
+      o.push(0x8b); // (as JSON: null)
+      return;
+    }
+    if (v === true || v === false) {
+      o.push(v ? 0x89 : 0x8a);
+      return;
+    }
+    if (typeof v === "number") {
+      if (Math.floor(v) === v && Math.abs(v) < 4e15) {
+        if (v >= 0 && v < 128) {
+          o.push(v);
+        } else {
+          o.push(0x80);
+          mpPackZz(o, v);
+        }
+        return;
+      }
+      for (var sc = 10, tag = 0x81; sc <= 1000; sc *= 10, tag++) {
+        var r = Math.round(v * sc);
+        if (r / sc === v && Math.abs(r) < 4e15) {
+          o.push(tag);
+          mpPackZz(o, r);
+          return;
+        }
+      }
+      o.push(0x84);
+      var fb = new Uint8Array(8);
+      new DataView(fb.buffer).setFloat64(0, v, true);
+      for (var fi = 0; fi < 8; fi++) {
+        o.push(fb[fi]);
+      }
+      return;
+    }
+    if (typeof v === "string") {
+      if (MP_BSI.hasOwnProperty(v)) {
+        o.push(0x86, MP_BSI[v]);
+      } else {
+        o.push(0x85);
+        mpPackStr(o, v);
+      }
+      return;
+    }
+    if (depth > 8 || typeof v !== "object") {
+      o.push(0x8b);
+      return;
+    }
+    if (Array.isArray(v)) {
+      o.push(0x87);
+      mpPackNum(o, v.length);
+      for (var ai = 0; ai < v.length; ai++) {
+        mpPackVal(o, v[ai], depth + 1);
+      }
+      return;
+    }
+    var ks = [];
+    for (var k in v) {
+      if (Object.prototype.hasOwnProperty.call(v, k) && v[k] !== undefined && typeof v[k] !== "function") {
+        ks.push(k);
+      }
+    }
+    o.push(0x88);
+    mpPackNum(o, ks.length);
+    for (var ki = 0; ki < ks.length; ki++) {
+      if (MP_BKI.hasOwnProperty(ks[ki])) {
+        o.push(MP_BKI[ks[ki]]);
+      } else {
+        o.push(0xff);
+        mpPackStr(o, ks[ki]);
+      }
+      mpPackVal(o, v[ks[ki]], depth + 1);
+    }
+  };
+  var mpPack = function mpPack(list) {
+    var o = [0xdb, 1];
+    for (var i = 0; i < list.length; i++) {
+      mpPackVal(o, list[i], 0);
+    }
+    return new Uint8Array(o);
+  };
+  // (null: not one of ours, or broken)
+  var mpUnpack = function mpUnpack(buf) {
+    try {
+      var u = new Uint8Array(buf),
+        pos = 2;
+      if (u.length < 3 || u[0] !== 0xdb || u[1] !== 1) {
+        return null;
+      }
+      var rn = function rn() {
+        var n = 0,
+          mul = 1,
+          b;
+        do {
+          if (pos >= u.length || mul > 1e16) {
+            throw 0;
+          }
+          b = u[pos++];
+          n += (b & 127) * mul;
+          mul *= 128;
+        } while (b & 128);
+        return n;
+      };
+      var rz = function rz() {
+        var n = rn();
+        return n % 2 ? -(n + 1) / 2 : n / 2;
+      };
+      var rs = function rs() {
+        var len = rn();
+        if (len > 8192 || pos + len > u.length) {
+          throw 0;
+        }
+        var s = mpUtf8Read(u.subarray(pos, pos + len));
+        pos += len;
+        return s;
+      };
+      var rv = function rv(d) {
+        if (d > 9 || pos >= u.length) {
+          throw 0;
+        }
+        var t = u[pos++];
+        if (t < 128) {
+          return t;
+        }
+        if (t === 0x80) {
+          return rz();
+        }
+        if (t >= 0x81 && t <= 0x83) {
+          return rz() / (t === 0x81 ? 10 : t === 0x82 ? 100 : 1000);
+        }
+        if (t === 0x84) {
+          if (pos + 8 > u.length) {
+            throw 0;
+          }
+          var f = new DataView(u.buffer, u.byteOffset + pos, 8).getFloat64(0, true);
+          pos += 8;
+          return f;
+        }
+        if (t === 0x85) {
+          return rs();
+        }
+        if (t === 0x86) {
+          if (pos >= u.length || u[pos] >= MP_BS.length) {
+            throw 0;
+          }
+          return MP_BS[u[pos++]];
+        }
+        if (t === 0x87) {
+          var n = rn(),
+            a = [];
+          if (n > 4096) {
+            throw 0;
+          }
+          for (var i = 0; i < n; i++) {
+            a.push(rv(d + 1));
+          }
+          return a;
+        }
+        if (t === 0x88) {
+          var n2 = rn(),
+            ob = {};
+          if (n2 > 256) {
+            throw 0;
+          }
+          for (var j = 0; j < n2; j++) {
+            if (pos >= u.length) {
+              throw 0;
+            }
+            var kb = u[pos++],
+              key;
+            if (kb === 0xff) {
+              key = rs();
+            } else if (kb < MP_BK.length) {
+              key = MP_BK[kb];
+            } else {
+              throw 0;
+            }
+            var val = rv(d + 1);
+            if (key !== "__proto__" && key !== "constructor" && key !== "prototype") {
+              ob[key] = val;
+            }
+          }
+          return ob;
+        }
+        if (t === 0x89 || t === 0x8a) {
+          return t === 0x89;
+        }
+        if (t === 0x8b) {
+          return null;
+        }
+        throw 0;
+      };
+      var list = [];
+      while (pos < u.length && list.length < 64) {
+        list.push(rv(0));
+      }
+      return list;
+    } catch (e) {
+      return null;
     }
   };
   // Send to everyone (host: all joiners, joiner: the host, who relays it).
@@ -52120,6 +52587,15 @@ function program() {
     for (var i = 0; i < MP.links.length; i++) {
       var lk = MP.links[i];
       if (lk.id !== exceptId) {
+        if (obj.t === "wld" && mpBundling(lk)) {
+          (lk.bw || (lk.bw = {}))[obj.src === undefined ? 0 : obj.src] = obj;
+          mpBundleLater(lk, now);
+          continue;
+        }
+        if (lk.bPend || mpBundling(lk)) {
+          mpSendRaw(lk, obj);
+          continue;
+        }
         if (obj.t === "wld" && lk.relayed) {
           if (now - (lk.lastWld || 0) < 95) {
             continue;
@@ -52136,7 +52612,7 @@ function program() {
   // order, so nothing is missed. Older games still get every state in full. A link
   // going through the relay (the free one has a small monthly amount) also gets them
   // 15 times a second instead of 30; the other player is drawn smoothly either way.
-  var MP_CV = 2;
+  var MP_CV = 3; // [v1.6] 2: changes-only states; 3: bundles through the relay (mpBundleFlush)
   var mpStEncode = function mpStEncode(link, src, full, now) {
     if (!(link.cv >= 2)) {
       return full;
@@ -52194,8 +52670,85 @@ function program() {
     have[m.id] = m;
     return m;
   };
+  // [v1.6] your skin's death or spawn, sent the moment it starts: other games play
+  // the same animation (same spot, same way round), timed to when they see your Dash
+  // at that moment. (Older games, which don't send these, are still worked out
+  // from their states: see mpDrawGhosts.)
+  var mpSendFx = function mpSendFx(kind, a) {
+    if (typeof MP === "undefined" || !MP.active || !MP.links.length || !a) {
+      return;
+    }
+    mpBroadcast({
+      t: "fx",
+      k: kind,
+      id: MP.myId,
+      sk: a.sk,
+      x: __p.round(a.x * 10) / 10,
+      y: __p.round(a.y * 10) / 10,
+      vx: __p.round((a.vx || 0) * 100) / 100,
+      vy: __p.round((a.vy || 0) * 100) / 100,
+      dir: a.dir,
+      ts: __p.round(mpNow() * 10) / 10,
+      ses: MP.session,
+      lv: currentLevel,
+      ay: lvl && lvl.arenaY !== undefined ? __p.round(lvl.arenaY) : undefined
+    });
+  };
+  // play the ones that are due (see above)
+  var mpPlayFx = function mpPlayFx(pl, st) {
+    var q = pl.fxq;
+    if (!q || !q.length) {
+      return;
+    }
+    var nowT = mpNow();
+    while (q.length) {
+      var ev = q[0],
+        m = ev.m;
+      if (m.ses !== MP.session || m.lv !== currentLevel) {
+        q.shift();
+        continue;
+      }
+      if (!(pl.lag === undefined || nowT - pl.lag >= m.ts || Date.now() - ev.at > 700)) {
+        return;
+      }
+      q.shift();
+      if (pl.away || !st || !st.in || !mpSameStage(st)) {
+        continue;
+      }
+      var fy = m.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - m.ay : 0;
+      if (m.k === "d") {
+        skinFxDeath(m.sk | 0, m.x, m.y + fy, mpColorOf(pl.id), pl.color, m.vx, m.vy, false);
+      } else {
+        var sa = skinFxSpawn(m.sk | 0, m.x, m.y + fy, mpColorOf(pl.id), pl.color, false);
+        if (m.dir === 1 || m.dir === -1) {
+          sa.dir = m.dir;
+        }
+        if (pl.ghost) {
+          pl.ghost.dinoCover = 0;
+          pl.ghost.stacheBuild = (m.sk | 0) === 23 ? 0 : 1;
+          pl.ghost.discoDrop = (m.sk | 0) === 24 ? 1 : 0;
+        }
+      }
+    }
+  };
   // send a player's state to one link (if it's due on that link)
   var mpSendStateTo = function mpSendStateTo(link, src, full, now) {
+    if (MP.inOld) {
+      // [v1.6] a state re-sent so the moment they started moving is known (see mpBundleFlush)
+      if (mpBundling(link)) {
+        (link.bIdle || (link.bIdle = {}))[src] = full;
+      } else if (link.cv >= 3) {
+        var pre = mpObjCopy(mpStEncode(link, src, full, now));
+        pre.ol = 1;
+        mpSendRaw(link, pre);
+      }
+      return;
+    }
+    if (mpBundling(link)) {
+      (link.bst || (link.bst = {}))[src] = full;
+      mpBundleLater(link, now);
+      return;
+    }
     var due = link.relayed ? 62 : 0;
     var lt = link.stSent || (link.stSent = {});
     if (due && now - (lt[src] || 0) < due) {
@@ -52267,6 +52820,12 @@ function program() {
         lk.relayed = !!pair && (types[pair.localCandidateId] === "relay" || types[pair.remoteCandidateId] === "relay");
         if (lk.relayed !== was && typeof console !== "undefined") {
           console.log("[DASH] link " + lk.id + (lk.relayed ? " goes through the relay" : " is direct"));
+        }
+        // [v1.6] ?relaytest: say on screen how each link goes
+        if (!lk.relayTold && pair && typeof location !== "undefined" && /[?&]relaytest\b/.test(location.search)) {
+          lk.relayTold = true;
+          var who = MP.players[lk.id] && MP.players[lk.id].name || "the host";
+          mpToast(lk.relayed ? "RELAY TEST: linked to " + who + " through the relay" : "RELAY TEST: linked to " + who + " directly (no relay on the server?)");
         }
       }, function () {});
     });
@@ -52364,6 +52923,7 @@ function program() {
     MP.raceDecided = false;
     MP.finished = false;
     MP.spectating = false;
+    MP.specRun = false;
     if (typeof ADM !== "undefined") {
       ADM.spectate = false; // [v1.4] (a new party starts playing)
     }
@@ -52437,7 +52997,7 @@ function program() {
       sk: currentSkin,
       br: currentSkin === 17 && p.brR ? Math.round(p.brR) : undefined, // [v1.6] Dash Brainrot's spin
       af: admFlying() ? 1 : undefined, // [v1.6] flying (admin)
-      pv: prog,
+      pv: typeof prog === "number" ? Math.round(prog * 1000) / 1000 : prog, // [v1.6] (no 17-digit decimals)
       pt: progText,
       ch: achievementStates.parkourChampion ? 1 : 0,
       pz: p.paralyzed ? 1 : 0,
@@ -53209,6 +53769,11 @@ function program() {
     return MP.active && MP.mode === "race" && mpCount() > 1;
   };
   var mpMayUnlock = function mpMayUnlock(levelIdx) {
+    // [v1.6] watching isn't playing: anyone who spectated any of this level gets no
+    // unlocks from it (a spectator watching X-4 got the crown)
+    if (MP.active && MP.specRun) {
+      return false;
+    }
     if (!MP.active || mpCount() < 2) {
       return true;
     }
@@ -53240,7 +53805,7 @@ function program() {
   // (the host's click used to take everyone back before a guest's unlock ran).
   // Area 3's boss and X-4 unlock through their own cutscenes, as before.
   var mpLinkedUnlock = function mpLinkedUnlock() {
-    if (!MP.active || MP.mode !== "linked" || mpCount() < 2 || scene !== "game" || !levelEnd || currentLevel === 11 || currentLevel >= 15) {
+    if (!MP.active || MP.mode !== "linked" || mpCount() < 2 || scene !== "game" || !levelEnd || currentLevel === 11 || currentLevel >= 15 || MP.specRun) {
       return;
     }
     var key = MP.session + ":" + currentLevel;
@@ -53383,6 +53948,8 @@ function program() {
         MP.spectating = true;
         MP.specId = -1;
       }
+      // [v1.6] spectating any of this level: no unlocks or times from it (see mpMayUnlock)
+      MP.specRun = !!MP.spectating;
       // (a spectating host still holds, so it runs everyone's 3-2-1 countdown)
       MP.hold = mpCount() > 1 && (!MP.spectating || MP.isHost);
       MP.readySent = false;
@@ -53624,15 +54191,25 @@ function program() {
     }
   };
   var mpHoldUpdate = function mpHoldUpdate() {
+    // [v1.6] the on-screen buttons (Mobile mode) wait too: only the keyboard did, so
+    // on a phone you could run and jump before GO (a head start in a race)
     var saved = {},
+      savedT = {},
       k;
     for (k in keys) {
       saved[k] = keys[k];
       keys[k] = false;
     }
+    for (k in touchKeys) {
+      savedT[k] = touchKeys[k];
+      touchKeys[k] = false;
+    }
     p.update();
     for (k in saved) {
       keys[k] = saved[k];
+    }
+    for (k in savedT) {
+      touchKeys[k] = savedT[k];
     }
   };
   // [v1.3] send one player into the running level, to watch it (spectate)
@@ -53743,19 +54320,22 @@ function program() {
           var tnow = mpNow();
           // clock offset sender -> us (+ latency): the smallest recent value is
           // the most reliable, so jittery packets don't make the ghost jump
+          // ([v1.6] a state re-sent late on purpose (MP.inOld) says nothing about that)
           pl.offs = pl.offs || [];
-          if (pl.offs.length && tnow - m.ts > pl.off + 500) {
-            pl.offs = []; // their game was paused (e.g. a hidden tab): re-sync
+          if (!MP.inOld) {
+            if (pl.offs.length && tnow - m.ts > pl.off + 500) {
+              pl.offs = []; // their game was paused (e.g. a hidden tab): re-sync
+            }
+            pl.offs.push(tnow - m.ts);
+            if (pl.offs.length > 90) {
+              pl.offs.shift();
+            }
+            pl.off = Math.min.apply(null, pl.offs);
+            // how late packets usually arrive compared with the best case: the
+            // render delay follows it, so a bumpy connection still looks smooth
+            var late = tnow - m.ts - pl.off;
+            pl.jit = pl.jit === undefined ? late : pl.jit * 0.95 + late * 0.05;
           }
-          pl.offs.push(tnow - m.ts);
-          if (pl.offs.length > 90) {
-            pl.offs.shift();
-          }
-          pl.off = Math.min.apply(null, pl.offs);
-          // how late packets usually arrive compared with the best case: the
-          // render delay follows it, so a bumpy connection still looks smooth
-          var late = tnow - m.ts - pl.off;
-          pl.jit = pl.jit === undefined ? late : pl.jit * 0.95 + late * 0.05;
           pl.buf = pl.buf || [];
           if (pl.st && (pl.st.ses !== m.ses || pl.st.lv !== m.lv || m.ts <= pl.st.ts)) {
             pl.buf = [];
@@ -53767,6 +54347,17 @@ function program() {
           pl.st = m;
           pl.seen = 0;
           pl.skin = m.sk;
+        }
+        return;
+      case "fx":
+        // [v1.6] another player's death or spawn (see mpSendFx)
+        pl = MP.players[m.id];
+        if (pl && m.id !== MP.myId) {
+          pl.fxEvt = true;
+          pl.fxq = pl.fxq || [];
+          if (pl.fxq.length < 6) {
+            pl.fxq.push({ m: m, at: Date.now() });
+          }
         }
         return;
       case "away":
@@ -54103,14 +54694,30 @@ function program() {
     link.lastHeard = Date.now();
     var early = link.ch.__buf || [];
     link.ch.__buf = null;
+    link.ch.binaryType = "arraybuffer"; // [v1.6] (bundles)
     link.ch.onmessage = function (e) {
       var m;
       link.lastHeard = Date.now();
+      if (typeof e.data !== "string") {
+        // [v1.6] a bundle (see mpBundleFlush): each message in it, in order
+        var list = mpUnpack(e.data);
+        for (var bi = 0; list && bi < list.length; bi++) {
+          if (list[bi] && typeof list[bi] === "object" && !Array.isArray(list[bi]) && typeof list[bi].t === "string") {
+            mpOnOne(list[bi]);
+          }
+        }
+        return;
+      }
       try {
         m = JSON.parse(e.data);
       } catch (err) {
         return;
       }
+      if (m && typeof m === "object" && typeof m.t === "string") {
+        mpOnOne(m);
+      }
+    };
+    var mpOnOne = function (m) {
       if (m.t === "hb") {
         if (!MP.isHost && typeof m.rtt === "number") {
           MP.hostRtt = m.rtt;
@@ -54137,19 +54744,26 @@ function program() {
       }
       if (m.t === "st") {
         // [v1.6] made whole again (see mpStEncode), and passed on per player
+        var stOld = m.ol === 1;
+        delete m.ol;
         m = mpStMerge(m);
         if (!m) {
           return;
         }
-        if (MP.isHost) {
-          var snow = Date.now();
-          for (var sl = 0; sl < MP.links.length; sl++) {
-            if (MP.links[sl].id !== link.id) {
-              mpSendStateTo(MP.links[sl], m.id, m, snow);
+        MP.inOld = stOld;
+        try {
+          if (MP.isHost) {
+            var snow = Date.now();
+            for (var sl = 0; sl < MP.links.length; sl++) {
+              if (MP.links[sl].id !== link.id) {
+                mpSendStateTo(MP.links[sl], m.id, m, snow);
+              }
             }
           }
+          mpHandle(m, MP.isHost ? link.id : 0);
+        } finally {
+          MP.inOld = false;
         }
-        mpHandle(m, MP.isHost ? link.id : 0);
         return;
       }
       if (MP.isHost) {
@@ -55009,6 +55623,9 @@ function program() {
     }
     // health at the start of the frame (see mpGuardWaiting)
     MP.hpStart = p ? p.health : 0;
+    if (MP.active && MP.spectating && scene === "game") {
+      MP.specRun = true; // [v1.6] (watched some of this level)
+    }
     var now = Date.now();
     // [v1.1] Linked mode with two or more players in this level: one shared world
     MP.bsync = MP.active && MP.mode === "linked" && scene === "game" && mpCount() > 1 && mpPlayersInLevel().length > 1;
@@ -55182,6 +55799,18 @@ function program() {
   // another player is only drawn when they are in the same one (in a race they used
   // to float in mid-air, drawn at their spot in a different stage)
   var mpSameStage = function mpSameStage(st) {
+    // [v1.6] a boss arena rising up (the end of the boss intro) takes its players with
+    // it, to where nobody else in the level is: someone not in the boss saw them sunk
+    // in the ground (and they saw the others in the air). Each side now only sees
+    // the ones on the same side, like the final boss's stages. (A spectator sees
+    // whoever they watch.)
+    if (st && st.lv === currentLevel && currentLevel % 4 === 3 && !mpSpecOn()) {
+      var meUp = (bossFight || bossIntro) && lvl && lvl.arenaY < -1;
+      var themUp = !!st.bf && st.ay !== undefined && st.ay < -1;
+      if (meUp !== themUp) {
+        return false;
+      }
+    }
     if (currentLevel !== 15 || !st || st.lv !== 15) {
       return true;
     }
@@ -55208,17 +55837,24 @@ function program() {
         // (rushing in where they appear) are shown too.
         var fx = pl.away || pl.seen > 40 ? st : mpSample(pl);
         var fy = fx && fx.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - fx.ay : 0;
+        mpPlayFx(pl, st); // [v1.6] (a game that sends them: these are exact)
         if (fx && fx.d && !pl.deadFx && (pl.ghostShown || !fx.spn)) {
           pl.deadFx = true;
+          if (pl.fxEvt) {
+            // (sent as an event instead)
+          } else {
           var dx = pl.ghostShown && pl.ghost ? pl.ghost.x : fx.x,
             dy = pl.ghostShown && pl.ghost ? pl.ghost.y : fx.y + fy;
           // [v1.6] their skin's own death (their skin and colour, not ours)
           skinFxDeath(st.sk | 0, dx, dy, mpColorOf(pl.id), pl.color, pl.ghost ? pl.ghost.vx : 0, pl.ghost ? pl.ghost.vy : 0, false);
+          }
         } else if (fx && !fx.d && pl.deadFx) {
           pl.deadFx = false;
         }
         if (fx && fx.spn && !fx.sw && !pl.away) {
-          if (!pl.spnFx) {
+          if (!pl.spnFx && pl.fxEvt) {
+            pl.spnFx = true; // (sent as an event instead)
+          } else if (!pl.spnFx) {
             // [v1.6] their skin's own way of appearing
             pl.spnFx = true;
             skinFxSpawn(st.sk | 0, fx.x, fx.y + fy, mpColorOf(pl.id), pl.color, false);
@@ -56870,8 +57506,8 @@ function program() {
 
   // ===================================================================
   // [ADMIN] Secret tools for Digitsofpi and Kineto.
-  // Typing one of the two names on the multiplayer screen asks for a passcode
-  // (Digitsofpi's is "Kineto", Kineto's is "Digitsofpi"). Once unlocked, the
+  // Typing one of the two names on the multiplayer screen asks for its passcode
+  // (only a salted hash of each is kept here). Once unlocked, the
   // Q menu gets a list of toggles (each also on a number key) and the player's
   // Dash glows red or blue.
   // ===================================================================
@@ -56962,29 +57598,35 @@ function program() {
     return out;
   };
   // a passcode is checked as 4000 rounds of salted SHA-256
-  var admHashPass = function admHashPass(who, pass) {
+  // (upto: how many rounds; 3999 gives what this device remembers, see below)
+  var admHashPass = function admHashPass(who, pass, upto) {
     var h = String(pass).toLowerCase();
-    for (var i = 0; i < 4000; i++) {
+    for (var i = 0; i < (upto || 4000); i++) {
       h = dashSha256("dash-admin:" + who + ":" + i + ":" + h);
     }
     return h;
   };
   var ADM_NAMES = {
     digitsofpi: {
-      hash: "22f8ffffc62eee654fb1d47913e6b9e944aad08de22df6fa8dc3b8f7b0728114",
+      hash: "551fd8628d6097f55466befcdc71d4f40105ecd8c8c5238e8c88b1606745c6be",
       skin: 19,
       glow: [255, 40, 40]
     },
     kineto: {
-      hash: "20c45bcaf4f75d3a87a5ba47a1f422ba3d2ce0cc1dc86f6f5fbec61e3758e7c6",
+      hash: "01e6ecb7e2507527ef4a3a95e1460a9779fc78bda0ffe58deeff77b626f4a557",
       skin: 18,
       glow: [40, 120, 255]
     }
   };
+  // [v1.6] A device that unlocked once remembers "name:proof", where the proof is
+  // the passcode's hash one round short of the one above: one more round must give
+  // that hash, and it can't be worked out from it. (Just the name used to be kept,
+  // so typing it into the browser's storage was enough.)
   try {
-    ADM.who = window.localStorage.getItem("dashparkour-admin") || "";
-    if (!ADM_NAMES[ADM.who]) {
-      ADM.who = "";
+    var admSaved = String(window.localStorage.getItem("dashparkour-admin") || "").split(":");
+    ADM.who = "";
+    if (ADM_NAMES[admSaved[0]] && /^[0-9a-f]{64}$/.test(admSaved[1] || "") && dashSha256("dash-admin:" + admSaved[0] + ":3999:" + admSaved[1]) === ADM_NAMES[admSaved[0]].hash) {
+      ADM.who = admSaved[0];
     }
   } catch (e) {}
   var admOn = function admOn() {
@@ -57013,13 +57655,14 @@ function program() {
       no: "CANCEL",
       keep: true,
       onYes: function onYes() {
-        if (admHashPass(n, MP.fields.pass || "") === ADM_NAMES[n].hash) {
+        var admProof = admHashPass(n, MP.fields.pass || "", 3999);
+        if (dashSha256("dash-admin:" + n + ":3999:" + admProof) === ADM_NAMES[n].hash) {
           ADM.who = n;
           MP.modal = null;
           currentSkin = ADM_NAMES[n].skin; // their own costume, even if it isn't unlocked
           ADM.wasOn = true;
           try {
-            window.localStorage.setItem("dashparkour-admin", n);
+            window.localStorage.setItem("dashparkour-admin", n + ":" + admProof);
           } catch (e) {}
           mpChatLine("", "Welcome back, " + (n === "kineto" ? "Kineto" : "Digitsofpi") + "! Admin tools are in the Q menu (or keys 1 to 0 in a level).", -1);
         } else {
@@ -58415,6 +59058,17 @@ function program() {
   window.__dashTouch = {
     active: function () {
       return mobileOn() && !loading;
+    },
+    // [v1.6] a finger on a settings slider (shown just now) holds and drags it
+    grabs: function (cx, cy) {
+      var w = mobileWorld(cx, cy);
+      for (var i = 0; i < sliderSpots.length; i++) {
+        var sp = sliderSpots[i];
+        if (__p.frameCount - sp.f <= 2 && w.x >= sp.x0 && w.x <= sp.x1 && w.y >= sp.y0 && w.y <= sp.y1) {
+          return true;
+        }
+      }
+      return false;
     },
     inLevel: function () {
       return mobileInLevel();
@@ -61437,6 +62091,9 @@ window.__dashParkourBootPromise = runPJS(program);
   function newPc(cert) {
     var cfg = { iceServers: ICE };
     if (cert) cfg.certificates = [cert];
+    // [v1.6] the page opened with ?relaytest: links may ONLY go through the relay
+    // (to see that the party server's relay works; does nothing without one)
+    if (ICE !== STUN && typeof location !== "undefined" && /[?&]relaytest\b/.test(location.search)) cfg.iceTransportPolicy = "relay";
     var pc = new RTCPeerConnection(cfg);
     pc.__wantRelay = ICE !== STUN;
     // Connection timeline for "COPY CONNECTION DETAILS"

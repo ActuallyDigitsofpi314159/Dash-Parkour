@@ -162,11 +162,12 @@ None of them contain a password, key or token.
 The setup never puts any of these inside the repo folder, so pushing the repo
 can't leak them. Don't copy them into it.
 
-> **Note:** the in-game admin passcodes in `dash-parkour.html` (typing your
-> admin name asks for one) are visible to anyone who reads the game's code.
-> They only unlock the fun admin tools inside the game (fly, strikes...). They
-> can't kick or ban anyone on the server: that needs the admin keys above,
-> which never leave the Pi and your own devices.
+> **Note:** the in-game admin passcodes (typing your admin name asks for one)
+> are not in the game's code: only a salted hash of each is, which can't be
+> turned back into the passcode. A device that unlocked once remembers a proof
+> that also can't be faked. They only unlock the fun admin tools inside the game
+> (fly, strikes...). They can't kick or ban anyone on the server: that needs the
+> admin keys above, which never leave the Pi and your own devices.
 
 **How the Pi is protected:**
 
@@ -231,7 +232,14 @@ link directly when they can and only go through the relay when that fails
 up). Games on a relayed link also send less: 15 updates a second instead of 30,
 and world updates 10 a second instead of 20. Every game also sends only what
 changed in each update (a full one every 3 s), which is about a tenth of the data
-the full updates used. Three free options:
+the full updates used. On a relayed link, games that both have it also put every
+player's update and the world in one packet each time (each packet carries about
+90 bytes of wrapping), skip updates of a Dash standing still (3 a second keep it
+from looking paused), and send them as bytes instead of text: together about 60%
+less through the relay (about 12 MB an hour for one relayed player, measured; the
+free 500 MB is then about 40 hours of relayed play a month, more when players stand
+still). Add `?relaytest` to the game's address to make that copy link only through
+the relay: it says on screen when it did. Three free options:
 
 ### Metered's free plan (`dash-party turn metered`): can never charge
 
