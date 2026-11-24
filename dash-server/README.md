@@ -238,7 +238,7 @@ player's update and the world in one packet each time (each packet carries about
 90 bytes of wrapping), skip updates of a Dash standing still (3 a second keep it
 from looking paused), and send them as bytes instead of text: together about 60%
 less through the relay (about 12 MB an hour for one relayed player, measured; the
-free 500 MB is then about 40 hours of relayed play a month, more when players stand
+free 500 MB on Metered is then about 40 hours of relayed play a month, and Cloudflare's 1,000 GB about 80,000, more when players stand
 still). Add `?relaytest` to the game's address to make that copy link only through
 the relay: it says on screen when it did. Three free options:
 
@@ -257,31 +257,49 @@ one relay by UDP and one by TCP on port 443 (which gets through strict networks)
 The free amount is small (Metered lists 500 MB a month), which is why games only
 use it when they must and send as little as possible through it.
 
-### Cloudflare's relay (`dash-party turn set`)
+### Cloudflare's relay (`https://party.YOURSITE/cloudflare`)
 
 Free for 1,000 GB a month, then $0.05/GB, and Cloudflare has no spending cap of
-its own, so the server guards it:
+its own, so the server guards it.
 
-- Every 10 minutes it reads this month's relay traffic from Cloudflare's own
-  usage meter (the number Cloudflare bills on) and switches the relay off at your
-  budget (500 GB by default, at most 950), cancelling every login it gave out.
-- If the meter can't be read for 30 minutes, or no analytics token is set, the
-  relay is off. It never runs unwatched.
-- Logins only go to a game hosting a party (with its party token) or asking to
-  join one (with its join request), each its own 3-hour login, at most 12 a day
-  per address and 400 a day overall. A login that moves over 1 GB (a whole
-  evening of DASH is a few MB) is cancelled.
+**Setting it up (in a browser).** Open `https://party.YOURSITE/cloudflare`. It asks for:
 
-You need, from the Cloudflare dashboard:
+1. Your **Account ID** (on the account's home page, or in the dashboard's address).
+2. One **API token**: **My Profile** > **API Tokens** > **Create Token** > **Create
+   Custom Token**, with two Account permissions, **Calls** (or **Realtime**): **Edit**,
+   and **Account Analytics**: **Read**, for your account.
+3. Your admin key.
 
-1. **Realtime** > **TURN Server** > **Create**: the **Turn Token ID** and **API Token**.
-2. Your **Account ID** (Account home, the ... menu > Copy account ID).
-3. An analytics token: **My Profile** > **API Tokens** > **Create Token** > custom,
-   permission **Account / Account Analytics / Read** only.
+The server checks the token, makes its own relay key with it, and turns the relay on.
+**Check usage** on the same page (with your admin key) shows the last 30 days and today.
+`dash-party turn` shows the same on the Pi. (`dash-party turn set` still works for a key
+made by hand, but without the account token there is no key-deleting hard stop.)
 
-Then `dash-party turn set` and paste them. They are kept in
-`/var/lib/dash-party/turn.json` (only the server can read it), so running setup.sh
-again keeps them. `dash-party turn` shows the month's usage against the budget.
+**The guard:**
+
+- Every minute it reads Cloudflare's own usage meter (the number Cloudflare bills on;
+  it shows traffic about 30 seconds after it happens): the last 30 days, and today.
+- It uses the last 30 days, not the calendar month, so it doesn't matter which day
+  Cloudflare's billing month starts. Any 30 days stay under the limit (900 GB by
+  default, at most 950), and with the daily share any 31 days stay under 1,000.
+- **Daily share:** a fifteenth of the limit (60 GB at 900). It is the most bots or a
+  misused login could use up in a day, and then the relay is only off until the next
+  day (UTC), not for the month.
+- **Hard stop:** at the 30-day limit, at the daily share, when the traffic is fast
+  enough to reach either within 15 minutes, or when the meter hasn't been read for 10
+  minutes (Cloudflare or the internet down), the server **deletes the relay key at
+  Cloudflare**. Every login ever made from it stops at once, including ones the server
+  no longer knows about. It makes a new key by itself once the relay is allowed again.
+  New logins stop earlier: at 97% of either limit, or 3 minutes without a meter reading.
+- **Who gets a login:** only a game hosting a party (with its party token) or asking to
+  join one (with its join request). Each login lasts 3 hours, and there are at most 8 a
+  day per address, 10 a day for one party's joiners, and 200 a day overall. A login that
+  moves over 300 MB is cancelled (an evening of DASH through the relay is about 50 MB).
+  When the host closes a party, its logins are cancelled.
+- The logins given out are kept in `turn-issued.json`, so a restart can still cancel them.
+
+The token and key are kept in `/var/lib/dash-party/turn.json` (only the server can
+read it), so running setup.sh again keeps them.
 
 ### A relay on the Pi (`dash-party turn pi`)
 

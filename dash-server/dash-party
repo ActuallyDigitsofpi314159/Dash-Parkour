@@ -252,8 +252,11 @@ turn() {
   local f="$DATA/turn.json" id tok acct an bud tmp host pub sec lan j
   case "${1:-}" in
     set)
+      echo "${B}Easier: open https://party.digitsandkineto.com/cloudflare in a browser${N} (one token,"
+      echo "and the server makes and guards its own relay key). Or here, by hand:"
+      echo
       echo "Cloudflare's relay: free for 1,000 GB a month. The server reads Cloudflare's own"
-      echo "usage meter every 10 minutes and switches the relay off at your budget, so it"
+      echo "usage meter every minute and stops the relay at your limit for any 30 days, so it"
       echo "can't run into paid use. You need four things from the Cloudflare dashboard:"
       echo "  1. Realtime > TURN Server > your key: the ${B}Turn Token ID${N} and its ${B}API Token${N}"
       echo "  2. Your ${B}Account ID${N} (Account home, the ... menu > Copy account ID)"
@@ -264,10 +267,10 @@ turn() {
       printf 'TURN API Token (hidden): '; read -rs tok; echo
       printf 'Account ID: '; read -r acct
       printf 'Analytics token (hidden): '; read -rs an; echo
-      printf 'Monthly budget in GB [500]: '; read -r bud
+      printf 'Limit for any 30 days in GB [900]: '; read -r bud
       id="$(printf '%s' "$id" | tr -d '[:space:]')"; tok="$(printf '%s' "$tok" | tr -d '[:space:]')"
       acct="$(printf '%s' "$acct" | tr -d '[:space:]')"; an="$(printf '%s' "$an" | tr -d '[:space:]')"
-      bud="$(printf '%s' "${bud:-500}" | tr -cd '0-9')"; [ -z "$bud" ] && bud=500
+      bud="$(printf '%s' "${bud:-900}" | tr -cd '0-9')"; [ -z "$bud" ] && bud=900
       [ "$bud" -gt 950 ] && { echo "${Y}Budget capped at 950 GB${N} (the free amount is 1,000)."; bud=950; }
       if [ -z "$id" ] || [ -z "$tok" ] || [ -z "$acct" ] || [ -z "$an" ]; then echo "${R}All four are needed${N} (without the meter the relay stays off). Nothing changed."; exit 1; fi
       tmp="$(mktemp)"
@@ -328,7 +331,8 @@ turn() {
     *)
       if ! S test -r "$f"; then
         echo "${Y}No relay set up.${N} Players whose networks block direct links can't join."
-        echo "  ${B}dash-party turn set${N}  Cloudflare's relay (free up to 1,000 GB, with a shutoff)"
+        echo "  ${B}dash-party turn set${N}  Cloudflare's relay (free up to 1,000 GB, with a shutoff;"
+        echo "                       easiest from a browser: party.digitsandkineto.com/cloudflare)"
         echo "  ${B}dash-party turn pi${N}   a relay on this Pi (free; it opens your router's ports by itself)"
         echo "  ${B}dash-party turn metered${N}  Metered's free plan (no card, so it can never charge)"; return
       fi
@@ -354,7 +358,7 @@ turn() {
           fi
           echo "${D}It follows your home IP by itself when it changes.${N}"
         else
-          echo "${G}Relay on${N} (Cloudflare). This month: $(printf '%s' "$j" | jq -r .gb) GB of your $(printf '%s' "$j" | jq -r .budgetGB) GB budget."
+          echo "${G}Relay on${N} (Cloudflare). Last 30 days: $(printf '%s' "$j" | jq -r '.gb*100|floor/100') GB of $(printf '%s' "$j" | jq -r .budgetGB) GB. Today: $(printf '%s' "$j" | jq -r '.todayGB*100|floor/100') of $(printf '%s' "$j" | jq -r .dayGB) GB."
           echo "Logins given today: $(printf '%s' "$j" | jq -r .loginsToday)"
         fi
       else

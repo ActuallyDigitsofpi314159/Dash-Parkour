@@ -346,6 +346,16 @@ setInterval(writeHistory, 5000).unref();
 function dropParty(pid, why) {
   const p = parties.get(pid);
   parties.delete(pid);
+  // [v1.8] the host closed it: its relay logins stop too (they'd work for hours otherwise)
+  if (/^(host closed it|closed by a moderator|a developer)/.test(why || "") && typeof turnIssued !== "undefined") {
+    setTimeout(() => {
+      const c = turnConf();
+      if (!c || c.kind !== "cloudflare") return;
+      let n = 0;
+      for (const [k, t] of turnIssued) if (t.party === pid) revokeTurn(c, t.username), turnIssued.delete(k), n++;
+      if (n) saveIssued();
+    }, 5000);
+  }
   for (const [rid, r] of requests) if (r.party === pid) requests.delete(rid);
   if (p && p.hist) {
     p.hist.ended = Date.now();
@@ -526,23 +536,43 @@ const publicParty = (p) => ({ id: p.id, name: p.name, priv: p.priv, n: p.n, max:
 // comes close) is cancelled.
 const TURN_FILE = path.join(DATA_DIR, "turn.json");
 const TURN_USE_FILE = path.join(DATA_DIR, "turn-usage.json");
+const TURN_ISSUED_FILE = path.join(DATA_DIR, "turn-issued.json");
 const TURN_TTL = 3 * 3600; // seconds each login works for (longer than a party session)
-const TURN_DAY_CAP = 400; // logins a day, everyone together
-const TURN_IP_CAP = 12; // logins a day from one address
-const TURN_LOGIN_MAX = 1e9; // bytes one login may move (a whole evening of DASH is a few MB)
+const TURN_DAY_CAP = 200; // logins a day, everyone together
+const TURN_IP_CAP = 8; // logins a day from one address
+const TURN_PARTY_CAP = 10; // [v1.8] logins a day for one party's join requests
+const TURN_LOGIN_MAX = 300e6; // bytes one login may move (an evening of DASH through the relay is ~50 MB)
+// [v1.8] Cloudflare's free relay traffic is 1,000 GB a month. The guard (see readTurnMeter):
+//  * the meter is Cloudflare's own (it shows traffic about 30 s after it happens), read
+//    every minute: the last 30 days, and today;
+//  * 30 days, not this calendar month, so it doesn't matter which day Cloudflare's billing
+//    month starts: any 30 days stay under budgetGB, and with today's limit any 31 days
+//    stay under budgetGB + dayGB (950 + 60 at most, under 1,000);
+//  * a day's share (dayGB) is the most bots or a misused login can use up: then the relay
+//    is off until tomorrow (UTC), not for the rest of the month;
+//  * the HARD STOP: at the budget, at today's share, when the traffic is fast enough to
+//    reach either within 15 minutes, or when the meter hasn't been read for 10 minutes,
+//    the relay key itself is deleted at Cloudflare (with the account token): every login
+//    ever made from it stops at once, even ones this server has forgotten (a restart).
+//    A new key is made by itself once it is allowed again (tomorrow, or as old traffic
+//    leaves the 30 days). Without the account token, every login given out is cancelled
+//    one by one instead (they are kept in turn-issued.json, so a restart doesn't lose them).
+const CF_FREE_GB = 1000;
 function turnConf() {
   let j = {};
   try {
     j = JSON.parse(fs.readFileSync(TURN_FILE, "utf8")) || {};
   } catch (e) {}
-  if (!j.kind && (j.id || process.env.TURN_KEY_ID)) j.kind = "cloudflare";
+  if (!j.kind && (j.id || j.api || process.env.TURN_KEY_ID)) j.kind = "cloudflare";
   if (j.kind === "cloudflare") {
     j.id = String(j.id || process.env.TURN_KEY_ID || "").trim();
     j.token = String(j.token || process.env.TURN_KEY_TOKEN || "").trim();
     j.account = String(j.account || process.env.CF_ACCOUNT_ID || "").trim();
-    j.analytics = String(j.analytics || process.env.CF_ANALYTICS_TOKEN || "").trim();
-    j.budgetGB = Math.min(950, Math.max(1, Number(j.budgetGB) || 500));
-    if (!j.id || !j.token) return null;
+    j.api = String(j.api || "").trim(); // [v1.8] account token: Calls (Realtime) Edit + Account Analytics Read
+    j.analytics = String(j.analytics || j.api || process.env.CF_ANALYTICS_TOKEN || "").trim();
+    j.budgetGB = Math.min(950, Math.max(1, Number(j.budgetGB) || 900));
+    j.dayGB = Math.min(j.budgetGB / 5, Math.max(1, Number(j.dayGB) || Math.max(10, Math.round(j.budgetGB / 15))));
+    if (!(j.id && j.token) && !(j.api && j.account)) return null;
     return j;
   }
   if (j.kind === "pi" && j.secret && Array.isArray(j.urls) && j.urls.length) return j;
@@ -554,35 +584,55 @@ function turnConf() {
   }
   return null;
 }
-let turnUse = readJson(TURN_USE_FILE, {}); // { month, bytes, at, off, why }
+// { month (kept for dash-party), bytes (last 30 days), today, day, at, rate (bytes/s),
+//   lockUntil, lockWhy }
+let turnUse = readJson(TURN_USE_FILE, {});
 const turnMonth = () => new Date().toISOString().slice(0, 7);
-const turnIssued = new Map(); // owner (party or join request) -> { servers, username, until }
-let turnDay = { day: "", n: 0, ips: new Map() };
+const turnIssued = new Map(); // owner (party or join request) -> { servers, username, until, party }
+for (const [k, t] of Object.entries(readJson(TURN_ISSUED_FILE, {}) || {})) if (t && t.until > Date.now()) turnIssued.set(k, { servers: [], username: t.username, until: t.until, party: t.party });
+function saveIssued() {
+  const o = {};
+  for (const [k, t] of turnIssued) if (t.username) o[k] = { username: t.username, until: t.until, party: t.party };
+  writeJson(TURN_ISSUED_FILE, o);
+}
+let turnDay = { day: "", n: 0, ips: new Map(), parties: new Map() };
+const nextUtcDay = () => {
+  const d = new Date();
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+};
 function turnState() {
   const c = turnConf();
   if (!c) return { on: false, why: "not set up" };
   if (c.kind === "pi") return { on: true, kind: "pi" };
   if (c.kind === "metered") return meteredBad && Date.now() - meteredBad.at < 30 * 60 * 1000 ? { on: false, kind: "metered", why: meteredBad.why } : { on: true, kind: "metered" };
-  if (!c.account || !c.analytics) return { on: false, kind: "cloudflare", why: "no usage meter (account ID and analytics token): off so it can't charge you" };
-  if (turnUse.month !== turnMonth() || !turnUse.at) return { on: false, kind: "cloudflare", why: "waiting for the first usage reading" };
-  if (Date.now() - turnUse.at > 30 * 60 * 1000) return { on: false, kind: "cloudflare", why: "usage meter not read for 30 minutes" };
-  if (turnUse.bytes >= c.budgetGB * 1e9) return { on: false, kind: "cloudflare", why: "monthly budget reached (" + c.budgetGB + " GB)" };
-  return { on: true, kind: "cloudflare", gb: turnUse.bytes / 1e9, budgetGB: c.budgetGB };
+  const info = { kind: "cloudflare", gb: (turnUse.bytes || 0) / 1e9, todayGB: (turnUse.today || 0) / 1e9, budgetGB: c.budgetGB, dayGB: c.dayGB };
+  const off = (why) => Object.assign({ on: false, why }, info);
+  if (!c.account || !c.analytics) return off("no usage meter (account ID and analytics token): off so it can't charge you");
+  if (turnUse.lockUntil && turnUse.lockUntil > Date.now()) return off(turnUse.lockWhy || "stopped");
+  if (!c.id || !c.token) return off("no relay key yet");
+  if (!turnUse.at || turnUse.v !== 2) return off("waiting for the first usage reading");
+  if (Date.now() - turnUse.at > 3 * 60 * 1000) return off("usage meter not read for 3 minutes");
+  if (turnUse.bytes >= c.budgetGB * 1e9 * 0.97) return off("30-day budget nearly used (" + c.budgetGB + " GB)");
+  if (turnUse.today >= c.dayGB * 1e9 * 0.97) return off("today's share used (" + c.dayGB + " GB)");
+  return Object.assign({ on: true }, info);
 }
-function cfRequest(host, pth, token, body) {
+function cfRequest(host, pth, token, body, method) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? "" : JSON.stringify(body);
-    const req = https.request({ method: "POST", host, path: pth, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }, timeout: 10000 }, (res) => {
+    const req = https.request({ method: method || (body === undefined ? "GET" : "POST"), host, path: pth, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }, timeout: 10000 }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => {
         const text = Buffer.concat(chunks).toString("utf8");
-        if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error("Cloudflare said " + res.statusCode));
+        let j = {};
         try {
-          resolve(text ? JSON.parse(text) : {});
-        } catch (e) {
-          reject(e);
+          j = text ? JSON.parse(text) : {};
+        } catch (e) {}
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const m = j && j.errors && j.errors[0] && j.errors[0].message;
+          return reject(Object.assign(new Error("Cloudflare said " + res.statusCode + (m ? ": " + m : "")), { status: res.statusCode }));
         }
+        resolve(j);
       });
     });
     req.on("timeout", () => req.destroy(new Error("timed out")));
@@ -590,8 +640,8 @@ function cfRequest(host, pth, token, body) {
     req.end(data);
   });
 }
-function cloudflareIce(c) {
-  return cfRequest("rtc.live.cloudflare.com", "/v1/turn/keys/" + encodeURIComponent(c.id) + "/credentials/generate-ice-servers", c.token, { ttl: TURN_TTL }).then((j) => {
+function cloudflareIce(c, owner) {
+  return cfRequest("rtc.live.cloudflare.com", "/v1/turn/keys/" + encodeURIComponent(c.id) + "/credentials/generate-ice-servers", c.token, { ttl: TURN_TTL, customIdentifier: String(owner || "").slice(0, 60) }).then((j) => {
     let list = j.iceServers;
     if (list && !Array.isArray(list)) list = [list];
     // (browsers can't use port 53)
@@ -601,8 +651,8 @@ function cloudflareIce(c) {
   });
 }
 function revokeTurn(c, username) {
-  if (!username || !c || c.kind !== "cloudflare") return Promise.resolve();
-  return cfRequest("rtc.live.cloudflare.com", "/v1/turn/keys/" + encodeURIComponent(c.id) + "/credentials/" + encodeURIComponent(username) + "/revoke", c.token).catch((e) => log("TURN: couldn't cancel a login:", e.message));
+  if (!username || !c || c.kind !== "cloudflare" || !c.id || !c.token) return Promise.resolve();
+  return cfRequest("rtc.live.cloudflare.com", "/v1/turn/keys/" + encodeURIComponent(c.id) + "/credentials/" + encodeURIComponent(username) + "/revoke", c.token, {}).catch((e) => log("TURN: couldn't cancel a login:", e.message));
 }
 function revokeAllTurn(why) {
   const c = turnConf();
@@ -614,55 +664,123 @@ function revokeAllTurn(why) {
     }
     turnIssued.delete(k);
   }
+  saveIssued();
   if (n) log("TURN: cancelled", n, "relay logins (" + why + ")");
 }
-// Cloudflare's meter: this month's relay traffic (what it bills), and the logins using the most
+// [v1.8] the relay key (made and deleted with the account token)
+const cfKeysPath = (c) => "/client/v4/accounts/" + encodeURIComponent(c.account) + "/calls/turn_keys";
+function cfMakeKey(c) {
+  return cfRequest("api.cloudflare.com", cfKeysPath(c), c.api, { name: "dash-parkour-" + new Date().toISOString().slice(0, 10) }).then((j) => {
+    const r = j.result || j;
+    if (!r.uid || !r.key) throw new Error("no key in Cloudflare's answer");
+    return { id: String(r.uid), token: String(r.key) };
+  });
+}
+function saveTurnConf(patch) {
+  let j = {};
+  try {
+    j = JSON.parse(fs.readFileSync(TURN_FILE, "utf8")) || {};
+  } catch (e) {}
+  writeJson(TURN_FILE, Object.assign(j, patch));
+}
+let cfStopping = false;
+async function hardStop(why, until) {
+  turnUse.lockUntil = Math.max(turnUse.lockUntil || 0, until);
+  turnUse.lockWhy = why;
+  writeJson(TURN_USE_FILE, turnUse);
+  const c = turnConf();
+  revokeAllTurn(why);
+  if (!c || c.kind !== "cloudflare" || !c.api || !c.account || !c.id || cfStopping) return;
+  cfStopping = true;
+  try {
+    await cfRequest("api.cloudflare.com", cfKeysPath(c) + "/" + encodeURIComponent(c.id), c.api, undefined, "DELETE");
+    saveTurnConf({ id: "", token: "" });
+    log("TURN: HARD STOP (" + why + "): the relay key is deleted, every relay login has stopped");
+  } catch (e) {
+    if (e.status === 404) saveTurnConf({ id: "", token: "" });
+    log("TURN: HARD STOP (" + why + "): couldn't delete the relay key (" + e.message + "), logins cancelled one by one");
+  } finally {
+    cfStopping = false;
+  }
+}
+// Cloudflare's meter: the relay traffic (what it bills), and the logins using the most
 const gqlDay = (d) => d.toISOString().slice(0, 10);
+let meterBusy = false;
 async function readTurnMeter() {
   const c = turnConf();
-  if (!c || c.kind !== "cloudflare" || !c.account || !c.analytics) return;
+  if (!c || c.kind !== "cloudflare" || !c.account || !c.analytics || meterBusy) return;
   if (!/^[0-9a-f]{32}$/i.test(c.account)) return log("TURN: the account ID doesn't look right (32 letters and numbers)");
-  const now = new Date();
-  const start = gqlDay(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));
-  const end = gqlDay(now);
+  meterBusy = true;
   const q = (inner) => cfRequest("api.cloudflare.com", "/client/v4/graphql", c.analytics, { query: '{ viewer { accounts(filter: { accountTag: "' + c.account + '" }) { ' + inner + " } } }" });
-  try {
-    const j = await q('callsTurnUsageAdaptiveGroups(limit: 10000, filter: { date_geq: "' + start + '", date_leq: "' + end + '" }) { dimensions { keyId } sum { egressBytes } }');
+  const sum = async (from) => {
+    const j = await q('callsTurnUsageAdaptiveGroups(limit: 10000, filter: { date_geq: "' + from + '", date_leq: "' + gqlDay(new Date()) + '" }) { dimensions { keyId } sum { egressBytes } }');
     if (j.errors && j.errors.length) throw new Error(String(j.errors[0].message || "query error"));
     const acc = j.data && j.data.viewer && j.data.viewer.accounts && j.data.viewer.accounts[0];
-    if (!acc) throw new Error("no such account (check the account ID and the analytics token's access)");
-    let bytes = 0;
-    for (const g of acc.callsTurnUsageAdaptiveGroups || []) bytes += Number(g.sum && g.sum.egressBytes) || 0;
-    const was = turnState().on;
-    turnUse = { month: turnMonth(), bytes, at: Date.now() };
+    if (!acc) throw new Error("no such account (check the account ID and the token's access)");
+    let b = 0;
+    for (const g of acc.callsTurnUsageAdaptiveGroups || []) b += Number(g.sum && g.sum.egressBytes) || 0;
+    return b;
+  };
+  try {
+    const now = Date.now(), day = gqlDay(new Date());
+    const bytes = await sum(gqlDay(new Date(now - 29 * 864e5)));
+    const today = await sum(day);
+    const prev = turnUse;
+    // (how fast it's going: measured over at least 30 s, the meter's own delay)
+    let rate = prev.v === 2 && prev.day === day ? prev.rate || 0 : 0;
+    if (prev.v === 2 && prev.day === day && prev.at && now - prev.at >= 30000) rate = Math.max(0, (today - prev.today) / ((now - prev.at) / 1000));
+    turnUse = { v: 2, month: turnMonth(), bytes, today, day, at: now, rate, lockUntil: prev.lockUntil || 0, lockWhy: prev.lockWhy || "" };
     writeJson(TURN_USE_FILE, turnUse);
-    const st = turnState();
-    if (was && !st.on) {
-      log("TURN: relay turned off:", st.why);
-      revokeAllTurn(st.why);
+    const soon = rate * 15 * 60; // what 15 more minutes like the last one would add
+    if (bytes + soon >= c.budgetGB * 1e9) {
+      // (stays off until the 30 days have room again: checked once a day)
+      await hardStop("30-day budget (" + c.budgetGB + " GB) reached or about to be", nextUtcDay());
+    } else if (today + soon >= c.dayGB * 1e9) {
+      await hardStop("today's share (" + c.dayGB + " GB) reached or about to be: back tomorrow (UTC)", nextUtcDay());
+    } else if (turnUse.lockUntil && turnUse.lockUntil <= now && c.api && (!c.id || !c.token)) {
+      // allowed again: a new relay key
+      const k = await cfMakeKey(c);
+      saveTurnConf(k);
+      turnUse.lockUntil = 0;
+      turnUse.lockWhy = "";
+      writeJson(TURN_USE_FILE, turnUse);
+      log("TURN: relay back on with a new key");
     }
   } catch (e) {
     log("TURN: couldn't read the usage meter:", e.message);
-    if (turnState().on === false && turnIssued.size) revokeAllTurn("usage meter not readable");
+    meterBusy = false;
     return;
   }
   // logins moving far more than a game would (someone using the relay for something else)
   try {
     const since = gqlDay(new Date(Date.now() - 864e5));
-    const j = await q('callsTurnUsageAdaptiveGroups(limit: 20, orderBy: [sum_egressBytes_DESC], filter: { date_geq: "' + since + '", date_leq: "' + end + '" }) { dimensions { username } sum { egressBytes } }');
+    const j = await q('callsTurnUsageAdaptiveGroups(limit: 20, orderBy: [sum_egressBytes_DESC], filter: { date_geq: "' + since + '", date_leq: "' + gqlDay(new Date()) + '" }) { dimensions { username } sum { egressBytes } }');
     const acc = j.data && j.data.viewer && j.data.viewer.accounts && j.data.viewer.accounts[0];
     for (const g of (acc && acc.callsTurnUsageAdaptiveGroups) || []) {
       const u = g.dimensions && g.dimensions.username;
       if (u && Number(g.sum && g.sum.egressBytes) > TURN_LOGIN_MAX) {
-        log("TURN: cancelling a login that used", Math.round(g.sum.egressBytes / 1e6), "MB");
-        revokeTurn(c, u);
-        for (const [k, t] of turnIssued) if (t.username === u) turnIssued.delete(k);
+        const c2 = turnConf();
+        let known = false;
+        for (const [k, t] of turnIssued) if (t.username === u) { known = true; turnIssued.delete(k); }
+        if (known) {
+          log("TURN: cancelling a login that used", Math.round(g.sum.egressBytes / 1e6), "MB");
+          revokeTurn(c2, u);
+          saveIssued();
+        }
       }
     }
   } catch (e) {}
+  meterBusy = false;
 }
-setInterval(readTurnMeter, 10 * 60 * 1000).unref();
+setInterval(readTurnMeter, 60 * 1000).unref();
 setTimeout(readTurnMeter, 3000).unref();
+// the meter can't be read (Cloudflare or the internet down): no new logins after 3
+// minutes (turnState), and after 10 the hard stop, so nothing runs on unwatched
+setInterval(() => {
+  const c = turnConf();
+  if (!c || c.kind !== "cloudflare" || !c.id) return;
+  if (turnUse.at && Date.now() - turnUse.at > 10 * 60 * 1000 && (turnIssued.size || c.api)) hardStop("usage meter not read for 10 minutes", Date.now() + 5 * 60 * 1000);
+}, 30 * 1000).unref();
 // [v1.6] Metered: its ICE servers list for the app's credential (fetched at most every
 // 10 minutes; the same login for everyone, handed out only as above). Just one
 // relay by UDP and one by TCP (port 443, which gets through the strictest
@@ -712,24 +830,29 @@ function piIce(c) {
   return [{ urls: c.urls.slice(0, 4), username, credential }];
 }
 // owner: "p:" + party id (a host) or "r:" + join request id (a joiner)
-function getIce(owner, ip) {
+// partyId: the party it is for ([v1.8] each party's join requests get a few a day)
+function getIce(owner, ip, partyId) {
   const st = turnState();
   if (!st.on) return Promise.resolve([]);
   const have = turnIssued.get(owner);
-  if (have && have.until - Date.now() > 20 * 60 * 1000) return Promise.resolve(have.servers);
+  if (have && have.servers && have.servers.length && have.until - Date.now() > 20 * 60 * 1000) return Promise.resolve(have.servers);
   const day = gqlDay(new Date());
-  if (turnDay.day !== day) turnDay = { day, n: 0, ips: new Map() };
+  if (turnDay.day !== day) turnDay = { day, n: 0, ips: new Map(), parties: new Map() };
   const ipKey = netKey(ip) || ip;
   const ipN = turnDay.ips.get(ipKey) || 0;
-  if (turnDay.n >= TURN_DAY_CAP || ipN >= TURN_IP_CAP) return Promise.resolve([]);
+  const ptN = (partyId && turnDay.parties.get(partyId)) || 0;
+  if (turnDay.n >= TURN_DAY_CAP || ipN >= TURN_IP_CAP || ptN >= TURN_PARTY_CAP) return Promise.resolve([]);
   turnDay.n++;
   turnDay.ips.set(ipKey, ipN + 1);
+  if (partyId) turnDay.parties.set(partyId, ptN + 1);
   const c = turnConf();
-  const made = c.kind === "pi" ? Promise.resolve(piIce(c)) : c.kind === "metered" ? meteredIce(c) : cloudflareIce(c);
+  const made = c.kind === "pi" ? Promise.resolve(piIce(c)) : c.kind === "metered" ? meteredIce(c) : cloudflareIce(c, owner);
   return made.then(
     (servers) => {
+      if (!turnState().on) return []; // (stopped while asking)
       const login = servers.find((x) => x.username);
-      turnIssued.set(owner, { servers, username: login && login.username, until: Date.now() + TURN_TTL * 1000 });
+      turnIssued.set(owner, { servers, username: login && login.username, until: Date.now() + TURN_TTL * 1000, party: partyId || "" });
+      if (c.kind === "cloudflare") saveIssued();
       return servers;
     },
     (e) => {
@@ -739,7 +862,9 @@ function getIce(owner, ip) {
   );
 }
 setInterval(() => {
-  for (const [k, t] of turnIssued) if (t.until < Date.now()) turnIssued.delete(k);
+  let gone = 0;
+  for (const [k, t] of turnIssued) if (t.until < Date.now()) turnIssued.delete(k), gone++;
+  if (gone) saveIssued();
 }, 10 * 60 * 1000).unref();
 
 // ---------------- HTTP helpers ----------------
@@ -851,7 +976,7 @@ const fmtUp = (sec) => {
 function relayPage(res) {
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>DASH Parkour relay setup</title>
 <style>:root{color-scheme:dark}body{font:17px/1.5 system-ui,-apple-system,sans-serif;background:#0d0f16;color:#f5f4f0;max-width:620px;margin:0 auto;padding:32px 16px}h1{font-size:26px;margin:0 0 6px}ol{padding-left:22px}li{margin:6px 0}code{background:#1b1f2c;padding:1px 6px;border-radius:6px;font-size:15px}label{display:block;font-weight:600;margin:18px 0 6px}input,textarea{width:100%;box-sizing:border-box;font:16px ui-monospace,monospace;background:#151927;color:#f5f4f0;border:2px solid #2c3247;border-radius:10px;padding:10px}textarea{height:110px}button{margin-top:18px;width:100%;font:700 19px system-ui;background:#e11;color:#fff;border:3px solid #000;border-radius:14px;padding:12px;cursor:pointer}button:disabled{opacity:.6}#out{margin-top:18px;padding:12px 14px;border-radius:10px;display:none}.good{background:#14361f;border:1px solid #1f8a4c}.bad{background:#3a1416;border:1px solid #b3261e}small{color:#9aa0b4}</style></head>
-<body><h1>Relay setup</h1><p>For players whose networks block direct links. Uses Metered's free plan: <b>never add a card</b> there, and it can never charge you.</p>
+<body><h1>Relay setup</h1><p><b>Using Cloudflare (1,000 GB a month)?</b> Set it up on <a href="/cloudflare" style="color:#7ab8ff">the Cloudflare page</a> instead.</p><p>For players whose networks block direct links. Uses Metered's free plan: <b>never add a card</b> there, and it can never charge you.</p>
 <ol><li>Log into <a href="https://dashboard.metered.ca" target="_blank" rel="noopener" style="color:#7ab8ff">your Metered dashboard</a> in another tab.</li>
 <li>Open <b>TURN Server</b>, then <b>Developers</b> (or <b>Credentials</b>; add a credential if there isn't one).</li>
 <li>Copy the line or code example that has <code>.metered.live</code> and <code>apiKey=</code> in it (copying the whole example is fine), and paste it below.</li></ol>
@@ -868,8 +993,44 @@ fetch("/api/turnset",{method:"POST",headers:{"Content-Type":"application/json"},
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer" });
   res.end(body);
 }
+// [v1.8] Setting up Cloudflare's relay from a browser: the account ID, ONE account API
+// token (Calls / Realtime: Edit, and Account Analytics: Read) and an admin key. The server
+// checks the token, makes its own relay key with it, and guards it (see the TURN notes).
+function cloudflarePage(res) {
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>DASH Parkour: Cloudflare relay</title>
+<style>:root{color-scheme:dark}body{font:17px/1.5 system-ui,-apple-system,sans-serif;background:#0d0f16;color:#f5f4f0;max-width:640px;margin:0 auto;padding:32px 16px}h1{font-size:26px;margin:0 0 6px}ol{padding-left:22px}li{margin:7px 0}code{background:#1b1f2c;padding:1px 6px;border-radius:6px;font-size:15px}a{color:#7ab8ff}label{display:block;margin:16px 0 6px;font-weight:600}input{width:100%;box-sizing:border-box;padding:11px;border-radius:10px;border:1px solid #39405a;background:#151926;color:#fff;font:15px ui-monospace,Menlo,monospace}button{margin-top:18px;padding:12px 18px;border:0;border-radius:10px;background:#f63;color:#fff;font:700 17px system-ui,sans-serif;cursor:pointer}button.alt{background:#2b3350;margin-left:8px}button:disabled{opacity:.5}#out{display:none;margin-top:18px;padding:14px;border-radius:10px;white-space:pre-line}.good{background:#13381f}.bad{background:#4a1616}small{color:#a9aec2}.box{background:#151926;border-radius:12px;padding:12px 16px;margin:14px 0;color:#cfd3e2;font-size:15px}</style></head>
+<body><h1>Cloudflare relay</h1><p>For players whose networks block direct links. Cloudflare relays <b>1,000 GB a month for free</b>. This server watches Cloudflare's own meter every minute and <b>hard-stops the relay</b> (deletes its key, so every login stops at once) well before that, so it can't go over.</p>
+<ol><li>In the <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">Cloudflare dashboard</a>, copy your <b>Account ID</b> (on the account's home page, at the right under <b>API</b>, or in the address: <code>dash.cloudflare.com/<i>account-id</i>/...</code>).</li>
+<li>Open <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">My Profile, API Tokens</a>, then <b>Create Token</b>, then <b>Create Custom Token</b> (at the bottom).</li>
+<li>Name it <code>dash-parkour</code> and add two permissions (all on <b>Account</b>):<br><code>Calls</code> (it may be called <code>Realtime</code>): <b>Edit</b><br><code>Account Analytics</code>: <b>Read</b></li>
+<li>Under <b>Account Resources</b> pick your account. Leave the rest, then <b>Continue to summary</b> and <b>Create Token</b>, and copy the token.</li>
+<li>Paste both below with your admin key.</li></ol>
+<form id="f"><label for="a">Account ID</label><input id="a" autocomplete="off" spellcheck="false" placeholder="32 letters and numbers">
+<label for="t">API token</label><input id="t" type="password" autocomplete="off" spellcheck="false">
+<label for="g">Limit for any 30 days, in GB <small>(900 if empty; at most 950: the free amount is 1,000)</small></label><input id="g" inputmode="numeric" autocomplete="off" placeholder="900">
+<label for="k">Your admin key <small>(from dash-party keys / setkey)</small></label><input id="k" type="password" autocomplete="off">
+<button id="b" type="submit">Turn the relay on</button><button id="s" class="alt" type="button">Check usage</button></form><div id="out"></div>
+<div class="box"><b>How it's guarded</b><br>Logins only go to games hosting or joining a party (a few a day per address and per party, 200 a day in all). Each login that moves more than 300 MB is cancelled. A day's share (a fifteenth of the limit) is the most any day can use, so bots can only stop the relay until the next day. The hard stop also comes if the traffic is fast enough to reach a limit within 15 minutes, or if Cloudflare's meter can't be read for 10 minutes. The relay comes back by itself, with a new key, once it's allowed again.</div>
+<script>
+var f=document.getElementById("f"),o=document.getElementById("out"),b=document.getElementById("b"),v=function(i){return document.getElementById(i).value.replace(/\\s+/g,"")};
+function show(x){o.className=x.ok?"good":"bad";o.textContent=x.ok?x.j.text:(x.j.error||"That didn't work.");o.style.display="block";b.disabled=false}
+function call(u,d){b.disabled=true;o.style.display="none";fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(show).catch(function(){show({ok:false,j:{error:"Couldn't reach the party server. Try again."}})})}
+f.onsubmit=function(e){e.preventDefault();call("/api/cfset",{account:v("a"),token:v("t"),budget:v("g"),key:v("k")})};
+document.getElementById("s").onclick=function(){call("/api/cfstatus",{key:v("k")})};
+</script></body></html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer" });
+  res.end(body);
+}
+function cfStatusText() {
+  const st = turnState();
+  if (st.kind !== "cloudflare") return st.on ? "The relay is on, but it isn't Cloudflare's (" + (st.kind || "?") + ")." : "The relay is off: " + st.why + ".";
+  const gb = (x) => (Math.round(x * 100) / 100).toLocaleString("en-US");
+  const read = turnUse.at ? Math.round((Date.now() - turnUse.at) / 1000) + " s ago" : "not yet";
+  return (st.on ? "The relay is ON (Cloudflare)." : "The relay is OFF: " + st.why + ".") + "\nLast 30 days: " + gb(st.gb) + " of " + st.budgetGB + " GB\nToday (UTC): " + gb(st.todayGB) + " of " + gb(st.dayGB) + " GB\nMeter read " + read + ". Logins given out today: " + turnDay.n + ".";
+}
 function statusPage(req, res) {
   const players = [...parties.values()].reduce((a, p) => a + p.n, 0);
+  const onl = onlineNow(); // [v1.8] (every game on the website checks in, in a party or not)
   const playing = [...parties.values()].filter((p) => p.playing).length;
   let piUp = 0, load = "";
   try {
@@ -882,7 +1043,7 @@ function statusPage(req, res) {
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="30"><title>DASH Parkour party server</title>
 <style>:root{color-scheme:dark}body{font:17px/1.5 system-ui,-apple-system,sans-serif;background:#0d0f16;color:#f5f4f0;max-width:560px;margin:0 auto;padding:32px 16px}h1{font-size:26px;margin:0 0 4px}.ok{display:inline-block;background:#1f8a4c;color:#fff;border-radius:999px;padding:2px 12px;font-weight:600;font-size:14px}table{border-collapse:collapse;width:100%;margin:22px 0}th,td{text-align:left;padding:9px 0;border-bottom:1px solid #262a38}th{color:#9aa0b4;font-weight:500;width:58%;padding-right:12px}a.play{display:block;text-align:center;background:#e11;color:#fff;text-decoration:none;font-weight:700;font-size:20px;border-radius:14px;padding:14px;border:3px solid #000}small{color:#9aa0b4}</style></head>
 <body><h1>DASH Parkour party server</h1><span class="ok">Online</span>
-<table>${row("Server up for", fmtUp((Date.now() - startedAt) / 1000))}${row("Raspberry Pi up for", piUp ? fmtUp(piUp) : "?")}${row("Parties open", parties.size)}${row("Parties playing", playing)}${row("Players in parties", players)}${row("Parties made since start", stats.made)}${row("Pi load (1 min)", load || "?")}${row("Server memory", mem + " MB")}</table>
+<table>${row("Server up for", fmtUp((Date.now() - startedAt) / 1000))}${row("Raspberry Pi up for", piUp ? fmtUp(piUp) : "?")}${row("Parties open", parties.size)}${row("Parties playing", playing)}${row("Players online", onl.n)}${row("Players in parties", players)}${row("Online, not in a party", Math.max(0, onl.n - players))}${row("Parties made since start", stats.made)}${row("Pi load (1 min)", load || "?")}${row("Server memory", mem + " MB")}</table>
 <a class="play" href="${game}">Play DASH Parkour</a>
 <p><small>This page refreshes every 30 seconds. The game lives at <a href="${game}" style="color:#b8f279">${SITE_DOMAIN + GAME_PATH}</a>.</small></p></body></html>`;
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
@@ -904,6 +1065,7 @@ async function handle(req, res) {
     if (host === PARTY_HOST || host.startsWith("party.") || !SITE_DIR) {
       if (p0 === "/") return statusPage(req, res);
       if (p0 === "/relay") return relayPage(res); // [v1.7]
+      if (p0 === "/cloudflare") return cloudflarePage(res); // [v1.8]
       res.writeHead(302, { Location: "https://" + SITE_DOMAIN + GAME_PATH, "Cache-Control": "no-store" });
       return res.end();
     }
@@ -937,7 +1099,7 @@ async function handle(req, res) {
     const jr = !owner && rid && requests.get(rid);
     if (jr && !jr.done && parties.has(jr.party)) owner = "r:" + rid;
     if (!owner) return send(res, 200, { iceServers: [] });
-    return getIce(owner, ip).then((servers) => send(res, 200, { iceServers: servers }));
+    return getIce(owner, ip, owner.charAt(0) === "p" ? pid : jr.party).then((servers) => send(res, 200, { iceServers: servers }));
   }
   if (req.method === "GET" && p0 === "/api/turn" && (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1")) {
     // [v1.5] for dash-party turn (on the Pi itself only)
@@ -1146,6 +1308,47 @@ async function handle(req, res) {
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
     return send(res, 200, { ok: true });
+  }
+
+  // [v1.8] the Cloudflare relay page (/cloudflare): set up, and usage
+  if (p0 === "/api/cfset" || p0 === "/api/cfstatus") {
+    const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+    if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+    const who = adminFor(String(body.key || "").replace(/\s+/g, ""));
+    if (!who) {
+      t.n++;
+      adminTries.set(ip, t);
+      log("ADMIN: wrong key (Cloudflare page) from", ipKey(ip).slice(0, 8));
+      return fail(res, 403, "That admin key isn't right.", { badKey: true });
+    }
+    if (p0 === "/api/cfstatus") return send(res, 200, { ok: true, text: cfStatusText() });
+    const account = String(body.account || "").trim().toLowerCase();
+    const api = String(body.token || "").trim();
+    const budgetGB = Math.min(950, Math.max(1, Math.floor(Number(body.budget) || 900)));
+    if (!/^[0-9a-f]{32}$/.test(account)) return fail(res, 400, "The Account ID should be 32 letters (a-f) and numbers.");
+    if (!/^[\w-]{20,200}$/.test(api)) return fail(res, 400, "That doesn't look like an API token. Copy it again from Cloudflare.");
+    const c = { kind: "cloudflare", account, api, analytics: api, budgetGB };
+    return (async () => {
+      // the token can read the meter...
+      const g = await cfRequest("api.cloudflare.com", "/client/v4/graphql", api, { query: '{ viewer { accounts(filter: { accountTag: "' + account + '" }) { callsTurnUsageAdaptiveGroups(limit: 1, filter: { date_geq: "' + gqlDay(new Date()) + '", date_leq: "' + gqlDay(new Date()) + '" }) { sum { egressBytes } } } } }' }).catch((e) => ({ errors: [{ message: e.message }] }));
+      if (g.errors && g.errors.length) throw new Error("the token can't read the usage meter (add Account Analytics: Read): " + g.errors[0].message);
+      if (!(g.data && g.data.viewer && g.data.viewer.accounts && g.data.viewer.accounts[0])) throw new Error("the token can't see that account (check the Account ID, and pick the account under Account Resources)");
+      // ...and make (and delete) relay keys
+      const old = turnConf();
+      const k = await cfMakeKey(c).catch((e) => {
+        throw new Error("the token can't make relay keys (add Calls or Realtime: Edit): " + e.message);
+      });
+      if (old && old.kind === "cloudflare" && old.api && old.account && old.id) {
+        cfRequest("api.cloudflare.com", cfKeysPath(old) + "/" + encodeURIComponent(old.id), old.api, undefined, "DELETE").catch(() => {});
+      }
+      revokeAllTurn("relay set up again");
+      writeJson(TURN_FILE, Object.assign(c, k));
+      turnUse = { lockUntil: 0 };
+      writeJson(TURN_USE_FILE, turnUse);
+      await readTurnMeter();
+      log("RELAY: Cloudflare set up from the relay page by", who.name, "(limit " + budgetGB + " GB)");
+      send(res, 200, { ok: true, text: "Done! The relay is set up with Cloudflare.\n\n" + cfStatusText() + "\n\nTest it by joining a party from the game with ?relaytest at the end of its address." });
+    })().catch((e) => fail(res, 400, "Cloudflare didn't accept that: " + e.message));
   }
 
   // [v1.7] the relay setup page (/relay): an admin key and the line pasted from Metered

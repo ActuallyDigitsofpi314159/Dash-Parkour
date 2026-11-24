@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  DASH Parkour: Record the Songs
+  Plays the whole DASH Parkour soundtrack, one song after another, with the song's
+  name on screen and 3 seconds of quiet between songs, for screen recording.
+
+  The songs are the game's own (synthesized live by audio/dash-audio.js from
+  audio/dash-music.js). Each one plays one full time through; the songs that follow
+  the game (the bosses, the vortex, the chase, the cutscenes) are played along a
+  scripted run of the game, so their layers, key changes and endings all happen.
+
+  Controls (they hide while it plays; move the mouse to see them):
+    START / click a song in the list to start from it.  Space: pause.  N: next song.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DASH Parkour Soundtrack</title>
+<script src="audio/dash-audio.js"></script>
+<script src="audio/dash-music.js"></script>
+<script src="audio/dash-sfx.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #fdffff; color: #000; font-family: "Trebuchet MS", Arial, sans-serif; overflow: hidden; }
+  body {
+    background-image: linear-gradient(100deg, transparent 48%, #00c8ff22 49%, #00c8ff22 51%, transparent 52%), linear-gradient(-8deg, transparent 47%, #00c8ff22 48%, #00c8ff22 52%, transparent 53%);
+    background-size: 64px 64px, 64px 64px;
+  }
+  body.rec { cursor: none; }
+  #stage { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; box-sizing: border-box; }
+  #brand { font-weight: 900; letter-spacing: 6px; font-size: clamp(14px, 2.2vw, 22px); color: #f00; }
+  #brand span { color: #000; }
+  #card { margin-top: 18px; width: min(820px, 92vw); background: #fff; border: 7px solid #000; border-radius: 30px; box-shadow: 12px 12px 0 #0002; padding: clamp(18px, 4vw, 40px) clamp(18px, 4vw, 48px); box-sizing: border-box; transition: opacity .6s; }
+  #num { font-weight: 800; color: #888; letter-spacing: 3px; font-size: clamp(12px, 1.6vw, 16px); }
+  #name { font-weight: 900; font-size: clamp(30px, 6.4vw, 70px); line-height: 1.05; margin: 10px 0 8px; }
+  #where { font-size: clamp(14px, 2vw, 20px); color: #444; min-height: 1.3em; }
+  #barwrap { margin: 22px auto 0; height: 14px; border: 4px solid #000; border-radius: 99px; background: #ffdede; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: #f00; }
+  #time { margin-top: 8px; font-size: 14px; color: #666; font-variant-numeric: tabular-nums; }
+  #next { margin-top: 18px; font-size: clamp(14px, 1.8vw, 18px); color: #666; min-height: 1.3em; transition: opacity .4s; }
+  #controls { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px; display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; transition: opacity .4s; }
+  body.rec #controls { opacity: 0; pointer-events: none; }
+  button { padding: 9px 16px; border: 4px solid #000; border-radius: 14px; background: #fff; font: 800 15px "Trebuchet MS", Arial, sans-serif; cursor: pointer; }
+  button.red { background: #f00; color: #fff; }
+  #list { position: fixed; top: 12px; right: 12px; width: 260px; max-height: calc(100% - 90px); overflow: auto; background: #fff; border: 4px solid #000; border-radius: 16px; padding: 8px; box-sizing: border-box; transition: opacity .4s; }
+  body.rec #list { opacity: 0; pointer-events: none; }
+  #list div { padding: 6px 8px; border-radius: 9px; cursor: pointer; font-size: 14px; }
+  #list div:hover { background: #e8f9ff; }
+  #list div.on { background: #f00; color: #fff; font-weight: 800; }
+  #help { font-size: 13px; color: #555; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="brand">DASH <span>PARKOUR</span> &nbsp;·&nbsp; <span>SOUNDTRACK</span></div>
+  <div id="card">
+    <div id="num">READY</div>
+    <div id="name">Press START</div>
+    <div id="where">Every song in the game, one after another.</div>
+    <div id="barwrap"><div id="bar"></div></div>
+    <div id="time">&nbsp;</div>
+  </div>
+  <div id="next"></div>
+</div>
+<div id="list"></div>
+<div id="controls">
+  <button id="start" class="red" type="button">START</button>
+  <button id="pause" type="button">PAUSE</button>
+  <button id="skip" type="button">NEXT SONG</button>
+  <span id="help">Controls hide while it plays (move the mouse to see them). Space: pause. N: next song.</span>
+</div>
+<script>
+(function () {
+  "use strict";
+  var DA = window.DashAudio;
+  var SONGS = window.DASH_SONGS || {};
+  var GAP = 3; // seconds of quiet between songs
+
+  // ---- how long things are (one bar = 4 beats unless the song says otherwise) ----
+  function barSec(song) { return (song.bpb || 4) * 60 / song.bpm; }
+  function secOf(name, sec) { var s = SONGS[name]; return s.sections[sec].bars * barSec(s); }
+  function sumOf(name, list) { var t = 0; list.forEach(function (n) { t += secOf(name, n); }); return t; }
+  // the sections from the start until the song comes back round to one it has played
+  function onePass(name) {
+    var s = SONGS[name], seen = {}, cur = s.start, out = [];
+    while (cur && !seen[cur] && typeof cur === "string" && s.sections[cur]) {
+      seen[cur] = 1; out.push(cur);
+      cur = s.sections[cur].next;
+    }
+    return out;
+  }
+
+  // ---- the scripts: [seconds into the song, the game's state then] ----
+  // (the same state the game sends every frame, see dashMusicTick in index.html)
+  function linear(name) {
+    return { length: sumOf(name, onePass(name)), steps: [[0, {}]] };
+  }
+  function cutscene(name, cut) {
+    // the cutscene clock (frames, in quarter seconds) runs along with it
+    var secs = onePass(name), len = sumOf(name, secs);
+    var steps = [];
+    for (var t = 0; t < len; t += 0.25) steps.push([t, { cut: cut, cf: Math.floor(t * 60 / 15) * 15 }]);
+    return { length: len, steps: steps };
+  }
+  function boss(name, attacks, waves) {
+    var intro = sumOf(name, ["intro", "introLoop"]);
+    var fight = sumOf(name, ["A", "B", "A", "B"]);
+    var steps = [[0, { boss: "intro", wave: 1 }]], t = intro, w = 1, ai = 0;
+    var per = fight / waves; // each wave: moves, an attack or two, then the opening
+    for (var wv = 0; wv < waves; wv++) {
+      var t0 = t;
+      steps.push([t0, { boss: "moving", wave: w }]);
+      steps.push([t0 + per * 0.18, { boss: "attack", wave: w, atk: attacks[ai++ % attacks.length] }]);
+      steps.push([t0 + per * 0.5, { boss: "moving", wave: w }]);
+      steps.push([t0 + per * 0.6, { boss: "attack", wave: w, atk: attacks[ai++ % attacks.length] }]);
+      steps.push([t0 + per * 0.85, { boss: "vulnerable", wave: w }]);
+      t += per; w++;
+    }
+    steps.push([t, { boss: "dead", wave: w - 1 }]);
+    // the end section starts on the next beat and the song stops by itself after it
+    return { length: t + secOf(name, "end") + 2, steps: steps, endsItself: true };
+  }
+  function vortex() {
+    var n = "final2", bar = barSec(SONGS.final2);
+    var steps = [], t = 0;
+    function st(at, lives, vstate, stab) { steps.push([at, { vortex: lives, vstate: vstate, stab: stab }]); }
+    st(0, 5, "SURVIVAL", 100);
+    st(bar * 10, 5, "SURVIVAL", 50);              // the vortex weakening (danger layer)
+    st(bar * 14, 5, "STABILIZE_VORTEX", 40);      // the alarm: touch the points
+    st(bar * 18, 4, "SURVIVAL", 100);             // a life broken: crash, boom, timpani
+    st(bar * 26, 4, "STABILIZE_VORTEX", 40);
+    st(bar * 30, 3, "SURVIVAL", 100);             // D minor
+    st(bar * 38, 3, "SURVIVAL", 50);
+    st(bar * 42, 3, "STABILIZE_VORTEX", 40);
+    st(bar * 46, 2, "SURVIVAL", 100);             // E-flat minor
+    st(bar * 54, 2, "STABILIZE_VORTEX", 40);      // the final stabilisation: the hero's theme
+    // the vortex breaks during the hero's phrase (the intoArea1 cutscene): the phrase
+    // finishes, then the escape follows the cutscene's clock, which starts when it does
+    var escAt = bar * 54 + sumOf(n, ["Hin", "H"]) + bar, escT0 = 0, holdT = 0;
+    return {
+      length: escAt + sumOf(n, ["H2"]) + 22, steps: steps,
+      live: function (t, P) {
+        if (t < escAt) return null;
+        if (!escT0 && P && /^(e\d|escHold)$/.test(P.secName)) escT0 = t;
+        return { cut: "intoArea1", cf: escT0 ? Math.floor((t - escT0) * 60 / 15) * 15 : 0 };
+      },
+      done: function (t, P) {
+        if (P && P.secName === "escHold" && !holdT) holdT = t;
+        return holdT && t - holdT > 2;
+      }
+    };
+  }
+  function ech0() {
+    var s = linear("ech0");
+    s.steps = [[0, { ech0: "far" }], [s.length * 0.45, { ech0: "near" }], [s.length * 0.8, { ech0: "far" }]];
+    return s;
+  }
+  function final3() {
+    var s = linear("final3");
+    s.steps = [[0, { chase: 1 }]];
+    return s;
+  }
+
+  var PLAYLIST = [
+    { song: "title", name: "Title Screen", where: "The title screen and menus", plan: function () { return linear("title"); } },
+    { song: "prologue", name: "Prologue", where: "The opening cutscene", plan: function () { return cutscene("prologue", "intro"); } },
+    { song: "area1", name: "Area 1", where: "Levels 1-1 to 1-3", plan: function () { return linear("area1"); } },
+    { song: "guard1", name: "The Diamond Guard", where: "Boss of Area 1", plan: function () { return boss("guard1", ["bullets", "icicles", "bombs", "spikes"], 3); } },
+    { song: "area2", name: "Area 2", where: "Levels 2-1 to 2-3", plan: function () { return linear("area2"); } },
+    { song: "guard2", name: "The Emerald Guard", where: "Boss of Area 2", plan: function () { return boss("guard2", ["icicles", "bombs", "spikes", "bullets"], 3); } },
+    { song: "area3", name: "Area 3", where: "Levels 3-1 to 3-3", plan: function () { return linear("area3"); } },
+    { song: "guard3", name: "The Ruby Guard", where: "Boss of Area 3", plan: function () { return boss("guard3", ["bombs", "spikes", "bullets", "icicles"], 3); } },
+    { song: "cutPortal", name: "The Portal", where: "Cutscene: the way into Area X", plan: function () { return cutscene("cutPortal", "victory?"); } },
+    { song: "areaX", name: "Area X", where: "Levels X-1 and X-2", plan: function () { return linear("areaX"); } },
+    { song: "ech0", name: "ECH0 Chase", where: "X-3: the race against ECH0", plan: ech0 },
+    { song: "final1", name: "The Parkour Master", where: "X-4: Final Stage 1", plan: function () { return boss("final1", ["laser", "fall", "decay", "poison"], 5); } },
+    { song: "cutMasterX", name: "Master X", where: "Cutscene: Master X appears", plan: function () { return cutscene("cutMasterX", "masterX"); } },
+    { song: "final2", name: "The Vortex", where: "X-4: Final Stage 2, and the escape", plan: vortex },
+    { song: "final3", name: "The Final Chase", where: "X-4: Final Stage 3", plan: final3 },
+    { song: "ending", name: "Ending", where: "The ending and credits", plan: function () { return cutscene("ending", "victory"); } },
+    { song: "shop", name: "The Shop", where: "Bonus: the Shop", plan: function () { return linear("shop"); } }
+  ].filter(function (e) { return SONGS[e.song]; });
+
+  // ---- the page ----
+  var $ = function (id) { return document.getElementById(id); };
+  var list = $("list");
+  PLAYLIST.forEach(function (e, i) {
+    var d = document.createElement("div");
+    d.textContent = (i + 1) + ". " + e.name;
+    d.onclick = function () { begin(i); };
+    list.appendChild(d);
+  });
+  function fmt(s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + ("0" + s % 60).slice(-2); }
+  function mark(i) { [].forEach.call(list.children, function (d, k) { d.className = k === i ? "on" : ""; }); }
+
+  // ---- playing ----
+  var cur = -1, plan = null, songT0 = 0, stepI = 0, state = {}, phase = "idle", gapT0 = 0, paused = false, pausedAt = 0;
+  function now() { return performance.now() / 1000; }
+  function pushState(st) {
+    state = st;
+    for (var i = 0; i < 3; i++) DA.state(st); // (a new state counts once it has held: see DA.state)
+  }
+  function begin(i) {
+    if (!DA) return;
+    DA.setVolume(0.9, 0.7);
+    DA.music("");
+    pushState({});
+    cur = i;
+    startSong();
+  }
+  function startSong() {
+    var e = PLAYLIST[cur];
+    plan = e.plan();
+    stepI = 0;
+    pushState(plan.steps[0][1]);
+    stepI = 1;
+    DA.music(e.song);
+    songT0 = now();
+    phase = "song";
+    paused = false;
+    mark(cur);
+    $("num").textContent = "TRACK " + (cur + 1) + " OF " + PLAYLIST.length;
+    $("name").textContent = e.name;
+    $("where").textContent = e.where;
+    $("card").style.opacity = 1;
+    $("next").textContent = "";
+    document.body.classList.add("rec");
+  }
+  function endSong() {
+    DA.music("");
+    pushState({});
+    phase = "gap";
+    gapT0 = now();
+    var nx = PLAYLIST[cur + 1];
+    $("bar").style.width = "100%";
+    $("next").textContent = nx ? "Next: " + nx.name : "";
+    if (!nx) {
+      $("num").textContent = "THE END";
+      $("next").textContent = "Thanks for listening!";
+      phase = "done";
+      document.body.classList.remove("rec");
+    }
+  }
+  function tick() {
+    if (phase === "song" && !paused) {
+      var t = now() - songT0;
+      while (stepI < plan.steps.length && plan.steps[stepI][0] <= t) pushState(plan.steps[stepI++][1]);
+      var live = plan.live && plan.live(t, DA.current);
+      if (live) state = live;
+      DA.state(state);
+      $("bar").style.width = Math.min(100, t / plan.length * 100) + "%";
+      $("time").textContent = fmt(t) + " / " + fmt(plan.length);
+      var P = DA.current;
+      var endedItself = plan.endsItself && t > 2 && (!P || P.ended);
+      if (t >= plan.length || endedItself || plan.done && plan.done(t, P)) endSong();
+    } else if (phase === "gap" && now() - gapT0 >= GAP) {
+      cur++;
+      startSong();
+    }
+  }
+  setInterval(tick, 50);
+
+  $("start").onclick = function () { begin(cur >= 0 && phase !== "done" ? cur : 0); };
+  $("skip").onclick = function () { if (cur >= 0 && phase === "song") endSong(); };
+  function togglePause() {
+    if (phase !== "song") return;
+    paused = !paused;
+    DA.pause(paused);
+    var ctx = DA.contexts().ui && DA.contexts().ui.ctx;
+    if (ctx) { if (paused) ctx.suspend(); else ctx.resume(); }
+    if (paused) pausedAt = now(); else songT0 += now() - pausedAt;
+    $("pause").textContent = paused ? "RESUME" : "PAUSE";
+  }
+  $("pause").onclick = togglePause;
+  window.addEventListener("keydown", function (e) {
+    if (e.key === " ") { e.preventDefault(); togglePause(); }
+    if (e.key === "n" || e.key === "N") $("skip").onclick();
+  });
+  // the controls come back while the mouse moves
+  var hideT = 0;
+  window.addEventListener("mousemove", function () {
+    if (phase !== "song" && phase !== "gap") return;
+    document.body.classList.remove("rec");
+    clearTimeout(hideT);
+    hideT = setTimeout(function () { if (phase === "song" || phase === "gap") document.body.classList.add("rec"); }, 1800);
+  });
+  if (!DA) { $("name").textContent = "Couldn't load the music"; $("where").textContent = "Open this page from the dash-parkour folder (next to audio/)."; }
+})();
+</script>
+</body>
+</html>

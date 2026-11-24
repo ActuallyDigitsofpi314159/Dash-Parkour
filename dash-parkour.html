@@ -523,9 +523,24 @@ dkGetAudioContext = function () {
   return dkGetAudioContextUnpaused();
 };
 var dashMusicNow = "", dashMusicSource = null;
+// [v1.8] A new song starts once the game has asked for it for a moment (stopping is at
+// once): a spectator's screen going back and forth between two songs every frame built
+// a whole new song each time, and the page ran out of memory.
+var dashMusicWant = null, dashMusicWantAt = 0, dashMusicWantTimer = 0;
 window.dashMusic = function (track) {
   if (window.__dashBootHold) track = ""; // [v1.5] (silent behind the save code screen)
-  if (track === dashMusicNow) return;
+  if (track === dashMusicNow) { dashMusicWant = null; return; }
+  if (track) {
+    if (track !== dashMusicWant) {
+      dashMusicWant = track;
+      dashMusicWantAt = Date.now();
+      clearTimeout(dashMusicWantTimer);
+      dashMusicWantTimer = setTimeout(function () { if (dashMusicWant === track) window.dashMusic(track); }, 260);
+      return;
+    }
+    if (Date.now() - dashMusicWantAt < 250) return;
+  }
+  dashMusicWant = null;
   dashMusicNow = track;
   if (dashMusicSource) {
     try { dashMusicSource.stop(0); } catch (e) {}
@@ -29181,8 +29196,8 @@ function program() {
       p.grounded = true;
       p.vy = 0;
       p.isVariableJumping = false;
-    } else if (mtv.y > 0 && p.vy < 0) {
-      p.vy = 0;
+    } else if (mtv.y > 0 && p.vy < (box.vy || 0)) {
+      p.vy = box.vy || 0; // ([v1.8] a falling platform carries a head that hit it down with it)
       p.isVariableJumping = false;
     }
     if (__p.abs(mtv.x) > __p.abs(mtv.y)) {
@@ -41634,6 +41649,7 @@ function program() {
     return b && b.bossNum >= 1 && b.bossNum <= 3 ? b.bossNum - 1 : 0;
   };
   Boss.prototype.startFight = function () {
+    this.mpTry = (this.mpTry || 0) + 1; // [v1.8]
     mpBossReseed(this, true); // [MP]
     if (!this.isMinion) {
       this.fade = 1; // [v1.1] seen again after a defeat faded it out
@@ -41658,7 +41674,9 @@ function program() {
   // Boss MOVING
   Boss.prototype.prepareMoves = function () {
     this.moveQueue = ["ground", "ground", "jump", "jump", "jump", "jump"];
-    this.moveQueue = shuffleArray(this.moveQueue);
+    // ([v1.8] spectated: the same on the spectator's screen. A shared Linked fight keeps
+    // its own way, so older games in the party still match)
+    this.moveQueue = !mpSyncOn() && mpBossSeeded() ? mpBossShuffle(this.moveQueue) : shuffleArray(this.moveQueue);
     this.moveCount = 0;
     if (this.printDebug) {
       __p.println("Movement queue prepared.");
@@ -42681,10 +42699,18 @@ function program() {
             p.y += hitPlat.y;
 
             // If displacement vector pushed player UP, they are standing on top
-            if (hitPlat.y < 0) {
+            if (hitPlat.y < 0 && __p.abs(hitPlat.y) >= __p.abs(hitPlat.x)) {
               applyLandingSquash();
               p.vy = plat.vy; // Match the platform speed to stop jittering
               p.grounded = true; // Trigger engine grounding if tracked
+            } else if (hitPlat.y > 0 && p.vy < plat.vy) {
+              // [v1.8] head hit from below: the jump ends there and Dash drops with the
+              // platform (the jump kept pushing up into it: Dash hung under it for a second)
+              p.vy = plat.vy;
+              p.isVariableJumping = false;
+            }
+            if (__p.abs(hitPlat.x) > __p.abs(hitPlat.y)) {
+              p.vx = 0; // (its side)
             }
           }
 
@@ -46652,6 +46678,7 @@ function program() {
   //]
 
   // Draw loop
+  var redLightFreeze = false; // [v1.8]
   var gameRealDT = 1,
     gamePaused = false,
     gamePauseFrame = 0;
@@ -46668,7 +46695,10 @@ function program() {
     if (typeof mpRacePaused === "function" && mpRacePaused()) {
       gamePaused = true;
     }
-    if (gamePaused) {
+    // [v1.8] FREEZE mode's red light: the world stands still too, but the players
+    // (and the camera) keep moving: see the player physics below
+    redLightFreeze = !gamePaused && !loading && typeof mpFreezeWorld === "function" && mpFreezeWorld();
+    if (gamePaused || redLightFreeze) {
       DT = 0;
       __p.frameCount = gamePauseFrame;
     } else {
@@ -47076,12 +47106,14 @@ function program() {
               if (activeSub === "General") {
                 // [v1.1] Copy save code (for phones and tablets: no P key)
                 var cyS = 130 + items.length * 72;
-                var cbX = cardX + cardW - 112,
+                var cbX = cardX + cardW - 92, // [v1.8] (narrower: LOAD sits beside it)
                   cbY = cyS + 12;
+                var lbX = cbX - 86; // [v1.8] LOAD: paste a code from another device
                 var cHover = worldMouseX > cardX && worldMouseX < cardX + cardW && worldMouseY > cyS && worldMouseY < cyS + 60;
+                var lHover = cHover && worldMouseX > lbX - 3 && worldMouseX < lbX + 83;
                 if (cHover) {
                   hoverDescKey = "copySave";
-                  descText = "Copies your save code, so you can keep it somewhere safe or paste it on another device.\n\nIt also saves by itself on this device whenever your progress changes.";
+                  descText = "COPY: copies your save code, so you can keep it somewhere safe or paste it on another device.\n\nLOAD: paste a save code here to play with that progress.\n\nIt also saves by itself on this device whenever your progress changes.";
                   descFadeTarget = 1;
                   __p.cursor(__p.HAND);
                 }
@@ -47095,14 +47127,22 @@ function program() {
                 var copiedNow = __p.millis() - (window.__dashCopiedAt || 0) < 1600;
                 __p.fill(copiedNow ? __p.color(0, 170, 90) : __p.color(255, 0, 0));
                 __p.noStroke();
-                __p.rect(cbX, cbY, 96, 36, 10);
+                __p.rect(cbX, cbY, 80, 36, 10);
                 __p.stroke(255);
                 arcAlign(__p.CENTER);
+                arcSize(copiedNow ? 7.5 : 9);
+                arcText(copiedNow ? "COPIED!" : "COPY", cbX + 40, cbY + 22);
                 arcSize(9);
-                arcText(copiedNow ? "COPIED!" : "COPY", cbX + 48, cbY + 22);
+                __p.fill(lHover ? __p.color(0, 150, 230) : __p.color(0, 120, 200));
+                __p.noStroke();
+                __p.rect(lbX, cbY, 80, 36, 10);
+                __p.stroke(255);
+                arcText("LOAD", lbX + 40, cbY + 22);
                 arcAlign(__p.LEFT);
                 if (typeof mobileGesture === "function") {
-                  mobileGesture(cardX, cyS, cardW, 60, dashCopySave); // runs inside the tap or click itself
+                  // (both run inside the tap or click itself: copying, and the phone keyboard)
+                  mobileGesture(lbX - 3, cyS, 86, 60, dashLoadSavePanel);
+                  mobileGesture(lbX + 83, cyS, cardX + cardW - lbX - 83, 60, dashCopySave);
                 }
               }
 
@@ -47841,8 +47881,8 @@ function program() {
             // [DELTA] Player physics runs in sub-steps of at most one 60 fps frame, so a
             // slow frame (down to the 8 fps clamp) can never carry the player through
             // a wall or platform. At 60 fps and above this is a single pass.
-            var physDT = DT;
-            var physSteps = DT > 1 ? Math.ceil(DT - 1e-9) : 1;
+            var physDT = redLightFreeze ? gameRealDT : DT; // [v1.8] (the players move on a red light)
+            var physSteps = physDT > 1 ? Math.ceil(physDT - 1e-9) : 1;
             for (var physStep = 0; physStep < physSteps; physStep++) {
             DT = physDT / physSteps;
             SIMT = __p.frameCount - physDT + DT * (physStep + 1);
@@ -48198,7 +48238,7 @@ function program() {
               break;
             }
             }
-            DT = physDT;
+            DT = redLightFreeze ? 0 : physDT;
             SIMT = __p.frameCount;
             var activeSignText = null;
             dashSignShown = null; // [v1.2] (for the sign sound)
@@ -48245,7 +48285,7 @@ function program() {
               p.health = 0;
             }
             if (p.deathFrames > 0 && !p.gameOver) {
-              p.deathFrames += DT;
+              p.deathFrames += redLightFreeze ? gameRealDT : DT; // [v1.8] (out on a red light: back at once)
               if (settings.instantRespawn || MP.awayDeath) {
                 p.deathFrames = 314159;
                 MP.awayDeath = false;
@@ -48329,7 +48369,14 @@ function program() {
               p.health = 0;
             }
             mpSpectateCam(); // [v1.3] the camera follows the player being watched
-            updateCamera();
+            if (redLightFreeze) {
+              var camKeepDT = DT;
+              DT = gameRealDT; // [v1.8] (follows the players on a red light)
+              updateCamera();
+              DT = camKeepDT;
+            } else {
+              updateCamera();
+            }
             mpRaceCam(); // [v1.7] (to the winner when a race is won)
             admCamera(); // [ADMIN] freecam
 
@@ -49400,6 +49447,9 @@ function program() {
             if (!p.dead && !mpSpecOn() && !admDrawPlayer()) {
               mpLocalTint();
               p.draw();
+              if (MP.active) {
+                mpTeamTint(p.x, p.y, p.w, p.h, mpColorOf(MP.myId), currentSkin); // [v1.8]
+              }
               dashTint = null;
             }
             skinFxRun(); // [v1.6] skin spawn / death animations and trails
@@ -52040,6 +52090,27 @@ function program() {
           __p.rect(-60 - widePad, cRectY[1], 660 + widePad * 2, 70);
           skipButton(500 + widePad, 545);
         }
+        // [v1.8] the website starts without a start screen: a first click, tap or key
+        // starts the game (and its sounds, which can't play before one)
+        if (window.__dashTapStart && !logoIs) {
+          var tsK = 0.75 + 0.25 * Math.sin(__p.millis() / 260);
+          __p.noStroke();
+          __p.fill(0, 150);
+          __p.rect(-widePad - 10, 0, 620 + widePad * 2, 600);
+          __p.fill(255);
+          __p.stroke(0);
+          __p.strokeWeight(6);
+          __p.rect(150, 236, 300, 128, 24);
+          __p.stroke(255, 0, 0);
+          arcAlign(__p.CENTER);
+          arcSize(14);
+          arcText("DASH PARKOUR", 300, 284);
+          __p.stroke(0, 0, 0, 255 * tsK);
+          arcSize(9);
+          arcText(window.__dashTouch && window.__dashTouch.active() ? "TAP TO START" : "CLICK OR PRESS A KEY", 300, 330);
+          arcAlign(__p.LEFT);
+          __p.strokeWeight(1);
+        }
 
         // Portal animation
         xPortalRot -= 3 * DT;
@@ -52274,13 +52345,34 @@ function program() {
       MP.fields.name = savedPlayerName; // [v1.1] the name from the save code
     }
   } catch (e) {}
-  var mpColorOf = function mpColorOf(id) {
+  // [v1.8] a player's colour (index into MP_COLORS): in RELAY, their team's
+  var mpColorIdx = function mpColorIdx(id) {
+    if (MP.mode === "relay") {
+      var tm = mpTeamOf(id);
+      if (tm >= 0) {
+        return MP_TEAM_COLORS[tm % MP_TEAM_COLORS.length];
+      }
+    }
     var pl = MP.players[id];
-    var c = MP_COLORS[(pl ? pl.color : 0) % MP_COLORS.length];
+    return pl ? pl.color : 0;
+  };
+  var mpColorOf = function mpColorOf(id) {
+    var c = MP_COLORS[mpColorIdx(id) % MP_COLORS.length];
     return __p.color(c[0], c[1], c[2]);
   };
   var mpMyColor = function mpMyColor() {
-    return MP.players[MP.myId] ? MP.players[MP.myId].color : 0;
+    return mpColorIdx(MP.myId);
+  };
+  // [v1.8] RELAY and FREEZE play like a race (each player in their own world, first to
+  // the finish wins), with more on top: see the RELAY and FREEZE sections
+  var MP_MODES = ["linked", "race", "relay", "freeze"];
+  var mpRaceLike = function mpRaceLike(mode) {
+    mode = mode === undefined ? MP.mode : mode;
+    return mode === "race" || mode === "relay" || mode === "freeze";
+  };
+  var mpModeName = function mpModeName(mode) {
+    mode = mode === undefined ? MP.mode : mode;
+    return mode === "race" ? "Race" : mode === "relay" ? "Relay" : mode === "freeze" ? "Freeze" : "Linked";
   };
   var mpToast = function mpToast(t) {
     MP.toast = t;
@@ -53040,6 +53132,7 @@ function program() {
     if (!MP.isHost) {
       return;
     }
+    mpTeamsFix(true); // [v1.8] (players came or went)
     for (var i = 0; i < MP.links.length; i++) {
       mpSendRaw(MP.links[i], {
         t: "roster",
@@ -53047,6 +53140,7 @@ function program() {
         hcv: MP_CV, // [v1.6] (this host reads changes-only states)
         mode: MP.mode,
         unlock: lvlUnlock,
+        tm: MP.teams,
         p: mpRoster()
       });
     }
@@ -53117,6 +53211,14 @@ function program() {
     MP.finished = false;
     MP.spectating = false;
     MP.specRun = false;
+    MP.relayWait = false; // [v1.8]
+    MP.relayRun = null;
+    MP.teams = null;
+    MP.teamsNow = null;
+    MP.teamsOpen = false;
+    MP.fz = null;
+    MP.fzRed = null;
+    MP.fzHost = null;
     if (typeof ADM !== "undefined") {
       ADM.spectate = false; // [v1.4] (a new party starts playing)
     }
@@ -53245,7 +53347,7 @@ function program() {
     if (!MP.active || mpCount() < 2) {
       return true;
     }
-    if (MP.mode === "race") {
+    if (mpRaceLike()) {
       if (name === "end" || name === "victory") {
         mpRaceFinish();
       }
@@ -53344,7 +53446,9 @@ function program() {
     "crashed into a wall": "hit a wall of pure aura",
     "was zapped by a beam": "got zapped by the 67 Aura King's sigma beam",
     "was swallowed by the vortex": "got sucked into Ohio by the vortex",
-    "was hit by debris": "got Fanum taxed by flying debris"
+    "was hit by debris": "got Fanum taxed by flying debris",
+    "moved on a red light": "got caught lacking on a red light",
+    "moved last on a red light": "got caught lacking last on a red light"
   };
   var brainrotDeath = function brainrotDeath(msg) {
     var b = msg ? BRAINROT_DEATHS[msg] : "lost all their aura";
@@ -53370,12 +53474,20 @@ function program() {
     // "jamal burned in lava" in everyone's chat
     var who = MP.players[MP.myId] ? MP.players[MP.myId].name : "Player";
     var line = who + " " + (currentSkin === 17 ? brainrotDeath(p.lastHurtBy) : p.lastHurtBy || "died");
+    var relayNext = mpRelayNext(); // [v1.8] RELAY: a teammate takes over
+    if (relayNext >= 0 && MP.players[relayNext]) {
+      line += ". " + MP.players[relayNext].name + " takes over!";
+    }
     p.lastHurtBy = undefined;
     mpChatLine("", line, -1);
     mpBroadcast({
       t: "sys",
       x: line
     });
+    if (relayNext >= 0) {
+      p.lives++; // (no life lost: the turn passes)
+      mpRelayPass(relayNext);
+    }
     if (MP.mode === "linked") {
       mpBroadcast({
         t: "die",
@@ -53418,8 +53530,15 @@ function program() {
     };
   };
   // Boss logic calls this instead of random() (same arguments).
+  // [v1.8] the boss also uses the shared numbers while someone spectates this game, and
+  // in a spectator's game: the spectator's copy of the fight then makes the same choices
+  // as the one it watches (it made its own, was snapped back to the watched one's many
+  // times a second, and its attacks, sounds and music stuttered between the two)
+  var mpBossSeeded = function mpBossSeeded() {
+    return mpSyncOn() || MP.active && scene === "game" && (MP.spectating && mpWorldSrc() >= 0 || mpWatchedBy());
+  };
   var mpBossRandom = function mpBossRandom(a, b) {
-    if (!mpSyncOn() || !MP.bossRng) {
+    if (!mpBossSeeded() || !MP.bossRng) {
       return b === undefined ? __p.random(a) : __p.random(a, b);
     }
     var r = MP.bossRng();
@@ -53440,7 +53559,9 @@ function program() {
     if (fresh || b.mpEc === undefined) {
       b.mpEc = 0;
     }
-    MP.bossRng = mpRng(mpHash(MP.session, b.bossNum + (b.isMinion ? "m" : ""), b.mpEc));
+    // ([v1.8] + which try at the fight this is, outside a shared Linked fight: each try
+    // still gets new attacks)
+    MP.bossRng = mpRng(mpHash(MP.session, b.bossNum + (b.isMinion ? "m" : "") + (mpSyncOn() ? "" : ":" + (b.mpTry || 0)), b.mpEc));
     b.mpEc++;
   };
   // each attack goes after one player, picked at random (the same on every screen)
@@ -53718,6 +53839,9 @@ function program() {
       e: rows
     };
     var b = bosses[world - 1];
+    if (b && bossFight && b.dead && !MP.bsync) {
+      msg.bd = b.bossNum + ":" + bossRemixStage; // [v1.8] beaten (a spectator's copy is too)
+    }
     if (b && (bossFight || bossIntro) && !b.dead) {
       msg.b = {
         n: b.bossNum,
@@ -53733,6 +53857,20 @@ function program() {
         tg: b.mpTarget,
         rs: bossRemixStage
       };
+      // [v1.8] for a spectator (not the shared Linked world): which try this is and where
+      // the fight is in its attack order, and the order itself now and then
+      if (!MP.bsync) {
+        msg.b.tr = b.mpTry || 0;
+        msg.b.ai = b.attackIndex || 0;
+        msg.b.ai2 = b.attackIndex2 || 0;
+        msg.b.aw = b.attacksThisWave || 0;
+        var aoKey = (b.attackOrder || []).join(",") + "|" + (b.attackOrder2 || []).join(",");
+        if (aoKey !== b.mpAoKey || mpNow() - (b.mpAoAt || 0) > 1000) {
+          b.mpAoKey = aoKey;
+          b.mpAoAt = mpNow();
+          msg.b.ao = aoKey;
+        }
+      }
     }
     mpBroadcast(msg);
   };
@@ -53767,18 +53905,44 @@ function program() {
     };
     var b = bosses[world - 1];
     var H = m.b;
+    // [v1.8] the fight being watched was won: so is the spectator's copy of it (it
+    // carried on alone, with nobody there)
+    if (m.bd && MP.spectating && !MP.bsync && b && bossFight && !b.dead && m.bd === b.bossNum + ":" + bossRemixStage) {
+      var keepVx = p.vx,
+        kg = 0;
+      MP.applyingHit = true;
+      while (!b.dead && kg++ < 10) {
+        b.damage();
+        b.spawnedMinions = false;
+      }
+      MP.applyingHit = false;
+      p.vx = keepVx;
+      return;
+    }
     if (!H || !b || !(bossFight || bossIntro) || b.dead || H.rs !== bossRemixStage || H.n !== b.bossNum) {
       return;
     }
     // a game whose fight has drifted from the host's is snapped back to it
     var lateFrames = 4; // about the network delay
+    var specSrc = MP.spectating && !MP.bsync;
+    if (specSrc && H.ao !== undefined) {
+      b.mpAoIn = H.ao; // [v1.8] the watched fight's attack order
+    }
     var differs = (b.mpEc || 0) !== H.ec || b.state !== H.st || (b.currentAttack || "") !== H.ca || b.wave !== H.w;
+    // [v1.8] a spectator's copy runs a moment AHEAD of what it hears (the news is a
+    // little old): having already gone on to the next move or attack is fine, and
+    // snapping it back into the attack that just ended restarted that attack, again
+    // and again (stuttering between two attacks). It waits for the news to catch up.
+    var ahead = specSrc && H.tr === (b.mpTry || 0) && (b.mpEc || 0) > H.ec && (b.mpEc || 0) - H.ec <= 3;
+    if (specSrc && H.tr !== undefined && H.tr !== (b.mpTry || 0)) {
+      differs = true; // (another try at the fight)
+    }
     // [v1.1] a short difference is normal (one game is a moment ahead): only a
     // difference that lasts half a second is corrected, and the position glides
     b.mpOff = differs ? (b.mpOff || 0) + 1 : 0;
-    // ([v1.7] a spectator isn't playing: it follows the game it watches at once, so
+    // ([v1.7] a spectator isn't playing: it follows the game it watches quickly, so
     // it never shows a different attack from the one that player is in)
-    if (b.mpOff >= (MP.spectating ? 1 : 20)) {
+    if (b.mpOff >= (specSrc ? ahead ? 30 : 2 : 20)) {
       if (MP.spectating && H.st === "attack" && (b.state !== "attack" || (b.currentAttack || "") !== H.ca)) {
         clearBossAttackState();
         b.wavePlatforms = [];
@@ -53797,8 +53961,34 @@ function program() {
       b.mpTarget = H.tg;
       b.mpEc = H.ec;
       MP.bossRng = mpRng(mpHash(MP.session, "late", H.ec));
-    } else if (b.state === "attack" && __p.abs(b.attackTimer - (H.at + lateFrames)) > 15) {
+      if (specSrc) {
+        mpSpecBossOrder(b, H); // [v1.8]
+      }
+    } else if (b.state === "attack" && __p.abs(b.attackTimer - (H.at + lateFrames)) > 15 && !ahead) {
       b.attackTimer = H.at + lateFrames;
+    }
+    if (specSrc && !differs) {
+      mpSpecBossOrder(b, H); // [v1.8] (so its next attack is the watched one's next attack)
+    }
+  };
+  // [v1.8] a spectator's fight takes the watched fight's attack order and place in it
+  var mpSpecBossOrder = function mpSpecBossOrder(b, H) {
+    if (H.tr !== undefined) {
+      b.mpTry = H.tr;
+    }
+    if (b.mpAoIn) {
+      var parts = String(b.mpAoIn).split("|");
+      if (parts[0]) {
+        b.attackOrder = parts[0].split(",");
+      }
+      if (parts[1]) {
+        b.attackOrder2 = parts[1].split(",");
+      }
+    }
+    if (H.ai !== undefined) {
+      b.attackIndex = H.ai;
+      b.attackIndex2 = H.ai2 || 0;
+      b.attacksThisWave = H.aw || 0;
     }
   };
   // [v1.1] Linked: the first player to reach the boss brings the whole team
@@ -54008,7 +54198,7 @@ function program() {
   };
   // A boss (areas 1-3) is beaten: in a race that is the finish line.
   var mpBossBeaten = function mpBossBeaten(bossNum) {
-    if (MP.active && MP.mode === "race" && bossNum !== 4) {
+    if (MP.active && mpRaceLike() && bossNum !== 4) {
       mpRaceFinish();
     }
   };
@@ -54017,7 +54207,7 @@ function program() {
   // unlocks a level only if they were up to it. In a race, only the winner does.
   // levelIdx: the level that has to be this player's next one (default: current).
   var mpRaceKeepsYou = function mpRaceKeepsYou() {
-    return MP.active && MP.mode === "race" && mpCount() > 1;
+    return MP.active && mpRaceLike() && mpCount() > 1;
   };
   var mpMayUnlock = function mpMayUnlock(levelIdx) {
     // [v1.6] watching isn't playing: anyone who spectated any of this level gets no
@@ -54031,8 +54221,8 @@ function program() {
     if (levelIdx !== undefined && lvlUnlock < levelIdx + 1) {
       return false;
     }
-    if (MP.mode === "race") {
-      return MP.raceWinner === MP.myId;
+    if (mpRaceLike()) {
+      return mpRaceWonByMe(); // [v1.8] (in RELAY: the whole winning team)
     }
     return true;
   };
@@ -54124,6 +54314,42 @@ function program() {
   // Host decides the race: the first finish it hears about wins.
   var mpEndRace = function mpEndRace(winnerId) {
     var rows = [];
+    if (MP.mode === "relay" && MP.teamsNow && MP.teamsNow.length) {
+      // [v1.8] RELAY: one row per team
+      var wt = mpTeamOf(winnerId);
+      for (var t = 0; t < MP.teamsNow.length; t++) {
+        var mem = MP.teamsNow[t].filter(function (id) {
+          return !!MP.players[id];
+        });
+        if (!mem.length) {
+          continue;
+        }
+        var run = MP.relayRun && mem.indexOf(MP.relayRun[t]) >= 0 ? MP.relayRun[t] : mem[0];
+        var rst = run === MP.myId ? mpCurrentState() : MP.players[run].st;
+        rows.push({
+          n: mem.map(function (id) {
+            return MP.players[id].name;
+          }).join(" & "),
+          id: run,
+          c: MP_TEAM_COLORS[t % MP_TEAM_COLORS.length],
+          win: t === wt,
+          pv: t === wt ? 1e9 : rst ? rst.pv : 0,
+          pt: t === wt ? "Finished!" : rst && rst.pt ? rst.pt : "-"
+        });
+      }
+      rows.sort(function (a, b) {
+        return b.pv - a.pv;
+      });
+      var rmsg = {
+        t: "race",
+        ses: MP.session,
+        win: winnerId,
+        r: rows
+      };
+      mpBroadcast(rmsg);
+      mpHandle(rmsg, MP.myId);
+      return;
+    }
     for (var k in MP.players) {
       var pl = MP.players[k];
       if (pl.spec || (pl.id === MP.myId ? MP.spectating : pl.st && pl.st.spc)) {
@@ -54207,11 +54433,15 @@ function program() {
       }
       // [v1.6] spectating any of this level: no unlocks or times from it (see mpMayUnlock)
       MP.specRun = !!MP.spectating;
+      MP.fz = null; // [v1.8] (FREEZE: the lights start with the level)
+      MP.fzRed = null;
+      MP.fzHost = null;
       // (a spectating host still holds, so it runs everyone's 3-2-1 countdown)
       MP.hold = mpCount() > 1 && (!MP.spectating || MP.isHost);
       MP.readySent = false;
       MP.holdSince = Date.now();
       MP.raceOutT = 0;
+      mpRelayStart(); // [v1.8] RELAY: who runs first; the others watch them
       // Linked: the team plays on the host's lives
       if (!MP.isHost && MP.mode === "linked" && MP.hostLives > 0) {
         p.lives = MP.hostLives;
@@ -54236,14 +54466,27 @@ function program() {
     for (var sk in MP.players) {
       MP.players[sk].spec = false; // [v1.3] spectators play from this level on
     }
+    MP.relayRunNext = null;
+    if (MP.mode === "relay" && MP.teams) {
+      // [v1.8] RELAY: who runs first for each team (a different one each level)
+      MP.relayRunNext = {};
+      for (var rt = 0; rt < MP.teams.length; rt++) {
+        MP.relayRunNext[rt] = MP.teams[rt][MP.session % MP.teams[rt].length];
+      }
+    }
     mpBroadcast({
       t: "go",
       lv: currentLevel,
       w: world,
       ses: MP.session,
       mode: MP.mode,
+      tm: MP.mode === "relay" ? MP.teams : undefined, // [v1.8]
+      rr: MP.relayRunNext || undefined,
       lives: p.lives
     });
+    if (scene === "game" && MP.mode === "relay") {
+      mpRelayStart(); // [v1.8] (sent again during the level: the host follows it too)
+    }
   };
   var mpLinkById = function mpLinkById(id) {
     for (var i = 0; i < MP.links.length; i++) {
@@ -54346,7 +54589,7 @@ function program() {
     return mpRacePaused() && h <= 430;
   };
   var mpRacePaused = function mpRacePaused() {
-    return MP.active && MP.mode === "race" && !!MP.race && MP.raceWinner !== undefined && MP.raceWinner !== null && MP.raceWinner !== MP.myId && scene === "game" && !transitionActive && !cutsceneIs;
+    return MP.active && mpRaceLike() && !!MP.race && MP.raceWinner !== undefined && MP.raceWinner !== null && MP.raceWinner !== MP.myId && scene === "game" && !transitionActive && !cutsceneIs;
   };
   var mpRaceCam = function mpRaceCam() {
     if (!mpRacePaused()) {
@@ -54366,11 +54609,905 @@ function program() {
     cam.x = __p.lerp(cam.x, cam.targetX, ck);
     cam.y = __p.lerp(cam.y, cam.targetY, ck);
   };
+  // ===================================================================
+  // [v1.8] TEAMS (RELAY mode)
+  // MP.teams: [[id, id], [id, id, id], ...], the host's (sent in the roster and in
+  // "teams"); MP.teamsNow: the same, kept from the start of the level being played
+  // (a change made meanwhile counts from the next level). Teams of two, one of three
+  // when the number is odd. Shuffled at random, Parkour Champions (crowns) spread out
+  // so two only share a team when there are more crowns than teams. The host and the
+  // developers can move players between teams.
+  // ===================================================================
+  var MP_TEAM_COLORS = [0, 1, 2, 3, 4, 5]; // red, blue, yellow, green, orange, purple
+  var MP_MODE_COLS = { linked: __p.color(0, 160, 90), race: __p.color(230, 110, 0), relay: __p.color(165, 70, 255), freeze: __p.color(0, 160, 220) };
+  var mpTeamList = function mpTeamList() {
+    return scene === "game" && MP.teamsNow ? MP.teamsNow : MP.teams || [];
+  };
+  var mpTeamOf = function mpTeamOf(id) {
+    var T = mpTeamList();
+    for (var i = 0; i < T.length; i++) {
+      if (T[i].indexOf(id) >= 0) {
+        return i;
+      }
+    }
+    return -1;
+  };
+  var mpTeamName = function mpTeamName(t) {
+    return MP_COLOR_NAMES[MP_TEAM_COLORS[t % MP_TEAM_COLORS.length]];
+  };
+  var mpHasCrown = function mpHasCrown(id) {
+    if (id === MP.myId) {
+      return !!achievementStates.parkourChampion;
+    }
+    var pl = MP.players[id];
+    return !!(pl && pl.st && pl.st.ch);
+  };
+  var mpModeAbout = function mpModeAbout() {
+    if (MP.mode === "linked") {
+      return "One team: shared deaths, and everyone waits at checkpoints, bosses and the finish.";
+    }
+    if (MP.mode === "relay") {
+      return "Teams of two, one runner each. When the runner dies, a teammate takes over.";
+    }
+    if (MP.mode === "freeze") {
+      return "A race with red light, green light. Move on red and you're out.";
+    }
+    return "Everyone for themselves. First to the finish wins.";
+  };
+  var mpSetMode = function mpSetMode(mode) {
+    MP.mode = mode;
+    mpBroadcast({
+      t: "mode",
+      mode: mode
+    });
+    if (mode === "relay") {
+      mpTeamsShuffle(); // (new random teams each time RELAY is picked)
+      mpSendTeams();
+    }
+  };
+  // the host: new random teams
+  var mpTeamsShuffle = function mpTeamsShuffle() {
+    var ids = [];
+    for (var k in MP.players) {
+      ids.push(MP.players[k].id);
+    }
+    for (var i = ids.length - 1; i > 0; i--) {
+      var j = __p.floor(__p.random(i + 1));
+      var tmp = ids[i];
+      ids[i] = ids[j];
+      ids[j] = tmp;
+    }
+    var n = ids.length,
+      nT = __p.max(1, __p.floor(n / 2));
+    var cap = function cap(t) {
+      return n === 1 ? 1 : n % 2 && t === nT - 1 ? 3 : 2;
+    };
+    var T = [],
+      crowns = [];
+    for (var t = 0; t < nT; t++) {
+      T.push([]);
+      crowns.push(0);
+    }
+    // crowns first, each to the team with the fewest crowns (and room)
+    var order = ids.filter(mpHasCrown).concat(ids.filter(function (id) {
+      return !mpHasCrown(id);
+    }));
+    for (var o = 0; o < order.length; o++) {
+      var id = order[o],
+        best = -1;
+      for (var t2 = 0; t2 < nT; t2++) {
+        if (T[t2].length >= cap(t2)) {
+          continue;
+        }
+        if (best < 0 || mpHasCrown(id) && crowns[t2] < crowns[best]) {
+          best = t2;
+        }
+      }
+      if (best < 0) {
+        best = nT - 1;
+      }
+      T[best].push(id);
+      if (mpHasCrown(id)) {
+        crowns[best]++;
+      }
+    }
+    MP.teams = T;
+  };
+  // the host: keep the teams right as players come and go (new players join a team
+  // short of a player, or make a new one)
+  var mpTeamsFix = function mpTeamsFix(noSend) {
+    if (!MP.isHost) {
+      return;
+    }
+    var T = (MP.teams || []).map(function (tm) {
+      return tm.filter(function (id) {
+        return !!MP.players[id];
+      });
+    }).filter(function (tm) {
+      return tm.length;
+    });
+    if (!T.length) {
+      mpTeamsShuffle();
+    } else {
+      var have = {};
+      T.forEach(function (tm) {
+        tm.forEach(function (id) {
+          have[id] = true;
+        });
+      });
+      for (var k in MP.players) {
+        if (!have[MP.players[k].id]) {
+          T.push([MP.players[k].id]); // (new: on their own for now)
+        }
+      }
+      // players on their own pair up; one left over takes a player from a team of
+      // three, or makes one (an odd number of players)
+      var singles = T.filter(function (tm) {
+        return tm.length === 1;
+      });
+      T = T.filter(function (tm) {
+        return tm.length !== 1;
+      });
+      while (singles.length >= 2) {
+        T.push(singles.shift().concat(singles.shift()));
+      }
+      if (singles.length === 1) {
+        var big = -1;
+        for (var i = 0; i < T.length; i++) {
+          if (T[i].length >= 3 && (big < 0 || T[i].length > T[big].length)) {
+            big = i;
+          }
+        }
+        if (big >= 0) {
+          singles[0].push(T[big].pop());
+          T.push(singles[0]);
+        } else if (T.length) {
+          var small = 0;
+          for (var j = 1; j < T.length; j++) {
+            if (T[j].length < T[small].length) {
+              small = j;
+            }
+          }
+          T[small].push(singles[0][0]);
+        } else {
+          T.push(singles[0]);
+        }
+      }
+      MP.teams = T;
+    }
+    if (!noSend) {
+      mpSendTeams();
+    }
+  };
+  var mpSendTeams = function mpSendTeams() {
+    if (!MP.isHost) {
+      return;
+    }
+    mpBroadcast({
+      t: "teams",
+      id: 0,
+      tm: MP.teams
+    });
+  };
+  // teams from anyone but the host: only a developer's, every player once
+  var mpTeamsValid = function mpTeamsValid(tm) {
+    if (!Array.isArray(tm) || !tm.length || tm.length > 12) {
+      return false;
+    }
+    var seen = {},
+      n = 0;
+    for (var i = 0; i < tm.length; i++) {
+      if (!Array.isArray(tm[i]) || !tm[i].length) {
+        return false;
+      }
+      for (var j = 0; j < tm[i].length; j++) {
+        var id = tm[i][j];
+        if (typeof id !== "number" || !MP.players[id] || seen[id]) {
+          return false;
+        }
+        seen[id] = true;
+        n++;
+      }
+    }
+    return n === Object.keys(MP.players).length;
+  };
+  // a change from the teams panel (the host's, or a developer's sent to the host)
+  var mpTeamsChange = function mpTeamsChange(T) {
+    T = T.filter(function (tm) {
+      return tm.length;
+    });
+    if (MP.isHost) {
+      MP.teams = T;
+      mpSendTeams();
+    } else if (admOn() && MP.links[0]) {
+      MP.teams = T; // (shown at once; the host sends it back to everyone)
+      mpSendRaw(MP.links[0], {
+        t: "admteams",
+        tm: T
+      });
+    }
+  };
+  // the TEAMS panel (lobby and map; everyone can look, the host and developers edit)
+  var mpDrawTeamsPanel = function mpDrawTeamsPanel() {
+    if (!MP.teamsOpen) {
+      return;
+    }
+    if (!MP.active || MP.mode !== "relay" || scene === "game") {
+      MP.teamsOpen = false;
+      return;
+    }
+    var canEdit = MP.isHost || admOn() && !!MP.links[0];
+    if (MP.isHost && !(MP.teams && MP.teams.length)) {
+      mpTeamsFix();
+    }
+    var T = MP.teams || [];
+    MP.drawingTeams = true;
+    __p.noStroke();
+    __p.fill(0, 0, 0, 150);
+    __p.rect(-widePad - 10, -10, wideW + 20, 620);
+    var px = 50,
+      py = 70,
+      pw = 500,
+      ph = 470;
+    __p.stroke(0);
+    __p.strokeWeight(6);
+    __p.fill(255);
+    __p.rect(px, py, pw, ph, 22);
+    __p.stroke(165, 70, 255);
+    arcSize(18);
+    arcAlign(__p.CENTER);
+    arcText("TEAMS", 300, py + 40);
+    arcAlign(__p.LEFT);
+    mpParagraph(canEdit ? "Click a name to move that player to the next team." : "The host picks the teams.", px + 24, py + 56, pw - 48, 12, 90);
+    var rowY = py + 82,
+      rowH = __p.min(52, (ph - 160) / __p.max(1, T.length));
+    var moveId = -1,
+      moveFrom = -1;
+    for (var t = 0; t < T.length; t++) {
+      var col = MP_COLORS[MP_TEAM_COLORS[t % MP_TEAM_COLORS.length]];
+      var ry = rowY + t * rowH;
+      __p.noStroke();
+      __p.fill(col[0], col[1], col[2], 45);
+      __p.rect(px + 18, ry, pw - 36, rowH - 6, 10);
+      __p.fill(col[0], col[1], col[2]);
+      __p.rect(px + 18, ry, 10, rowH - 6, 4);
+      __p.textFont(mpSans, 14);
+      __p.textAlign(__p.LEFT, __p.CENTER);
+      __p.fill(0);
+      __p.text(mpTeamName(t).toUpperCase(), px + 38, ry + (rowH - 6) / 2);
+      var cx = px + 130;
+      for (var m = 0; m < T[t].length; m++) {
+        var id = T[t][m],
+          pl = MP.players[id];
+        var nm = (pl ? mpShownName(pl) : "?") + (mpHasCrown(id) ? " *" : "");
+        __p.textFont(mpSans, 14);
+        var cw = __p.min(150, __p.textWidth(nm) + 22);
+        var hov = canEdit && worldMouseX > cx && worldMouseX < cx + cw && worldMouseY > ry + 6 && worldMouseY < ry + rowH - 12;
+        __p.stroke(0);
+        __p.strokeWeight(2);
+        __p.fill(hov ? __p.color(235) : __p.color(255));
+        __p.rect(cx, ry + 6, cw, rowH - 18, 9);
+        __p.noStroke();
+        __p.fill(col[0] * 0.7, col[1] * 0.7, col[2] * 0.7);
+        __p.textAlign(__p.CENTER, __p.CENTER);
+        __p.text(nm.length > 18 ? nm.slice(0, 17) + "." : nm, cx + cw / 2, ry + (rowH - 6) / 2);
+        if (hov) {
+          __p.cursor(__p.HAND);
+          if (MP.click) {
+            moveId = id;
+            moveFrom = t;
+          }
+        }
+        cx += cw + 8;
+      }
+    }
+    if (moveId >= 0) {
+      // to the next team; past the last one, a team of their own (if theirs has others)
+      var NT = T.map(function (tm) {
+        return tm.slice(0);
+      });
+      NT[moveFrom].splice(NT[moveFrom].indexOf(moveId), 1);
+      var to = moveFrom + 1;
+      if (to >= NT.length) {
+        to = NT[moveFrom].length ? NT.length : 0;
+      }
+      if (to === NT.length) {
+        NT.push([]);
+      }
+      NT[to].push(moveId);
+      mpTeamsChange(NT);
+      MP.click = false;
+    }
+    __p.textAlign(__p.LEFT, __p.BASELINE);
+    var by = py + ph - 64;
+    if (canEdit && mpButton(px + 24, by, 200, 44, "SHUFFLE", __p.color(165, 70, 255))) {
+      if (MP.isHost) {
+        mpTeamsShuffle();
+        mpSendTeams();
+      } else if (MP.links[0]) {
+        mpSendRaw(MP.links[0], {
+          t: "admteams",
+          shuffle: 1
+        });
+      }
+    }
+    if (mpButton(px + pw - 184, by, 160, 44, "DONE", __p.color(0, 160, 90))) {
+      MP.teamsOpen = false;
+      MP.click = false;
+    }
+    MP.drawingTeams = false;
+  };
+
+  // ===================================================================
+  // [v1.8] RELAY: a race in teams. One runner per team at a time; the others watch
+  // their runner (nothing else, and they can't leave the level). When the runner dies,
+  // the next teammate takes over where the runner last stood safely, and the runner
+  // watches them. A team of one plays as in a race.
+  // MP.relayRun: team -> the runner's id (set at the start of each level, then by "baton")
+  // ===================================================================
+  var mpRelayOn = function mpRelayOn() {
+    return MP.active && MP.mode === "relay" && mpCount() > 1 && scene === "game";
+  };
+  var mpRelayStart = function mpRelayStart() {
+    MP.teamsNow = MP.teams ? MP.teams.map(function (tm) {
+      return tm.slice(0);
+    }) : [];
+    MP.relayRun = {};
+    if (MP.relayWait) {
+      MP.spectating = false; // (waiting from an earlier start of this level)
+      MP.specId = -1;
+    }
+    MP.relayWait = false;
+    MP.relaySafe = [];
+    if (MP.mode !== "relay" || mpCount() < 2) {
+      return;
+    }
+    for (var t = 0; t < MP.teamsNow.length; t++) {
+      var mem = MP.teamsNow[t],
+        given = MP.relayRunNext && MP.relayRunNext[t];
+      // (the host says who runs first; a different player each level)
+      MP.relayRun[t] = given !== undefined && given !== null && mem.indexOf(given) >= 0 ? given : mem[MP.session % mem.length];
+    }
+    var mine = mpTeamOf(MP.myId);
+    if (mine >= 0 && !MP.spectating && MP.relayRun[mine] !== MP.myId) {
+      MP.spectating = true;
+      MP.relayWait = true;
+      MP.specId = MP.relayRun[mine];
+    }
+  };
+  var mpRelayRunner = function mpRelayRunner() {
+    var t = mpTeamOf(MP.myId);
+    return t >= 0 && MP.relayRun ? MP.relayRun[t] : -1;
+  };
+  // who takes over from me (or -1: nobody, I respawn as usual)
+  var mpRelayNext = function mpRelayNext() {
+    if (!mpRelayOn() || MP.spectating) {
+      return -1;
+    }
+    var t = mpTeamOf(MP.myId);
+    if (t < 0) {
+      return -1;
+    }
+    var mem = MP.teamsNow[t],
+      at = mem.indexOf(MP.myId);
+    for (var i = 1; i < mem.length; i++) {
+      var id = mem[(at + i) % mem.length],
+        pl = MP.players[id];
+      if (pl && pl.st && pl.st.ses === MP.session && pl.st.lv === currentLevel && !pl.away) {
+        return id;
+      }
+    }
+    return -1;
+  };
+  // where the runner last stood safely (on the ground, unhurt, half a second earlier)
+  var mpRelayTrack = function mpRelayTrack() {
+    if (!mpRelayOn() || MP.spectating || !p || p.dead || p.health <= 0 || !p.grounded || p.hurtFrames > 0 || cutsceneIs) {
+      return;
+    }
+    var now = Date.now(),
+      S = MP.relaySafe || (MP.relaySafe = []);
+    if (S.length && now - S[S.length - 1].t < 100) {
+      return;
+    }
+    S.push({
+      x: p.x,
+      y: p.y,
+      ay: lvl && lvl.arenaY !== undefined ? lvl.arenaY : 0,
+      rs: bossRemixStage,
+      fb: finalBossPhase,
+      t: now
+    });
+    if (S.length > 40) {
+      S.shift();
+    }
+  };
+  var mpRelaySpot = function mpRelaySpot() {
+    var S = MP.relaySafe || [],
+      now = Date.now();
+    for (var i = S.length - 1; i >= 0; i--) {
+      if (now - S[i].t >= 500 && S[i].rs === bossRemixStage && S[i].fb === finalBossPhase) {
+        return S[i];
+      }
+    }
+    for (var j = 0; j < S.length; j++) {
+      if (S[j].rs === bossRemixStage && S[j].fb === finalBossPhase) {
+        return S[j];
+      }
+    }
+    return {
+      x: lastCheckpoint.x,
+      y: lastCheckpoint.y,
+      ay: lvl && lvl.arenaY !== undefined ? lvl.arenaY : 0
+    };
+  };
+  // my turn is over: the next teammate takes over, and I watch them
+  var mpRelayPass = function mpRelayPass(to) {
+    var spot = mpRelaySpot();
+    var msg = {
+      t: "baton",
+      id: MP.myId,
+      ses: MP.session,
+      to: to,
+      x: __p.round(spot.x * 10) / 10,
+      y: __p.round(spot.y * 10) / 10,
+      ay: __p.round((spot.ay || 0) * 10) / 10,
+      rs: bossRemixStage,
+      fb: finalBossPhase,
+      cx: lastCheckpoint.x,
+      cy: lastCheckpoint.y
+    };
+    mpBroadcast(msg);
+    mpHandle(msg, MP.myId);
+    MP.spectating = true;
+    MP.relayWait = true;
+    MP.specId = to;
+    MP.relaySafe = [];
+  };
+  var mpRelayTakeOver = function mpRelayTakeOver(m) {
+    MP.spectating = false;
+    MP.relayWait = false;
+    MP.hold = false;
+    if (m.cx !== undefined && m.cy !== undefined) {
+      lastCheckpoint = {
+        x: m.cx,
+        y: m.cy
+      };
+    }
+    var x = m.x !== undefined ? m.x : lastCheckpoint.x;
+    var y = m.y !== undefined ? m.y + (m.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - m.ay : 0) : lastCheckpoint.y;
+    p.health = 100;
+    p.dead = false;
+    p.deathTriggered = false;
+    p.deathFrames = 0;
+    p.lives = 10;
+    p.gameOver = false;
+    if (finalBossPhase >= 3 || currentLevel === 16) {
+      p.x = x; // (the vortex and the chase keep their own Dash)
+      p.y = y;
+      p.vx = 0;
+      p.vy = 0;
+    } else {
+      p.reset(x, y); // (with the skin's spawn animation)
+    }
+    MP.relaySafe = [];
+    mpChatLine("", "Your turn! Go!", -1);
+    MP.goFlash = 50;
+  };
+  // the host: a runner who left the party (or the level) hands over too
+  var mpRelayHostTick = function mpRelayHostTick() {
+    if (!MP.isHost || !mpRelayOn() || !MP.relayRun) {
+      return;
+    }
+    var now = Date.now();
+    if (now - (MP.relayChk || 0) < 1000) {
+      return;
+    }
+    MP.relayChk = now;
+    MP.relayPos = MP.relayPos || {};
+    for (var t = 0; t < MP.teamsNow.length; t++) {
+      var r = MP.relayRun[t],
+        rp = MP.players[r];
+      if (rp && rp.st && rp.st.ses === MP.session) {
+        MP.relayPos[r] = {
+          x: rp.st.x,
+          y: rp.st.y,
+          ay: rp.st.ay
+        };
+      }
+      // still there (or still loading in): nothing to do. Gone from the party, or out of
+      // the level for 3 s after the start: the next teammate runs
+      MP.relayOut = MP.relayOut || {};
+      var outNow = !!rp && !MP.hold && !!rp.st && (rp.st.ses !== MP.session || rp.st.lv !== currentLevel || !rp.st.in);
+      MP.relayOut[r] = outNow ? (MP.relayOut[r] || 0) + 1 : 0;
+      if (r === MP.myId || rp && MP.relayOut[r] < 3) {
+        continue;
+      }
+      MP.relayOut[r] = 0;
+      var mem = MP.teamsNow[t];
+      for (var i = 0; i < mem.length; i++) {
+        var id = mem[i],
+          pl = MP.players[id];
+        if (id !== r && (id === MP.myId || pl && pl.st && pl.st.ses === MP.session)) {
+          var pos = MP.relayPos[r] || {};
+          var msg = {
+            t: "baton",
+            id: 0,
+            ses: MP.session,
+            to: id,
+            x: pos.x,
+            y: pos.y,
+            ay: pos.ay
+          };
+          mpBroadcast(msg);
+          mpHandle(msg, MP.myId);
+          break;
+        }
+      }
+    }
+  };
+  var mpRelayBaton = function mpRelayBaton(m) {
+    if (m.ses !== MP.session || MP.mode !== "relay" || scene !== "game" || !MP.relayRun) {
+      return;
+    }
+    var bt = mpTeamOf(m.to),
+      from = m.id === undefined ? 0 : m.id;
+    if (bt < 0 || from !== 0 && mpTeamOf(from) !== bt) {
+      return; // (only a teammate, or the host, hands over)
+    }
+    MP.relayRun[bt] = m.to;
+    if (m.to === MP.myId) {
+      mpRelayTakeOver(m);
+    } else if (MP.relayWait && mpTeamOf(MP.myId) === bt) {
+      MP.specId = m.to;
+    }
+  };
+  var mpRaceWonByMe = function mpRaceWonByMe() {
+    if (MP.raceWinner === undefined || MP.raceWinner === null) {
+      return false;
+    }
+    if (MP.raceWinner === MP.myId) {
+      return true;
+    }
+    return MP.mode === "relay" && mpTeamOf(MP.myId) >= 0 && mpTeamOf(MP.raceWinner) === mpTeamOf(MP.myId);
+  };
+  // a skin that keeps its own colours gets a wash of the team's colour (RELAY)
+  var mpTeamTint = function mpTeamTint(x, y, w, h, col, sk) {
+    if (MP.mode !== "relay" || MP_BASE_SKINS[sk] || col === null || col === undefined) {
+      return;
+    }
+    __p.pushStyle();
+    __p.rectMode(__p.CORNER);
+    __p.noStroke();
+    __p.fill(__p.red(col), __p.green(col), __p.blue(col), 85);
+    __p.rect(x - w / 2 - 2, y - h / 2 - 2, w + 4, h + 4, 9);
+    __p.noFill();
+    __p.stroke(col);
+    __p.strokeWeight(3);
+    __p.rect(x - w / 2 - 4, y - h / 2 - 4, w + 8, h + 8, 11);
+    __p.popStyle();
+  };
+  var mpDrawRelayHud = function mpDrawRelayHud() {
+    if (!mpRelayOn() || cutsceneIs || MP.race) {
+      return;
+    }
+    var t = mpTeamOf(MP.myId);
+    if (t < 0) {
+      return;
+    }
+    var col = MP_COLORS[MP_TEAM_COLORS[t % MP_TEAM_COLORS.length]];
+    var txt;
+    if (MP.relayWait) {
+      var r = MP.players[mpRelayRunner()];
+      txt = "WATCHING " + (r ? mpShownName(r) : "YOUR TEAMMATE") + " - YOU TAKE OVER IF THEY FALL";
+    } else {
+      txt = mpTeamName(t).toUpperCase() + " TEAM - YOU'RE RUNNING";
+    }
+    __p.textFont(mpSans, 14);
+    var w = __p.textWidth(txt) + 30;
+    __p.noStroke();
+    __p.fill(0, 0, 0, 150);
+    __p.rect(300 - w / 2, 12, w, 28, 10);
+    __p.fill(col[0], col[1], col[2]);
+    __p.rect(300 - w / 2, 12, 8, 28, 4);
+    __p.fill(255);
+    __p.textAlign(__p.CENTER, __p.CENTER);
+    __p.text(txt, 304, 26);
+    __p.textAlign(__p.LEFT, __p.BASELINE);
+  };
+
+  // ===================================================================
+  // [v1.8] FREEZE: a race with red light, green light. The host calls the lights
+  // ("fz": green for a while, yellow for half a second, then red), and everyone's
+  // game shows them. On a red light the world stands still (enemies, bosses and their
+  // attacks, the vortex, the chase): only the players can move, and they mustn't.
+  //  * anyone still pressing a movement key 0.75 s into the red light is out;
+  //  * if nobody was, the one who pressed one last in those first 0.75 s is out;
+  //  * nobody pressed anything: everyone passes.
+  // (Out = a normal death: back to the last checkpoint.) Each game judges its own
+  // keys from the moment the red light reaches it, and tells the host ("fzr"), which
+  // decides the second rule ("fzk").
+  // ===================================================================
+  var FZ_GRACE = 0.75;
+  var mpFreezeOn = function mpFreezeOn() {
+    return MP.active && MP.mode === "freeze" && mpCount() > 1 && scene === "game" && !cutsceneIs && !MP.hold && !levelEnd && !transitionActive && !MP.race;
+  };
+  // the world stands still (see the frame setup)
+  var mpFreezeWorld = function mpFreezeWorld() {
+    return !!MP.fz && MP.fz.s === "red" && MP.fz.ses === MP.session && mpFreezeOn();
+  };
+  var mpFzEligible = function mpFzEligible() {
+    return mpFreezeOn() && !MP.spectating && !MP.specRun && !MP.finished && p && !p.dead && !p.deathTriggered && p.health > 0;
+  };
+  var FZ_KEYS = [37, 38, 39, 40, 32, "a", "d", "w", "s", " "];
+  var mpFzPressing = function mpFzPressing() {
+    if (MP.fzLatch) {
+      return true;
+    }
+    for (var i = 0; i < FZ_KEYS.length; i++) {
+      if (keys[FZ_KEYS[i]]) {
+        return true;
+      }
+    }
+    for (var k in touchKeys) {
+      if (touchKeys[k]) {
+        return true;
+      }
+    }
+    return false;
+  };
+  window.addEventListener("keydown", function (e) {
+    if (MP.fz && MP.fz.s === "red" && !MP.chatOpen && !MP.focus && /^(Arrow(Up|Down|Left|Right)| |a|d|w|s|A|D|W|S)$/.test(e.key)) {
+      MP.fzLatch = true; // (a tap quicker than a frame still counts)
+    }
+  }, true);
+  var mpFzOut = function mpFzOut(why) {
+    if (!mpFzEligible()) {
+      return;
+    }
+    p.lastHurtBy = why;
+    p.health = 0;
+    p.hurtFrames = 15;
+  };
+  var mpFzApply = function mpFzApply(m) {
+    if (m.ses !== MP.session) {
+      return;
+    }
+    var was = MP.fz;
+    if (m.s === "off") {
+      MP.fz = null;
+      return;
+    }
+    MP.fz = {
+      n: m.n,
+      s: m.s,
+      ses: m.ses,
+      at: Date.now()
+    };
+    if (m.s === "red") {
+      MP.fzRed = {
+        n: m.n,
+        lp: -1,
+        out: false,
+        el: false
+      };
+      MP.fzLatch = false;
+      sfx("countBeep");
+    } else if (m.s === "green" && MP.fzRed && !MP.fzRed.sent) {
+      // the red light is over: what this player did in it
+      MP.fzRed.sent = true;
+      var rep = {
+        t: "fzr",
+        ses: MP.session,
+        n: MP.fzRed.n,
+        lp: MP.fzRed.lp,
+        k: MP.fzRed.out ? 1 : 0,
+        el: MP.fzRed.el ? 1 : 0
+      };
+      if (MP.isHost) {
+        mpFzReport(rep, MP.myId);
+      } else if (MP.links[0]) {
+        mpSendRaw(MP.links[0], rep);
+      }
+    }
+    if (m.s === "green" && was && was.s === "red") {
+      sfx("countGo");
+    }
+  };
+  var mpFzReport = function mpFzReport(m, fromId) {
+    if (!MP.isHost || m.ses !== MP.session) {
+      return;
+    }
+    var R = MP.fzReps || (MP.fzReps = {});
+    (R[m.n] || (R[m.n] = {}))[fromId] = {
+      lp: +m.lp,
+      k: !!m.k,
+      el: !!m.el
+    };
+  };
+  var mpFzSend = function mpFzSend(s, n) {
+    var msg = {
+      t: "fz",
+      id: 0,
+      ses: MP.session,
+      n: n,
+      s: s
+    };
+    mpBroadcast(msg);
+    mpFzApply(msg);
+  };
+  var mpFzRand = function mpFzRand(a, b) {
+    return a + Math.random() * (b - a);
+  };
+  // the host calls the lights, and judges each red light a moment after it ends
+  var mpFzHostTick = function mpFzHostTick() {
+    if (!MP.isHost) {
+      return;
+    }
+    var now = Date.now();
+    if (!mpFreezeOn()) {
+      if (MP.fzHost) {
+        MP.fzHost = null;
+        mpFzSend("off", 0);
+      }
+      return;
+    }
+    var H = MP.fzHost;
+    if (!H || H.ses !== MP.session) {
+      H = MP.fzHost = {
+        ses: MP.session,
+        n: (MP.fzN = (MP.fzN || 0) + 1),
+        s: "green",
+        until: now + mpFzRand(4000, 8000)
+      };
+      mpFzSend("green", H.n);
+    } else if (now >= H.until) {
+      H.n = MP.fzN = (MP.fzN || 0) + 1;
+      if (H.s === "green") {
+        H.s = "yellow";
+        H.until = now + 500;
+      } else if (H.s === "yellow") {
+        H.s = "red";
+        H.redN = H.n;
+        H.until = now + mpFzRand(2500, 4500);
+      } else {
+        H.s = "green";
+        H.until = now + mpFzRand(3000, 7500);
+        H.judge = {
+          n: H.redN,
+          at: now + 900
+        };
+      }
+      mpFzSend(H.s, H.n);
+    }
+    if (H.judge && now >= H.judge.at) {
+      var J = H.judge;
+      H.judge = null;
+      var reps = MP.fzReps && MP.fzReps[J.n] || {};
+      var anyOut = false,
+        best = -1,
+        bestLp = -1;
+      for (var id in reps) {
+        var r = reps[id];
+        if (!r.el) {
+          continue;
+        }
+        if (r.k) {
+          anyOut = true;
+        }
+        if (r.lp >= 0 && r.lp <= FZ_GRACE + 0.05 && r.lp > bestLp && MP.players[id]) {
+          bestLp = r.lp;
+          best = +id;
+        }
+      }
+      if (MP.fzReps) {
+        delete MP.fzReps[J.n];
+      }
+      if (!anyOut) {
+        if (best >= 0) {
+          var km = {
+            t: "fzk",
+            id: 0,
+            ses: MP.session,
+            who: best
+          };
+          mpBroadcast(km);
+          mpHandle(km, MP.myId);
+        } else {
+          var pm = {
+            t: "sys",
+            x: "Red light: nobody moved. Everyone passes!"
+          };
+          mpBroadcast(pm);
+          mpChatLine("", pm.x, -1);
+        }
+      }
+    }
+  };
+  // every game: watch this player's keys on a red light
+  var mpFzTick = function mpFzTick() {
+    MP.fzWorld = mpFreezeWorld();
+    if (!MP.fzWorld || !MP.fzRed || MP.fzRed.n !== MP.fz.n) {
+      MP.fzLatch = false;
+      return;
+    }
+    var R = MP.fzRed;
+    if (!mpFzEligible()) {
+      MP.fzLatch = false;
+      return;
+    }
+    R.el = true;
+    var t = (Date.now() - MP.fz.at) / 1000;
+    if (mpFzPressing()) {
+      R.lp = __p.max(R.lp, __p.min(t, FZ_GRACE));
+      if (t > FZ_GRACE && !R.out) {
+        R.out = true;
+        mpFzOut("moved on a red light");
+      }
+    }
+    MP.fzLatch = false;
+  };
+  // the Parkour Master calls the lights (not in X-4's fight: there he's the boss)
+  var mpDrawFreezeHud = function mpDrawFreezeHud() {
+    if (!MP.fz || MP.fz.ses !== MP.session || !mpFreezeOn()) {
+      return;
+    }
+    var s = MP.fz.s,
+      age = (Date.now() - MP.fz.at) / 1000;
+    var showMaster = !(currentLevel === 15 && (bossFight || bossIntro));
+    var ty = showMaster ? 128 : 60;
+    if (showMaster) {
+      // turned away on green, turning round on yellow, watching on red
+      var turn = s === "yellow" ? __p.constrain(age / 0.5, 0, 1) : s === "red" ? 1 : 0;
+      var face = turn >= 0.5;
+      var sx = __p.max(0.08, __p.abs(Math.cos(turn * Math.PI)));
+      __p.pushMatrix();
+      __p.pushStyle();
+      __p.translate(300, 58);
+      if (s === "red") {
+        __p.noStroke();
+        __p.fill(255, 0, 0, 70 + 40 * Math.sin(age * 8));
+        __p.ellipse(0, 0, 110, 110);
+      }
+      __p.scale(sx, 1);
+      if (face) {
+        var keepCape = pmNoCape;
+        pmNoCape = true;
+        parkMast(0, 0, 80, undefined);
+        pmNoCape = keepCape;
+      } else {
+        // his back: the body and his cape
+        __p.fill(253, 147, 255);
+        __p.stroke(0);
+        __p.strokeWeight(1);
+        __p.quad(0, -30, -28, 0, 0, 26, 28, -2);
+        __p.fill(40, 20, 120);
+        __p.quad(-22, -8, 22, -8, 27, 34, -27, 34);
+      }
+      __p.popStyle();
+      __p.popMatrix();
+    }
+    var label = s === "red" ? "RED LIGHT" : "GREEN LIGHT";
+    var col = s === "red" ? __p.color(235, 20, 20) : s === "yellow" ? __p.color(255, 200, 0) : __p.color(20, 200, 70);
+    var big = s === "red" ? 20 + 6 * __p.max(0, 1 - age * 3) : 17;
+    arcAlign(__p.CENTER);
+    arcSize(big);
+    __p.stroke(0, 0, 0, 200);
+    arcText(label, 302, ty + 3);
+    __p.stroke(col);
+    arcText(label, 300, ty);
+    arcAlign(__p.LEFT);
+  };
+
   var mpSpectateCam = function mpSpectateCam() {
     if (!mpSpecOn()) {
       return;
     }
     var list = mpSpecTargets();
+    if (MP.relayWait) {
+      // [v1.8] RELAY: only your own runner
+      var rr = MP.players[mpRelayRunner()];
+      list = rr && rr.st && rr.st.in && rr.st.lv === currentLevel && rr.st.ses === MP.session ? [rr] : [];
+    }
     var idx = -1;
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === MP.specId) {
@@ -54405,6 +55542,9 @@ function program() {
         bosses[world - 1].mpOff = 0;
       }
     }
+    // [v1.8] the fight here starts or stops with theirs at most about once a second
+    // (going back and forth every frame rebuilt the boss music each time)
+    var flipOk = Date.now() - (MP.specFlipAt || 0) > 900;
     // [v1.5] X-4: go to the part (or the vortex) they're in, with the platform wipe;
     // and if they're fighting the boss, start it here too so it can be seen
     if (currentLevel === 15 && pl2.st && pl2.st.lv === 15 && !cutsceneIs) {
@@ -54416,9 +55556,11 @@ function program() {
           fb3: wantFb3
         };
         triggerScreenWipe();
-      } else if (!screenWipeActive && !wantFb3 && wantRs === 2 && pl2.st.bf && !bossFight && !bossIntro && bosses[world - 1] && bosses[world - 1].startFight) {
+      } else if (flipOk && !screenWipeActive && !wantFb3 && wantRs === 2 && pl2.st.bf && !bossFight && !bossIntro && bosses[world - 1] && bosses[world - 1].startFight) {
+        MP.specFlipAt = Date.now();
         bosses[world - 1].startFight();
-      } else if (!screenWipeActive && !wantFb3 && wantRs === 2 && !pl2.st.bf && !pl2.st.d && (bossFight || bossIntro) && bosses[world - 1] && !bosses[world - 1].dead) {
+      } else if (flipOk && !screenWipeActive && !wantFb3 && wantRs === 2 && !pl2.st.bf && !pl2.st.d && (bossFight || bossIntro) && bosses[world - 1] && !bosses[world - 1].dead) {
+        MP.specFlipAt = Date.now();
         // [v1.7] they aren't in the fight (it reset, or they're on their way up):
         // nor is this screen
         bossFight = false;
@@ -54445,9 +55587,11 @@ function program() {
     // here too, so what you watch is the fight they are in
     if (!MP.bsync && currentLevel % 4 === 3 && currentLevel !== 15 && pl2.st && pl2.st.lv === currentLevel && !cutsceneIs && !levelEnd) {
       var sb = bosses[world - 1];
-      if (sb && !sb.dead && pl2.st.bf && !bossFight && !bossIntro && sb.startFight) {
+      if (flipOk && sb && !sb.dead && pl2.st.bf && !bossFight && !bossIntro && sb.startFight) {
+        MP.specFlipAt = Date.now();
         sb.startFight();
-      } else if (sb && !sb.dead && !pl2.st.bf && !pl2.st.d && (bossFight || bossIntro) && !(pl2.st.sg === "boss")) {
+      } else if (flipOk && sb && !sb.dead && !pl2.st.bf && !pl2.st.d && (bossFight || bossIntro) && !(pl2.st.sg === "boss")) {
+        MP.specFlipAt = Date.now();
         bossFight = false;
         bossIntro = false;
         lvl.arenaY = 0;
@@ -54605,6 +55749,9 @@ function program() {
         }
         MP.mode = m.mode;
         MP.hostUnlock = m.unlock || 1;
+        if (Array.isArray(m.tm)) {
+          MP.teams = m.tm; // [v1.8]
+        }
         var seen = {};
         for (var i = 0; i < m.p.length; i++) {
           var r = m.p[i];
@@ -54753,13 +55900,17 @@ function program() {
       case "admmode":
         // [v1.5] a developer in the party switched the mode
         pl = MP.players[fromId];
-        if (MP.isHost && pl && mpAdmOf(pl) && (m.mode === "linked" || m.mode === "race") && MP.mode !== m.mode) {
+        if (MP.isHost && pl && mpAdmOf(pl) && MP_MODES.indexOf(m.mode) >= 0 && MP.mode !== m.mode) {
           MP.mode = m.mode;
           mpBroadcast({
             t: "mode",
             mode: m.mode
           });
-          mpChatLine("", mpShownName(pl) + " (developer) switched to " + (m.mode === "race" ? "Race" : "Linked") + ".", -1);
+          mpChatLine("", mpShownName(pl) + " (developer) switched to " + mpModeName(m.mode) + ".", -1);
+          if (m.mode === "relay") {
+            mpTeamsShuffle(); // [v1.8]
+            mpSendTeams();
+          }
         }
         return;
       case "admlv":
@@ -54801,6 +55952,10 @@ function program() {
       case "go":
         if (!MP.isHost) {
           MP.mode = m.mode;
+          if (Array.isArray(m.tm)) {
+            MP.teams = m.tm; // [v1.8]
+          }
+          MP.relayRunNext = m.rr && typeof m.rr === "object" ? m.rr : null;
           MP.spectating = !!m.spec; // [v1.3] joined mid-level: watch until the next level
           MP.specId = -1;
           mpStartLevelFromHost(m);
@@ -54814,6 +55969,40 @@ function program() {
         return;
       case "mode":
         MP.mode = m.mode;
+        return;
+      // [v1.8] RELAY teams and hand-overs, FREEZE lights
+      case "teams":
+        if (!MP.isHost && (m.id | 0) === 0 && Array.isArray(m.tm)) {
+          MP.teams = m.tm;
+        }
+        return;
+      case "admteams":
+        pl = MP.players[fromId];
+        if (MP.isHost && pl && mpAdmOf(pl)) {
+          if (m.shuffle) {
+            mpTeamsShuffle();
+            mpSendTeams();
+          } else if (mpTeamsValid(m.tm)) {
+            MP.teams = m.tm;
+            mpSendTeams();
+          }
+        }
+        return;
+      case "baton":
+        mpRelayBaton(m);
+        return;
+      case "fz":
+        if ((m.id | 0) === 0 && !MP.isHost) {
+          mpFzApply(m);
+        }
+        return;
+      case "fzr":
+        mpFzReport(m, fromId);
+        return;
+      case "fzk":
+        if ((m.id | 0) === 0 && m.ses === MP.session && m.who === MP.myId && MP.fzRed) {
+          mpFzOut("moved last on a red light");
+        }
         return;
       case "fin":
         // [v1.7] a spectator's finish doesn't count (it took the win, and the
@@ -54836,9 +56025,9 @@ function program() {
             t: 0
           };
           MP.raceWinner = m.win;
-          sfx(m.win === MP.myId ? "raceWin" : "raceLose"); // [v1.2] sound
-          if (m.win === MP.myId) {
-            mpAwardRaceWin();
+          sfx(mpRaceWonByMe() ? "raceWin" : "raceLose"); // [v1.2] sound
+          if (mpRaceWonByMe()) {
+            mpAwardRaceWin(); // ([v1.8] in RELAY: everyone on the winning team)
           }
         }
         return;
@@ -55134,7 +56323,7 @@ function program() {
         if (m.t === "cut" && cutPl && (cutPl.spec || cutPl.st && cutPl.st.spc)) {
           return; // [v1.7] (a spectator's game doesn't end the chase for everyone)
         }
-        if (m.t !== "hi" && m.t !== "fin" && m.t !== "bye" && m.t !== "kick") {
+        if (m.t !== "hi" && m.t !== "fin" && m.t !== "bye" && m.t !== "kick" && m.t !== "fzr" && m.t !== "admteams") {
           mpBroadcast(m, link.id);
         }
         mpHandle(m, link.id);
@@ -55964,7 +57153,7 @@ function program() {
     }
     // Race: out of lives -> after the game-over screen, start the level again
     // (the race goes on; nobody is sent back to the map)
-    if (MP.mode === "race" && mpCount() > 1 && scene === "game" && p && p.gameOver && !MP.race) {
+    if (mpRaceLike() && mpCount() > 1 && scene === "game" && p && p.gameOver && !MP.race) {
       MP.raceOutT = (MP.raceOutT || 0) + DT;
       if (MP.raceOutT > 160) {
         MP.raceOutT = 0;
@@ -55991,9 +57180,13 @@ function program() {
     }
     // health at the start of the frame (see mpGuardWaiting)
     MP.hpStart = p ? p.health : 0;
-    if (MP.active && MP.spectating && scene === "game") {
-      MP.specRun = true; // [v1.6] (watched some of this level)
+    if (MP.active && MP.spectating && scene === "game" && !MP.relayWait) {
+      MP.specRun = true; // [v1.6] (watched some of this level) ([v1.8] not a RELAY teammate waiting)
     }
+    mpRelayTrack(); // [v1.8]
+    mpRelayHostTick();
+    mpFzHostTick();
+    mpFzTick();
     var now = Date.now();
     // [v1.1] Linked mode with two or more players in this level: one shared world
     MP.bsync = MP.active && MP.mode === "linked" && scene === "game" && mpCount() > 1 && mpPlayersInLevel().length > 1;
@@ -56174,7 +57367,7 @@ function program() {
     // whoever they watch.)
     // [v1.7] a race: everyone has their own boss, so nobody is shown during anyone's
     // boss intro (the rising looked buggy over someone else's fight)
-    if (st && MP.mode === "race" && st.lv === currentLevel && currentLevel % 4 === 3 && !mpSpecOn() && (bossIntro || st.bin)) {
+    if (st && mpRaceLike() && st.lv === currentLevel && currentLevel % 4 === 3 && !mpSpecOn() && (bossIntro || st.bin)) {
       return false;
     }
     if (st && st.lv === currentLevel && currentLevel % 4 === 3 && !mpSpecOn()) {
@@ -56322,6 +57515,7 @@ function program() {
         admBeamFx(g.x, g.y, g.w, g.h, st.bi / 100, 1, bt, false);
       } else {
         mpGhostDraw(g, st, 1);
+        mpTeamTint(g.x, g.y, g.w, g.h, dashTint, st.sk | 0); // [v1.8]
       }
       // name tag (+ a crown for a Parkour Champion, DEV for Digitsofpi and Kineto)
       __p.pushStyle();
@@ -56398,7 +57592,7 @@ function program() {
   };
   // ---------------- UI helpers ----------------
   var mpButton = function mpButton(x, y, w, h, label, col, enabled) {
-    var hov = enabled !== false && worldMouseX > x && worldMouseX < x + w && worldMouseY > y && worldMouseY < y + h;
+    var hov = enabled !== false && !(MP.teamsOpen && !MP.drawingTeams) && worldMouseX > x && worldMouseX < x + w && worldMouseY > y && worldMouseY < y + h;
     __p.stroke(0);
     __p.strokeWeight(5);
     __p.fill(enabled === false ? __p.color(190) : hov ? __p.lerpColor(col, __p.color(255), 0.25) : col);
@@ -57319,33 +58513,31 @@ function program() {
         mpStartJoin();
       }
       y += 84;
-      y += mpParagraph("LINKED: one team. If anyone dies, everyone does, and checkpoints, launchers, bosses and the finish wait for the whole team.", 40, y, 520, 14, 70) + 8;
-      mpParagraph("RACE: everyone for themselves. The first to finish wins and the results are shown to all.", 40, y, 520, 14, 70);
+      y += mpParagraph("LINKED: one team. If anyone dies, everyone does, and checkpoints, launchers, bosses and the finish wait for the whole team.", 40, y, 520, 13, 70) + 6;
+      y += mpParagraph("RACE: everyone for themselves. The first to finish wins and the results are shown to all.", 40, y, 520, 13, 70) + 6;
+      y += mpParagraph("RELAY: a race in teams of two. When the runner dies, their teammate takes over right there.", 40, y, 520, 13, 70) + 6;
+      mpParagraph("FREEZE: a race with red light, green light. Move on a red light and you're out.", 40, y, 520, 13, 70);
       return;
     }
     if (MP.screen === "host") {
       // left column: players + mode
       mpLabel("Players", 40, y);
       mpPlayerList(40, y + 26);
-      mpLabel("Mode", 40, 336);
-      if (mpButton(40, 360, 100, 40, "LINKED", MP.mode === "linked" ? __p.color(0, 160, 90) : __p.color(150))) {
-        MP.mode = "linked";
-        mpBroadcast({
-          t: "mode",
-          mode: "linked"
-        });
+      mpLabel("Mode", 40, 330);
+      // [v1.8] four modes, two rows
+      for (var mi = 0; mi < MP_MODES.length; mi++) {
+        var mmode = MP_MODES[mi];
+        if (mpButton(40 + mi % 2 * 110, 352 + __p.floor(mi / 2) * 40, 100, 34, mmode.toUpperCase(), MP.mode === mmode ? MP_MODE_COLS[mmode] : __p.color(150)) && MP.mode !== mmode) {
+          mpSetMode(mmode);
+        }
       }
-      if (mpButton(150, 360, 100, 40, "RACE", MP.mode === "race" ? __p.color(230, 110, 0) : __p.color(150))) {
-        MP.mode = "race";
-        mpBroadcast({
-          t: "mode",
-          mode: "race"
-        });
+      mpParagraph(mpModeAbout(), 40, 434, 210, 11.5, 80);
+      if (MP.mode === "relay" && mpButton(270, 440, 300, 40, "TEAMS", __p.color(165, 70, 255))) {
+        MP.teamsOpen = true;
       }
-      mpParagraph(MP.mode === "linked" ? "One team. Shared deaths and lives, and everyone must reach checkpoints, launchers, bosses and the finish." : "Everyone for themselves. First to the finish wins.", 40, 406, 210, 12, 80);
-      // Same Wi-Fi mode switch ([v1.1] not with the party server: there it is only
-      // offered when two players on one Wi-Fi can't reach each other)
-      if (!MP.noMic && !mpServerOn() && mpButton(40, 466, 210, 36, MP.lanMode ? "SAME WI-FI: ON" : "SAME WI-FI: OFF", MP.lanMode ? __p.color(0, 160, 90) : __p.color(150))) {
+      if (MP.mode !== "relay" && !MP.noMic && !mpServerOn() && mpButton(40, 478, 210, 34, MP.lanMode ? "SAME WI-FI: ON" : "SAME WI-FI: OFF", MP.lanMode ? __p.color(0, 160, 90) : __p.color(150))) {
+        // Same Wi-Fi mode switch ([v1.1] not with the party server: there it is only
+        // offered when two players on one Wi-Fi can't reach each other)
         mpSetLanMode(!MP.lanMode, true);
       }
       // right column: invite steps
@@ -57420,22 +58612,26 @@ function program() {
     if (MP.screen === "join") {
       var j = MP.join;
       if (MP.active) {
-        mpLabel("Connected!  Mode: " + (MP.mode === "race" ? "Race" : "Linked"), 40, y, 18);
+        mpLabel("Connected!  Mode: " + mpModeName(), 40, y, 18);
         mpParagraph("The host chooses the levels and you follow them in automatically. You can still change your skin in the shop. Press the slash key to chat.", 40, y + 30, 520, 15);
         mpLabel("Players", 40, y + 86);
         mpPlayerList(40, y + 112);
         // [v1.5] Digitsofpi and Kineto can switch the mode even when they aren't hosting
         if (admOn() && MP.links[0]) {
           mpLabel("Mode (developer)", 330, y + 86);
-          var admModes = [["linked", "LINKED", __p.color(0, 160, 90)], ["race", "RACE", __p.color(230, 110, 0)]];
-          for (var am = 0; am < 2; am++) {
-            if (mpButton(330 + am * 120, y + 112, 110, 40, admModes[am][1], MP.mode === admModes[am][0] ? admModes[am][2] : __p.color(150)) && MP.mode !== admModes[am][0]) {
+          for (var am = 0; am < MP_MODES.length; am++) {
+            var amode = MP_MODES[am];
+            if (mpButton(330 + am % 2 * 120, y + 112 + __p.floor(am / 2) * 46, 110, 38, amode.toUpperCase(), MP.mode === amode ? MP_MODE_COLS[amode] : __p.color(150)) && MP.mode !== amode) {
               mpSendRaw(MP.links[0], {
                 t: "admmode",
-                mode: admModes[am][0]
+                mode: amode
               });
             }
           }
+        }
+        // [v1.8] RELAY: everyone can see the teams (the host and developers change them)
+        if (MP.mode === "relay" && mpButton(330, admOn() && MP.links[0] ? y + 210 : y + 112, 230, 40, admOn() ? "TEAMS (DEVELOPER)" : "SEE THE TEAMS", __p.color(0, 120, 255))) {
+          MP.teamsOpen = true;
         }
         if (mpButton(40, 520, 120, 50, "LEAVE", __p.color(120))) {
           mpLeave();
@@ -57534,6 +58730,9 @@ function program() {
     if (!MP.active || scene !== "game") {
       return "";
     }
+    if (MP.spectating && MP.relayWait) {
+      return ""; // [v1.8] (RELAY: the bar at the top says whose turn it is)
+    }
     if (MP.spectating) {
       var spl = MP.players[MP.specId];
       return spl ? "Spectating " + mpShownName(spl) + ". Click or press the arrow keys to watch someone else. You'll play from the next level." : "Spectating: waiting for someone to be in the level. You'll play from the next level.";
@@ -57618,7 +58817,7 @@ function program() {
     __p.noStroke();
     __p.fill(0, 0, 0, 185);
     __p.rect(x, y, w, h, 14);
-    mpArcLine((MP.mode === "race" ? "RACE" : "LINKED") + "  -  " + ids.length + " PLAYER" + (ids.length === 1 ? "" : "S"), 300, y + 12, 8, 255, __p.CENTER);
+    mpArcLine(mpModeName().toUpperCase() + "  -  " + ids.length + " PLAYER" + (ids.length === 1 ? "" : "S"), 300, y + 12, 8, 255, __p.CENTER);
     __p.textFont(mpSans, 15);
     for (var i = 0; i < ids.length; i++) {
       var pl = MP.players[ids[i]],
@@ -57857,7 +59056,12 @@ function program() {
         }
       }
     }
+    if (MP.active && scene === "game") {
+      mpDrawFreezeHud(); // [v1.8]
+      mpDrawRelayHud();
+    }
     mpDrawTabList(); // [v1.7] held Tab: everyone in the party
+    mpDrawTeamsPanel(); // [v1.8]
     srvDrawInvite(); // [v1.5] a developer's invite
     // [v1.5] on the map while the host plays a level: watch it (spectate)
     if (scene === "Play" && !transitionActive && mpHostLevelOn() && !MP.chatOpen) {
@@ -57949,7 +59153,7 @@ function program() {
       __p.stroke(230, 110, 0);
       arcSize(20);
       arcAlign(__p.CENTER);
-      arcText("RACE OVER", 300, y0 + 50);
+      arcText(MP.mode === "relay" ? "RELAY OVER" : MP.mode === "freeze" ? "FREEZE OVER" : "RACE OVER", 300, y0 + 50);
       arcAlign(__p.LEFT);
       for (var q = 0; q < r.length; q++) {
         var ry = y0 + 104 + q * 52;
@@ -60150,6 +61354,110 @@ function program() {
     t.focus();
     t.select();
   };
+  // [v1.8] LOAD (Settings, General, Save Code): paste a save code in the game. The
+  // website has no save code screen before the game any more (Khan Academy still does).
+  var dashSaveCodeOf = function dashSaveCodeOf(text) {
+    var v = String(text || "").replace(/^\s+|\s+$/g, "").replace(/^save code:\s*/i, "");
+    var decl = /^var\s+(?:saveCode|savecode1dot1|savecodeversion1point1)\s*=\s*("(?:\\.|[^"\\])*")\s*;?$/i.exec(v);
+    if (decl) {
+      try {
+        return JSON.parse(decl[1]);
+      } catch (e) {}
+    }
+    return v.replace(/^["']|["'];?$/g, "").replace(/\s+/g, "");
+  };
+  var dashLoadSavePanel = function dashLoadSavePanel() {
+    sfx("click");
+    var box = document.getElementById("dash-load-box");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "dash-load-box";
+      box.setAttribute("data-dash-box", "save");
+      box.style.cssText = "position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);" + "font:15px 'Trebuchet MS',Arial,sans-serif;color:#000;padding:12px;box-sizing:border-box";
+      box.innerHTML = '<div data-dash-box="save" style="box-sizing:border-box;width:min(440px,100%);background:#fff;border:6px solid #000;border-radius:24px;padding:18px 20px;box-shadow:10px 10px 0 #0003;text-align:left">' + '<div data-dash-box="save" style="font-weight:900;font-size:22px;letter-spacing:2px;color:#f00;text-align:center;margin-bottom:10px">LOAD SAVE CODE</div>' + '<textarea data-dash-box="save" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="Paste a save code here." style="display:block;box-sizing:border-box;width:100%;min-height:90px;padding:9px 10px;border:3px solid #000;border-radius:14px;background:#f4fdff;color:#000;font:16px/1.35 ui-monospace,Menlo,Consolas,monospace;resize:vertical;-webkit-user-select:text;user-select:text;outline:none"></textarea>' + '<div data-dash-box="save" class="dlb-msg" style="min-height:1.3em;margin:8px 0 0;font-size:13px;color:#555">This replaces the progress on this device with the code\'s. (COPY yours first to keep it.)</div>' + '<div data-dash-box="save" style="display:flex;gap:8px;margin-top:12px">' + '<button data-dash-box="save" class="dlb-paste" type="button" style="flex:1;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">PASTE</button>' + '<button data-dash-box="save" class="dlb-cancel" type="button" style="flex:1;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">CANCEL</button>' + '<button data-dash-box="save" class="dlb-load" type="button" style="flex:1.3;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#f00;color:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">LOAD</button>' + "</div></div>";
+      document.body.appendChild(box);
+      var ta = box.querySelector("textarea");
+      var msg = box.querySelector(".dlb-msg");
+      var say = function say(t, bad) {
+        msg.textContent = t;
+        msg.style.color = bad ? "#c00" : "#555";
+        msg.style.fontWeight = bad ? "700" : "400";
+      };
+      var close = function close() {
+        box.style.display = "none";
+        try {
+          ta.blur();
+        } catch (e) {}
+      };
+      // the game's own keys stay out of it (Processing listens on the page)
+      ["keydown", "keyup", "keypress"].forEach(function (n) {
+        box.addEventListener(n, function (e) {
+          e.stopPropagation();
+          if (n === "keydown" && e.key === "Escape") {
+            close();
+          } else if (n === "keydown" && e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            box.querySelector(".dlb-load").click();
+          }
+        });
+      });
+      box.addEventListener("mousedown", function (e) {
+        if (e.target === box) {
+          close();
+        }
+      });
+      box.querySelector(".dlb-cancel").onclick = close;
+      box.querySelector(".dlb-paste").onclick = function () {
+        try {
+          navigator.clipboard.readText().then(function (t) {
+            ta.value = t;
+            say("Pasted. Press LOAD.", false);
+          }, function () {
+            ta.focus();
+            say("Your browser didn't allow that: paste into the box (Ctrl+V or Cmd+V, or hold and Paste).", true);
+          });
+        } catch (e) {
+          ta.focus();
+          say("Paste into the box (Ctrl+V or Cmd+V, or hold and Paste).", true);
+        }
+      };
+      box.querySelector(".dlb-load").onclick = function () {
+        var code = dashSaveCodeOf(ta.value);
+        if (!code) {
+          say("Paste a save code first.", true);
+          return;
+        }
+        if (MP.active) {
+          say("Leave the party first, then load the code.", true);
+          return;
+        }
+        if (decodeAnySave(code) === null || !loadSaveString(code)) {
+          say("That save code doesn't work. Check that all of it was copied.", true);
+          return;
+        }
+        achResyncNew();
+        try {
+          MOBILE.lastSave = generateSaveString();
+          window.localStorage.setItem("dashparkour-save-code", MOBILE.lastSave);
+          window.localStorage.setItem("dashparkour-save-top", String(window.__dashTopSave || ""));
+        } catch (e) {}
+        sfx("achievement");
+        say("Loaded! Your progress is now this code's.", false);
+        msg.style.color = "#080";
+        msg.style.fontWeight = "700";
+        window.setTimeout(close, 1100);
+      };
+    }
+    box.style.display = "flex";
+    box.querySelector(".dlb-msg").textContent = "This replaces the progress on this device with the code's. (COPY yours first to keep it.)";
+    box.querySelector(".dlb-msg").style.color = "#555";
+    box.querySelector(".dlb-msg").style.fontWeight = "400";
+    var t0 = box.querySelector("textarea");
+    t0.value = "";
+    try {
+      t0.focus();
+    } catch (e) {}
+  };
   // Every time the save code changes it is stored on this device, so the
   // start screen already has your latest progress next time (with the code it
   // was started from, so a new code pasted at the top of the file still wins).
@@ -60428,6 +61736,7 @@ function program() {
     SRV.listing = true;
     srvFetch("GET", "/api/parties?q=" + encodeURIComponent(MP.fields.search || "") + "&dev=" + SRV.dev).then(function (j) {
       SRV.list = j.parties || [];
+      srvDropClosed(); // [v1.8]
       var lp = SRV.leftParty;
       if (lp && Date.now() - lp.at < 15000) {
         for (var li = 0; li < SRV.list.length; li++) {
@@ -60732,10 +62041,31 @@ function program() {
     srvDropBusy();
     SRV.queue = [];
     if (pt) {
+      // [v1.8] your own party leaves the list at once (it showed until the list next
+      // refreshed), and stays out of it while the server is still closing it
+      SRV.closedIds = SRV.closedIds || {};
+      SRV.closedIds[pt.id] = Date.now();
+      srvDropClosed();
       srvFetch("POST", "/api/parties/" + encodeURIComponent(pt.id) + "/close", {
         token: pt.token
-      }).then(null, function () {});
+      }).then(null, function () {}).then(function () {
+        SRV.listAt = 0; // (and the list asks again)
+      });
     }
+  };
+  var srvDropClosed = function srvDropClosed() {
+    var C = SRV.closedIds;
+    if (!C || !SRV.list) {
+      return;
+    }
+    var out = [];
+    for (var i = 0; i < SRV.list.length; i++) {
+      var at = C[SRV.list[i].id];
+      if (!(at && Date.now() - at < 30000)) {
+        out.push(SRV.list[i]);
+      }
+    }
+    SRV.list = out;
   };
   var srvHostTick = function srvHostTick() {
     var pt = SRV.party;
@@ -61891,8 +63221,10 @@ function program() {
                 arcText("PAUSED", qx + 50, 100);
               }
 
-              // back button
-              backButton(qx + qMenuWidth / 2, 180, 70);
+              // back button ([v1.8] not while waiting for your RELAY turn)
+              if (!(MP.active && MP.relayWait && scene === "game")) {
+                backButton(qx + qMenuWidth / 2, 180, 70);
+              }
 
               // continue button
               continueButton(qx + qMenuWidth / 2, 280, 150, 45);
@@ -62334,6 +63666,32 @@ window.__dashParkourBootPromise = runPJS(program);
     if (window.__dashBootHold) e.stopImmediatePropagation(); // (the letters still go into the box)
   }
   ["keydown", "keyup", "keypress"].forEach(function (n) { window.addEventListener(n, holdKeys, true); });
+  // [v1.8] (the website) the first click, tap or key starts the game. That one is only
+  // for starting, so it doesn't also press whatever is under it (these listeners come
+  // before the game's own, so they see it first).
+  var tapArmed = false, upUntil = 0;
+  var tapDowns = ["pointerdown", "mousedown", "touchstart", "keydown"];
+  var tapUps = ["pointerup", "mouseup", "touchend", "click", "keyup"];
+  function tapDown(e) {
+    if (!window.__dashTapStart) return;
+    if (e.target && e.target.closest && e.target.closest("#boot-screen")) return;
+    e.stopImmediatePropagation();
+    if (!tapArmed || e.isTrusted === false) return; // (still loading: nothing to press yet)
+    if (e.type === "keydown" && /^(Shift|Control|Alt|Meta|Tab|Escape|F\d+)$/.test(e.key)) return;
+    if (e.cancelable && e.type !== "touchstart") e.preventDefault();
+    upUntil = Date.now() + 1500;
+    tapArmed = false;
+    window.__dashBootHold = false;
+    window.__dashTapStart = false;
+  }
+  function tapUp(e) {
+    if (window.__dashTapStart || Date.now() < upUntil) e.stopImmediatePropagation();
+  }
+  tapDowns.forEach(function (n) { window.addEventListener(n, tapDown, true); });
+  tapUps.forEach(function (n) { window.addEventListener(n, tapUp, true); });
+  function waitForTap() {
+    tapArmed = true;
+  }
 
   function bootScripts(sources) {
     var sourceIndex = 0;
@@ -62368,7 +63726,8 @@ window.__dashParkourBootPromise = runPJS(program);
             fail(error);
             return;
           }
-          window.__dashBootHold = false;
+          if (webStart) waitForTap();
+          else window.__dashBootHold = false;
           frame(finishBoot);
         };
         if (window.__dashParkourBootPromise && typeof window.__dashParkourBootPromise.then === "function") {
@@ -62409,6 +63768,18 @@ window.__dashParkourBootPromise = runPJS(program);
     }
 
     startButton.onclick = startGame;
+    // [v1.8] The website (this editable page) has no save code screen: the game starts
+    // by itself with this device's progress (or the code at the top of the file), and a
+    // code is pasted in the game instead (Settings, General, Save Code: LOAD). It waits
+    // for a first click or key (sounds can't play before one), showing that in the game.
+    // The compressed Khan Academy page keeps the screen.
+    var webStart = !document.getElementById("game-payload");
+    if (webStart) {
+      var toolsEl = document.getElementById("save-code-tools");
+      if (toolsEl) toolsEl.style.display = "none";
+      startButton.style.display = "none";
+      window.__dashTapStart = true;
+    }
 
     function bootNext() {
       try {
@@ -62430,6 +63801,7 @@ window.__dashParkourBootPromise = runPJS(program);
           progress.value = 100;
           startButton.disabled = false;
           startButton.textContent = "Start DASH Parkour";
+          if (webStart && early) startGame();
           return;
         }
         var script = document.createElement("script");

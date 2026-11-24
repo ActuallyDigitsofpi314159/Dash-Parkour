@@ -995,7 +995,12 @@
   // the game describes what is happening; the song decides what to do with it
   DA.state = function (st) {
     var key = JSON.stringify(st);
-    if (key === DA.lastStateKey) return;
+    if (key === DA.lastStateKey) { DA.pendKey = null; return; }
+    // [v1.8] a new state counts once it has held for 3 frames: a state flickering
+    // back and forth (a spectator's boss) re-cued the song's layers and hits every frame
+    if (key !== DA.pendKey) { DA.pendKey = key; DA.pendN = 0; }
+    if (++DA.pendN < 3 && DA.lastStateKey !== undefined) return;
+    DA.pendKey = null;
     DA.lastStateKey = key;
     DA.lastState = st;
     if (DA.current) DA.current.react(st);
