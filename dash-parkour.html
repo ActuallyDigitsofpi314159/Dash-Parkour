@@ -57783,9 +57783,16 @@ function program() {
     }
     // keep clear of the Q menu while it is open
     var chatX = -widePad + 8 + (scene === "game" ? __p.max(0, qMenuX + qMenuWidth + 6) : 0);
+    var copyHit = null;
     for (var r0 = 0; r0 < rows.length; r0++) {
       var R = rows[r0];
       var ly = bottom - r0 * rowH;
+      // [v1.7] with the chat open, clicking a message copies it
+      if (MP.chatOpen && R.L && R.L.x !== undefined && worldMouseX >= chatX && worldMouseX <= chatX + boxW && worldMouseY >= ly - rowH + 1 && worldMouseY <= ly + 1) {
+        copyHit = R.L;
+        mpSnapRect(chatX, ly - rowH + 1, boxW, rowH, 40);
+        __p.cursor(__p.HAND);
+      }
       // [v1.5] snapped to whole screen pixels: rows drawn at fractions of a pixel left
       // thin see-through seams between them
       mpSnapRect(chatX, ly - rowH + 1, boxW, rowH, R.a * 0.45);
@@ -57823,6 +57830,12 @@ function program() {
         __p.fill(255, 230, 120, R.a);
       }
       __p.text(R.t, tx + R.prew, ly - 3);
+    }
+    if (copyHit && MP.click) {
+      mpCopy((copyHit.n ? "<" + copyHit.n + "> " : "") + copyHit.x, "chatline");
+      mpToast("Message copied.");
+      MP.toastT = 70;
+      MP.click = false;
     }
     if (MP.chatOpen) {
       MP.chatBarRect = { x: -widePad + 8, y: 600 - 10 - inputH - MP.kbLift, w: wideW - 16, h: inputH }; // [v1.1] the phone's text box goes here
@@ -58298,6 +58311,30 @@ function program() {
       if (typing()) {
         e.stopImmediatePropagation();
       }
+    }, true);
+    // [v1.7] Ctrl/Cmd+C copies what you've typed in the chat, Ctrl/Cmd+X cuts it
+    var chatCopyCut = function (e, cut) {
+      if (!MP.chatOpen || mobileIsBox(e.target) || !MP.chatText) {
+        return;
+      }
+      try {
+        e.clipboardData.setData("text/plain", MP.chatText);
+        e.preventDefault();
+      } catch (err) {
+        return;
+      }
+      if (cut) {
+        MP.chatText = "";
+        MP.chatCur = undefined;
+      }
+      mpToast(cut ? "Cut." : "Copied.");
+      MP.toastT = 70;
+    };
+    window.addEventListener("copy", function (e) {
+      chatCopyCut(e, false);
+    }, true);
+    window.addEventListener("cut", function (e) {
+      chatCopyCut(e, true);
     }, true);
     window.addEventListener("paste", function (e) {
       if (!typing() || mobileIsBox(e.target)) {
