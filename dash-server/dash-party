@@ -98,7 +98,7 @@ def tm: . / 1000 | floor | strflocaltime("%a %b %d %H:%M");
 def clock: . / 1000 | floor | strflocaltime("%b %d %H:%M:%S");
 def plural($w): if . == 1 then "1 \($w)" else "\(.) \($w)s" end;
 def what: {made: "made the party", join: "joined", leave: "left", start: "started playing", stop: "back to the lobby",
-  adminjoin: "moderator joined", wrongpass: "wrong passcode", full: "turned away (full)", banned: "turned away (banned)", kick: "kicked", ban: "banned", end: "party ended"}[.kind] // .kind;
+  adminjoin: "moderator joined", devname: "removed (used a developer's name without the key)", wrongpass: "wrong passcode", full: "turned away (full)", banned: "turned away (banned)", kick: "kicked", ban: "banned", end: "party ended"}[.kind] // .kind;
 def summary($i):
   . as $r | (if .ended > 0 then .ended else now * 1000 end) as $end |
   ([.events[] | select(.kind == "leave")] | length) as $left |

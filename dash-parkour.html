@@ -39373,11 +39373,14 @@ function program() {
           this.kFlap = __p.max(0, this.kFlap - DT / 20);
         }
         var kfl = this.kFlap > 0 ? Math.sin((1 - this.kFlap) * Math.PI * 2) * (this.kFlap + 0.25) : 0;
-        // [v1.6] kGrow (his spawn): a small round ball with his eyes, that swells into
-        // his square body while the wings and face markings grow out of it
+        // [v1.6] kGrow (his spawn): a small oval with his eyes, that swells into his
+        // square body while the wings and face markings swirl out of it and grow
+        // ([v1.7] they turn in from a third of a turn back as they grow)
         var kGrow = this.kGrow === undefined ? 1 : this.kGrow;
-        var kBody = kGrow >= 1 ? 1 : __p.lerp(0.55, 1, fxBack(kGrow));
-        var kLay = kGrow >= 1 ? 1 : __p.max(0.001, fxBack(__p.constrain((kGrow - 0.25) / 0.75, 0, 1)));
+        var kBody = kGrow >= 1 ? 1 : __p.lerp(0.62, 1, fxBack(kGrow));
+        var kLayT = __p.constrain((kGrow - 0.1) / 0.9, 0, 1);
+        var kLay = kGrow >= 1 ? 1 : __p.max(0.001, __p.lerp(fxEase(kLayT), fxBack(kLayT), 0.3));
+        var kSpin = kGrow >= 1 ? 0 : (1 - fxEase(kLayT)) * -110;
         // [v1.6] flying (admin): the wings keep up a gentle flap
         var kFlying = this === p ? typeof admFlying === "function" && admFlying() : !!this.admFly;
         if (kFlying && this.kFlap <= 0) {
@@ -39385,6 +39388,9 @@ function program() {
         }
         __p.pushMatrix();
         __p.translate(0, -this.visualH * 0.55);
+        if (kSpin) {
+          __p.rotate(kSpin);
+        }
         __p.scale(kLay);
         __p.scale(1 + kfl * 0.12, 1 - kfl * 0.32);
         __p.translate(0, this.visualH * 0.55);
@@ -39434,7 +39440,7 @@ function program() {
         __p.noStroke();
         if (kGrow < 1) {
           var kbw = this.visualW * kBody,
-            kbh = this.visualH * kBody;
+            kbh = this.visualH * kBody * __p.lerp(0.78, 1, fxEase(kGrow)); // (an oval first)
           var kRound = 1 - fxEase(__p.constrain(kGrow * 1.4, 0, 1)); // (round, then square)
           __p.rect(-kbw / 2, -this.visualH / 2 - kbh / 2, kbw, kbh, __p.lerp(kbw * 0.25, kbw / 2, kRound));
         } else {
@@ -39443,6 +39449,9 @@ function program() {
         __p.pushMatrix();
         if (kGrow < 1) {
           __p.translate(0, -this.visualH / 2);
+          if (kSpin) {
+            __p.rotate(kSpin); // (turning with the wings: one swirl)
+          }
           __p.scale(kLay);
           __p.translate(0, this.visualH / 2);
         }
@@ -39749,7 +39758,7 @@ function program() {
       case 19:
         return 50;
       case 18:
-        return 40;
+        return 112; // [v1.7] (slower: a beat as a little oval, then he swirls out)
       case 11:
         return 32;
     }
@@ -40044,7 +40053,14 @@ function program() {
     for (var i = fxParts.length - 1; i >= 0; i--) {
       var q = fxParts[i];
       q.t += DT;
-      if (q.tx !== undefined) {
+      if (q.cx !== undefined) {
+        // [v1.7] swirling round a spot: turning by "da" while the distance goes r0 -> r1
+        var kw = fxEase(q.t / q.life),
+          rw = __p.lerp(q.r0, q.r1, kw),
+          aw = q.a0 + q.da * kw;
+        q.x = q.cx + Math.cos(aw) * rw;
+        q.y = q.cy + Math.sin(aw) * rw * (q.oy || 1);
+      } else if (q.tx !== undefined) {
         // flying in to a spot (spawn): eased, so they arrive together
         var k = fxEase(q.t / q.life);
         q.x = __p.lerp(q.sx, q.tx, k);
@@ -40674,26 +40690,52 @@ function program() {
       case 19:
         return fxPiBuild(a);
       case 18:
-        // Kineto: [v1.6] sparks gather into a little ball with his eyes, which swells
-        // into his body as his wings and markings grow out of it
-        if (t < 8 && dtEvery(1)) {
-          for (var kp = 0; kp < 3; kp++) {
-            var ka = Math.random() * Math.PI * 2,
-              kd2 = 50 + Math.random() * 50,
-              kr = Math.random() * 9;
-            fxPart({ kind: "dot", sx: a.x + Math.cos(ka) * kd2, sy: a.y + Math.sin(ka) * kd2, tx: a.x + Math.cos(ka) * kr, ty: a.y + Math.sin(ka) * kr, life: 12 + Math.random() * 4, arc: __p.random(-14, 14), size: 4 + Math.random() * 2, col: kp === 0 ? [0, 120, 255] : [0, 210, 255], x: 0, y: 0 });
+        // Kineto: [v1.7] sparks spiral in and gather into a small oval with his eyes,
+        // which waits a beat (a little pulse), then swells into his body as his wings
+        // and markings swirl out of it and grow, with sparks swirling round him, and
+        // ends with a flap
+        if (t < 24 && dtEvery(1)) {
+          for (var kp = 0; kp < 4; kp++) {
+            // spiralling in (most of a turn) to the rim of the little oval
+            var ka = Math.random() * Math.PI * 2;
+            fxPart({ kind: "dot", cx: a.x, cy: a.y, a0: ka, da: 4 + Math.random() * 1.5, r0: 70 + Math.random() * 50, r1: 6 + Math.random() * 6, oy: 0.8, life: 16 + Math.random() * 8, size: 4 + Math.random() * 2.5, col: kp === 0 ? [0, 120, 255] : kp === 1 ? [60, 60, 255] : [0, 210, 255], x: a.x, y: a.y });
           }
         }
-        if (fxAt(a, 16)) {
+        if (fxAt(a, 20)) {
+          fxSnd(a, "skinPop");
+        }
+        if (fxAt(a, 52)) {
           fxSnd(a, "skinGrow");
         }
-        if (fxAt(a, 28)) {
+        if (fxAt(a, 96)) {
           fxSnd(a, "skinFlap");
         }
-        if (t >= 10) {
-          o.a = __p.min(1, (t - 10) / 5);
-          o.kGrow = __p.constrain((t - 16) / 18, 0, 1);
-          o.kFlap = t > 28 ? __p.max(0, 1 - (t - 28) / 12) : 0; // (one flap once the wings are out)
+        if (t >= 52 && t < 92 && dtEvery(2)) {
+          // sparks swirling out round him as he grows
+          var ks = (t - 52) / 40;
+          for (var kq = 0; kq < 2; kq++) {
+            var kb = t * 0.35 + kq * Math.PI;
+            fxPart({ kind: "dot", cx: a.x, cy: a.y - 2, a0: kb, da: 2.4, r0: 10 + ks * 16, r1: 34 + ks * 30, oy: 0.75, life: 18, size: 3.5, shrink: true, col: kq ? [0, 230, 255] : [60, 60, 255], x: a.x, y: a.y });
+          }
+        }
+        if (t >= 18 && t < 64) {
+          // a soft glow round the little oval, pulsing while he waits
+          var kgA = __p.min(1, (t - 18) / 8) * (t < 52 ? 1 : 1 - (t - 52) / 12);
+          var kgP = 0.5 + 0.5 * Math.sin((t - 18) * 0.25);
+          __p.noStroke();
+          for (var kg = 3; kg >= 1; kg--) {
+            __p.fill(0, 200, 255, (18 + 14 * kgP) * kgA);
+            __p.ellipse(a.x, a.y, (26 + kg * 11 + kgP * 5), (21 + kg * 9 + kgP * 4));
+          }
+        }
+        if (t >= 18) {
+          o.a = __p.min(1, (t - 18) / 6);
+          o.kGrow = __p.constrain((t - 52) / 44, 0, 1);
+          // the beat: a little breath while he waits
+          var kBeat = t < 52 ? Math.sin(__p.constrain((t - 26) / 26, 0, 1) * Math.PI * 2) : 0;
+          o.sx = 1 + kBeat * 0.07;
+          o.sy = 1 - kBeat * 0.07;
+          o.kFlap = t > 96 ? __p.max(0, 1 - (t - 96) / 14) : 0; // (one flap once the wings are out)
           skinFxDummy(sk, a.x, a.y, o);
         }
         return t < a.len;
@@ -49555,6 +49597,21 @@ function program() {
                 arcText('NEW BEST!  ' + framesToTime(levelTimes[currentLevel]), 0, 0);
                 __p.popMatrix();
               }
+              // [v1.7] multiplayer: a level you haven't unlocked yourself (or one you
+              // watched some of) doesn't count for you. Say so, so it isn't a surprise
+              // that nothing new is open on your map afterwards.
+              if (typeof MP !== "undefined" && MP.active && mpCount() > 1 && (MP.specRun || lvlUnlock < currentLevel + 1)) {
+                __p.pushMatrix();
+                __p.translate(6, levelNewBest ? 146 : 112);
+                __p.rotate(-3);
+                arcSize(11);
+                var ncTxt = MP.specRun ? "You watched part of this level\nso it does not count for you" : "You have not unlocked this level yet\nso it does not count for you";
+                __p.stroke(0, 0, 0, 190);
+                arcText(ncTxt, 2, 2);
+                __p.stroke(255, 120, 120);
+                arcText(ncTxt, 0, 0);
+                __p.popMatrix();
+              }
               __p.popMatrix();
               __p.pushMatrix();
               __p.translate(140, 380);
@@ -54253,7 +54310,15 @@ function program() {
         if (hiLink) {
           hiLink.cv = m.cv | 0; // [v1.6]
         }
-        pl = mpAddPlayer(fromId, String(m.n || "Player").slice(0, 16), MP.players[fromId] ? MP.players[fromId].color : mpFreeColor(), m.sk | 0);
+        var hiName = String(m.n || "Player").slice(0, 16);
+        pl = mpAddPlayer(fromId, hiName, MP.players[fromId] ? MP.players[fromId].color : mpFreeColor(), m.sk | 0);
+        // [v1.7] a developer's name only with the admin key (the party server checked
+        // it when they asked to join): anyone else using one is removed at once
+        if (mpProtName(hiName) && !(SRV.slotAdm && SRV.slotAdm[fromId])) {
+          pl.lockKick = true;
+          mpKick(fromId);
+          return;
+        }
         if (mpDevName(pl)) {
           mpAssignColors(); // [v1.4] Digitsofpi red, Kineto blue
         }
@@ -54373,7 +54438,7 @@ function program() {
         if (!mpChatOn()) {
           return; // Multiplayer Chat is off in the settings
         }
-        mpChatLine(pl ? pl.name : "?", m.x, pl ? pl.color : 0, pl && pl.st && pl.st.ch, pl && pl.st ? pl.st.adm : "");
+        mpChatLine(pl ? pl.name : "?", m.x, pl ? pl.color : 0, pl && pl.st && pl.st.ch, mpAdmOf(pl));
         sfx("chat"); // [v1.1] sound
         return;
       case "gate":
@@ -54422,7 +54487,7 @@ function program() {
       case "admmode":
         // [v1.5] a developer in the party switched the mode
         pl = MP.players[fromId];
-        if (MP.isHost && pl && pl.st && pl.st.adm && (m.mode === "linked" || m.mode === "race") && MP.mode !== m.mode) {
+        if (MP.isHost && pl && mpAdmOf(pl) && (m.mode === "linked" || m.mode === "race") && MP.mode !== m.mode) {
           MP.mode = m.mode;
           mpBroadcast({
             t: "mode",
@@ -54434,7 +54499,7 @@ function program() {
       case "admlv":
         // [v1.5] a developer in the party chose a level: start it for everyone
         pl = MP.players[fromId];
-        if (MP.isHost && pl && pl.st && pl.st.adm && !transitionActive && typeof m.lv === "number" && m.lv >= 0 && m.lv < levels.length && m.w >= 1 && m.w <= 4) {
+        if (MP.isHost && pl && mpAdmOf(pl) && !transitionActive && typeof m.lv === "number" && m.lv >= 0 && m.lv < levels.length && m.w >= 1 && m.w <= 4) {
           currentLevel = m.lv;
           world = m.w;
           worldSubScreen = m.w;
@@ -54514,7 +54579,7 @@ function program() {
         // [v1.1] only the host can remove players (and only from the host's link)
         if (!MP.isHost && fromId === 0) {
           MP.kicked = true;
-          mpLeave(m.mod ? "A moderator removed you from the game." : "The host removed you from the game.");
+          mpLeave(m.nm ? "That name belongs to the game's makers. Pick another name to play." : m.mod ? "A moderator removed you from the game." : "The host removed you from the game.");
         }
         return;
     }
@@ -54526,6 +54591,12 @@ function program() {
   var mpDevName = function mpDevName(pl) {
     var n = String(pl && pl.name || "").toLowerCase();
     return MP_DEV_COLORS[n] !== undefined ? n : "";
+  };
+  // [v1.7] another player's admin (DEV tag, glow, mode and level changes) counts only
+  // with a developer's name, which needs the admin key to get into a party
+  var mpAdmOf = function mpAdmOf(pl) {
+    var a = pl && pl.st && pl.st.adm;
+    return a && mpProtName(pl.name) === a ? a : "";
   };
   var mpAssignColors = function mpAssignColors() {
     var ids = [],
@@ -54577,16 +54648,25 @@ function program() {
       return;
     }
     var name = mpShownName(MP.players[id]);
-    var byMod = !!MP.players[id].modKick;
+    var byMod = !!MP.players[id].modKick,
+      byName = !!MP.players[id].lockKick; // [v1.7] (a developer's name without the key)
     for (var i = 0; i < MP.links.length; i++) {
       if (MP.links[i].id === id) {
         mpSendRaw(MP.links[i], {
           t: "kick",
-          mod: byMod
+          mod: byMod,
+          nm: byName ? 1 : undefined
         });
       }
     }
     MP.players[id].kicked = true;
+    if (byName) {
+      setTimeout(function () {
+        mpDropLink(id);
+      }, 400);
+      mpChatLine("", "A player using the name " + name + " was removed (that name belongs to the game's makers)", -1);
+      return;
+    }
     // give the message a moment to arrive before the connection closes
     setTimeout(function () {
       mpDropLink(id);
@@ -54849,7 +54929,7 @@ function program() {
     MP.myId = 0;
     MP.screen = "host";
     MP.players = {};
-    mpAddPlayer(0, MP.fields.name || "Host", 0, currentSkin);
+    mpAddPlayer(0, mpMyName("Host"), 0, currentSkin);
     mpAssignColors(); // [v1.4] (Kineto hosting is blue)
     mpChatHint();
   };
@@ -55269,7 +55349,7 @@ function program() {
           j.status = "connected";
           mpSendRaw(link, {
             t: "hi",
-            n: MP.fields.name || "Player",
+            n: mpMyName("Player"),
             sk: currentSkin,
             cv: MP_CV // [v1.6] (this game reads changes-only states)
           });
@@ -55548,7 +55628,7 @@ function program() {
     }
     if (MP.players[MP.myId]) {
       MP.players[MP.myId].skin = currentSkin;
-      MP.players[MP.myId].name = MP.fields.name || MP.players[MP.myId].name;
+      MP.players[MP.myId].name = mpMyName(MP.players[MP.myId].name);
     }
     for (var k in MP.players) {
       MP.players[k].seen += DT;
@@ -55929,8 +56009,9 @@ function program() {
         activeSprite = st.vx < -0.5 ? imgs.pixelSkinLeft : st.vx > 0.5 ? imgs.pixelSkinRight : imgs.pixelSkinStraight;
       }
       dashTint = mpColorOf(pl.id);
-      if (st.adm) {
-        admGlow(g.x, g.y, g.w, st.adm);
+      var gAdm = mpAdmOf(pl);
+      if (gAdm) {
+        admGlow(g.x, g.y, g.w, gAdm);
       }
       if (st.dm) {
         __p.imageMode(__p.CENTER);
@@ -55974,13 +56055,13 @@ function program() {
         __p.strokeWeight(3);
         __p.fill(dashTint);
       }
-      if (st.ch || st.adm) {
+      if (st.ch || gAdm) {
         var nw = __p.textWidth(shown);
         if (st.ch) {
           drawIdleCrown(g.x - nw / 2 - 12, tagY - 4, 15);
         }
-        if (st.adm) {
-          mpDevTag(g.x + nw / 2 + 5, tagY - 15, st.adm);
+        if (gAdm) {
+          mpDevTag(g.x + nw / 2 + 5, tagY - 15, gAdm);
         }
       }
       __p.popStyle();
@@ -56294,7 +56375,7 @@ function program() {
       var label = mpArcSafe(mpShownName(pl)) + (pl.id === MP.myId ? " - you" : "") + (pl.id === 0 ? " - host" : "");
       var mine = pl.id === MP.myId;
       var champ = mine ? achievementStates.parkourChampion : pl.st && pl.st.ch;
-      var dev = mine ? admOn() ? ADM.who : "" : pl.st && pl.st.adm;
+      var dev = mine ? admOn() ? ADM.who : "" : mpAdmOf(pl);
       // [v1.1] the name, its tags and the badges all fit in the column
       var kickable = MP.isHost && !mine && !pl.kicked;
       var room = 218 - (champ ? 22 : 0) - (dev ? 36 : 0) - (kickable ? 56 : 0);
@@ -56523,7 +56604,7 @@ function program() {
       dev: SRV.dev,
       party: party,
       to: pl.id,
-      from: srvTxt(MP.fields.name || "Player")
+      from: srvTxt(mpMyName("Player"))
     };
     if (admOn() && SRV.modKey) {
       body.key = SRV.modKey; // (a developer's invite gets through Receive Invites: off)
@@ -57338,7 +57419,7 @@ function program() {
             msg = ""; // [v1.1] a /command, not a chat message
           }
           if (msg) {
-            mpChatLine(MP.fields.name || (MP.players[MP.myId] ? MP.players[MP.myId].name : "me"), msg, mpMyColor(), achievementStates.parkourChampion, admOn() ? ADM.who : "");
+            mpChatLine(mpMyName(MP.players[MP.myId] ? MP.players[MP.myId].name : "me"), msg, mpMyColor(), achievementStates.parkourChampion, admOn() ? ADM.who : "");
             mpBroadcast({
               t: "chat",
               id: MP.myId,
@@ -57506,8 +57587,9 @@ function program() {
 
   // ===================================================================
   // [ADMIN] Secret tools for Digitsofpi and Kineto.
-  // Typing one of the two names on the multiplayer screen asks for its passcode
-  // (only a salted hash of each is kept here). Once unlocked, the
+  // [v1.7] Typing one of the two names (or a look-alike, see mpProtName) on the
+  // multiplayer screen asks for a server admin key (dash-party keys), which the
+  // party server checks: there's no passcode in this code. Once unlocked, the
   // Q menu gets a list of toggles (each also on a number key) and the player's
   // Dash glows red or blue.
   // ===================================================================
@@ -57541,140 +57623,123 @@ function program() {
     pop: {},
     note: null
   };
-  // [v1.3] A small SHA-256 (the admin passcodes are kept as salted hashes here, not as text)
-  var dashSha256 = function dashSha256(str) {
-    var K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
-    var H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
-    var b = unescape(encodeURIComponent(String(str))), bytes = [], i, j;
-    for (i = 0; i < b.length; i++) {
-      bytes.push(b.charCodeAt(i));
-    }
-    var bitLen = bytes.length * 8;
-    bytes.push(0x80);
-    while (bytes.length % 64 !== 56) {
-      bytes.push(0);
-    }
-    for (i = 7; i >= 0; i--) {
-      bytes.push(i > 3 ? 0 : bitLen >>> i * 8 & 255);
-    }
-    var w = new Array(64);
-    for (var off = 0; off < bytes.length; off += 64) {
-      for (i = 0; i < 16; i++) {
-        w[i] = bytes[off + i * 4] << 24 | bytes[off + i * 4 + 1] << 16 | bytes[off + i * 4 + 2] << 8 | bytes[off + i * 4 + 3];
-      }
-      for (i = 16; i < 64; i++) {
-        var s0 = (w[i - 15] >>> 7 | w[i - 15] << 25) ^ (w[i - 15] >>> 18 | w[i - 15] << 14) ^ w[i - 15] >>> 3;
-        var s1 = (w[i - 2] >>> 17 | w[i - 2] << 15) ^ (w[i - 2] >>> 19 | w[i - 2] << 13) ^ w[i - 2] >>> 10;
-        w[i] = w[i - 16] + s0 + w[i - 7] + s1 | 0;
-      }
-      var a = H[0], bb = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
-      for (i = 0; i < 64; i++) {
-        var S1 = (e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7);
-        var t1 = h + S1 + (e & f ^ ~e & g) + K[i] + w[i] | 0;
-        var S0 = (a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10);
-        var t2 = S0 + (a & bb ^ a & c ^ bb & c) | 0;
-        h = g;
-        g = f;
-        f = e;
-        e = d + t1 | 0;
-        d = c;
-        c = bb;
-        bb = a;
-        a = t1 + t2 | 0;
-      }
-      H[0] = H[0] + a | 0;
-      H[1] = H[1] + bb | 0;
-      H[2] = H[2] + c | 0;
-      H[3] = H[3] + d | 0;
-      H[4] = H[4] + e | 0;
-      H[5] = H[5] + f | 0;
-      H[6] = H[6] + g | 0;
-      H[7] = H[7] + h | 0;
-    }
-    var out = "";
-    for (j = 0; j < 8; j++) {
-      out += ("00000000" + (H[j] >>> 0).toString(16)).slice(-8);
-    }
-    return out;
-  };
-  // a passcode is checked as 4000 rounds of salted SHA-256
-  // (upto: how many rounds; 3999 gives what this device remembers, see below)
-  var admHashPass = function admHashPass(who, pass, upto) {
-    var h = String(pass).toLowerCase();
-    for (var i = 0; i < (upto || 4000); i++) {
-      h = dashSha256("dash-admin:" + who + ":" + i + ":" + h);
-    }
-    return h;
-  };
   var ADM_NAMES = {
     digitsofpi: {
-      hash: "551fd8628d6097f55466befcdc71d4f40105ecd8c8c5238e8c88b1606745c6be",
       skin: 19,
       glow: [255, 40, 40]
     },
     kineto: {
-      hash: "01e6ecb7e2507527ef4a3a95e1460a9779fc78bda0ffe58deeff77b626f4a557",
       skin: 18,
       glow: [40, 120, 255]
     }
   };
-  // [v1.6] A device that unlocked once remembers "name:proof", where the proof is
-  // the passcode's hash one round short of the one above: one more round must give
-  // that hash, and it can't be worked out from it. (Just the name used to be kept,
-  // so typing it into the browser's storage was enough.)
-  try {
-    var admSaved = String(window.localStorage.getItem("dashparkour-admin") || "").split(":");
-    ADM.who = "";
-    if (ADM_NAMES[admSaved[0]] && /^[0-9a-f]{64}$/.test(admSaved[1] || "") && dashSha256("dash-admin:" + admSaved[0] + ":3999:" + admSaved[1]) === ADM_NAMES[admSaved[0]].hash) {
-      ADM.who = admSaved[0];
-    }
-  } catch (e) {}
+  // [v1.7] which developer's name this is, if any, also written another way
+  // ("K1neto", "Digits of Pi", "xKinetox"...): those are all locked the same
+  var mpProtName = function mpProtName(n) {
+    var map = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b", "@": "a", "$": "s", "|": "i", "!": "i", "l": "i" };
+    var t = String(n || "").toLowerCase().replace(/[0134578@$|!l]/g, function (c) {
+      return map[c];
+    }).replace(/[^a-z]/g, "");
+    return t.indexOf("digitsofpi") >= 0 ? "digitsofpi" : t.indexOf("kineto") >= 0 ? "kineto" : "";
+  };
+  // Admin is on only after the party server said the admin key is right (each time
+  // the game starts: nothing saved on this device is trusted by itself)
+  ADM.who = "";
+  ADM.checking = "";
   var admOn = function admOn() {
-    return ADM.who !== "" && ADM_NAMES[ADM.who] && String(MP.fields.name || "").toLowerCase() === ADM.who;
+    return ADM.who !== "" && !!ADM_NAMES[ADM.who] && mpProtName(MP.fields.name) === ADM.who;
+  };
+  // the name to show others: a developer's name only once its admin key is checked
+  var mpMyName = function mpMyName(fallback) {
+    var n = MP.fields.name || fallback;
+    return mpProtName(n) && !admOn() ? fallback : n;
   };
   // Admin effects keep running while single player is paused by the Q menu.
   var admDT = function admDT() {
     return gamePaused ? gameRealDT : DT;
   };
-  // Called while the multiplayer screen is open: a secret name asks for the code.
+  // Called while the multiplayer screen is open: a developer's name asks for the
+  // server admin key (a key this device remembers is tried first, quietly).
   var admCheckName = function admCheckName() {
-    var n = String(MP.fields.name || "").toLowerCase();
-    if (!ADM_NAMES[n] || ADM.who === n || ADM.asked === n || MP.modal || MP.focus === "name") {
-      if (!ADM_NAMES[n]) {
+    var n = mpProtName(MP.fields.name);
+    if (!n || ADM.who === n || ADM.asked === n || ADM.checking || MP.modal || MP.focus === "name") {
+      if (!n) {
         ADM.asked = "";
       }
       return;
     }
     ADM.asked = n;
+    var saved = srvModKey();
+    if (saved) {
+      admVerify(n, saved);
+      return;
+    }
     MP.fields.pass = "";
     MP.modal = {
-      title: "PASSCODE",
-      text: "This name is protected. Enter its passcode to continue.",
+      title: "ADMIN KEY",
+      text: "This name belongs to the game's makers. Type your server admin key (from dash-party keys) to use it.",
       field: "pass",
       yes: "UNLOCK",
       no: "CANCEL",
       keep: true,
       onYes: function onYes() {
-        var admProof = admHashPass(n, MP.fields.pass || "", 3999);
-        if (dashSha256("dash-admin:" + n + ":3999:" + admProof) === ADM_NAMES[n].hash) {
-          ADM.who = n;
-          MP.modal = null;
-          currentSkin = ADM_NAMES[n].skin; // their own costume, even if it isn't unlocked
-          ADM.wasOn = true;
-          try {
-            window.localStorage.setItem("dashparkour-admin", n + ":" + admProof);
-          } catch (e) {}
-          mpChatLine("", "Welcome back, " + (n === "kineto" ? "Kineto" : "Digitsofpi") + "! Admin tools are in the Q menu (or keys 1 to 0 in a level).", -1);
-        } else {
-          MP.fields.pass = "";
-          mpToast("Wrong passcode.");
-        }
+        var key = String(MP.fields.pass || "").replace(/\s+/g, "");
+        MP.modal = null;
+        MP.fields.pass = "";
+        admVerify(n, key);
       },
       onNo: function onNo() {
         MP.modal = null;
+        MP.fields.pass = "";
         MP.fields.name = "";
+        ADM.asked = "";
       }
     };
+  };
+  var admVerify = function admVerify(n, key) {
+    ADM.checking = n;
+    var fail = function (msg, badKey) {
+      ADM.checking = "";
+      ADM.asked = "";
+      if (badKey) {
+        SRV.modKey = "";
+        try {
+          window.localStorage.removeItem("dashparkour-mod-key");
+        } catch (e) {}
+      }
+      if (mpProtName(MP.fields.name) === n) {
+        MP.fields.name = ""; // (the name can't be used without it)
+      }
+      mpToast(msg);
+    };
+    if (!key || key.length < 8) {
+      fail("That admin key isn't right.", true);
+      return;
+    }
+    srvFetch("POST", "/api/admcheck", {
+      key: key
+    }).then(function (r) {
+      if (!r || !r.ok) {
+        fail("That admin key isn't right.", true);
+        return;
+      }
+      ADM.checking = "";
+      SRV.modKey = key;
+      try {
+        window.localStorage.setItem("dashparkour-mod-key", key);
+        window.localStorage.setItem("dashparkour-admin", n);
+      } catch (e) {}
+      if (mpProtName(MP.fields.name) !== n) {
+        return; // (the name was changed meanwhile)
+      }
+      ADM.who = n;
+      currentSkin = ADM_NAMES[n].skin; // their own costume, even if it isn't unlocked
+      ADM.wasOn = true;
+      mpChatLine("", "Welcome back, " + (n === "kineto" ? "Kineto" : "Digitsofpi") + "! Admin tools are in the Q menu (or keys 1 to 0 in a level).", -1);
+    }, function (e) {
+      var bad = /admin key/i.test(e.message || "");
+      fail(bad ? "That admin key isn't right." : "Couldn't check the admin key (" + (e.message || "no connection") + "). Try again in a moment.", bad);
+    });
   };
   // ---- glow behind an admin's Dash ----
   var admGlow = function admGlow(x, y, w, who) {
@@ -59618,7 +59683,7 @@ function program() {
     j.invite = inviteTok || ""; // [v1.5] a developer's invite lets you into a private party
     j.status = "asking";
     srvFetchPow("join", "/api/parties/" + encodeURIComponent(party.id) + "/join", {
-      name: srvTxt(MP.fields.name || "Player"),
+      name: srvTxt(mpMyName("Player")),
       pass: pass || "",
       key: key || "",
       invite: inviteTok || "",
@@ -59817,7 +59882,8 @@ function program() {
       priv: SRV.priv,
       pass: SRV.priv ? String(MP.fields.ppass).slice(0, 24) : "",
       max: SRV.max,
-      host: srvTxt(MP.fields.name || "Host"),
+      host: srvTxt(mpMyName("Host")),
+      key: admOn() ? srvModKey() : undefined, // [v1.7] (a developer's name needs it)
       dev: SRV.dev
     }).then(function (r) {
       SRV.creating = false;
@@ -59848,7 +59914,8 @@ function program() {
       priv: pt.priv,
       pass: pt.pass || "",
       max: pt.max,
-      host: srvTxt(MP.fields.name || "Host"),
+      host: srvTxt(mpMyName("Host")),
+      key: admOn() ? srvModKey() : undefined, // [v1.7] (a developer's name needs it)
       dev: SRV.dev
     }).then(function (r) {
       if (SRV.party !== pt) {
@@ -59924,6 +59991,7 @@ function program() {
         }
         b.inv.rid = b.rid;
         b.slot = b.inv.slot;
+        (SRV.slotAdm || (SRV.slotAdm = {}))[b.slot] = !!b.admin; // [v1.7] (joined with an admin key)
       }
       var inv = b.inv;
       if (inv.status === "ready" && !b.posted) {
@@ -59986,6 +60054,7 @@ function program() {
       n: mpCount(),
       playing: scene === "game",
       roster: srvRoster(),
+      host: srvTxt(mpMyName("Host")), // [v1.7] (the host's name now: a developer's needs the key)
       acks: acks,
       drop: drops,
       rl: 1 // [v1.5] this game reads relay addresses
@@ -60175,7 +60244,7 @@ function program() {
       dev: SRV.dev,
       mp: MP.active ? 1 : 0,
       game: scene === "game" ? 1 : 0,
-      name: srvTxt(MP.fields.name || ""), // [v1.5] for the invite list
+      name: srvTxt(mpMyName("")), // [v1.5] for the invite list
       inv: settings.mpInvites === false ? 0 : 1 // [v1.5] Receive Invites
     }).then(function (r) {
       SRV.helloBusy = false;

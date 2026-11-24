@@ -162,12 +162,13 @@ None of them contain a password, key or token.
 The setup never puts any of these inside the repo folder, so pushing the repo
 can't leak them. Don't copy them into it.
 
-> **Note:** the in-game admin passcodes (typing your admin name asks for one)
-> are not in the game's code: only a salted hash of each is, which can't be
-> turned back into the passcode. A device that unlocked once remembers a proof
-> that also can't be faked. They only unlock the fun admin tools inside the game
-> (fly, strikes...). They can't kick or ban anyone on the server: that needs the
-> admin keys above, which never leave the Pi and your own devices.
+> **Note:** the developers' names in the game (Digitsofpi and Kineto, and
+> look-alikes such as "K1neto" or "Digits of Pi") are locked behind the admin
+> keys above. Typing one asks for an admin key, which this server checks; there
+> is no passcode in the game's code. Without a key the name can't be used: the
+> server refuses to make or join a party with it, removes a player in a party who
+> uses one, and closes a party whose host does. The admin tools in the game (fly,
+> strikes...) come with the name, so they need the key too.
 
 **How the Pi is protected:**
 

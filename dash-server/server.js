@@ -111,6 +111,16 @@ function isBanned(ip, dev) {
   }
   return null;
 }
+// [v1.7] The developers' names (Digitsofpi, Kineto, and look-alikes: "K1neto",
+// "Digits of Pi", "xKinetox"...) need an admin key: a party can't be made or joined
+// with one without it, and a player in a party who uses one anyway is removed.
+const DEV_NAMES = ["digitsofpi", "kineto"];
+const LOOK = { 0: "o", 1: "i", 3: "e", 4: "a", 5: "s", 7: "t", 8: "b", "@": "a", $: "s", "|": "i", "!": "i", l: "i" };
+function devName(n) {
+  const t = String(n == null ? "" : n).toLowerCase().replace(/[0134578@$|!l]/g, (c) => LOOK[c]).replace(/[^a-z]/g, "");
+  return DEV_NAMES.find((d) => t.includes(d)) || "";
+}
+const DEV_NAME_MSG = "That name belongs to the game's makers. Pick another name to play.";
 function adminFor(key) {
   if (!key || String(key).length < 8) return null; // [v1.4] keys can be chosen (dash-party setkey): 8+ characters
   const h = sha(String(key));
@@ -961,7 +971,9 @@ async function handle(req, res) {
   if (p0 === "/api/hello") {
     const banned = !!isBanned(ip, bdev);
     // [v1.5] name: the multiplayer name (for the invite list); inv: 0 = no invites from players
-    const h = statHello(bdev, body.mp, body.game, { name: clean(body.name, 16), inv: body.inv !== 0 && body.inv !== false, banned });
+    const hname = clean(body.name, 16);
+    // [v1.7] (not listed under a developer's name)
+    const h = statHello(bdev, body.mp, body.game, { name: devName(hname) ? "" : hname, inv: body.inv !== 0 && body.inv !== false, banned });
     const out = { online: onlineNow().n };
     if (invite && Date.now() < invite.until && invite.fromDev !== bdev && parties.has(invite.party) && !banned && !(invite.skip && invite.skip.has(devHash(bdev)))) {
       out.invite = { id: invite.id, from: invite.from, party: invite.party, name: invite.name, token: invite.token };
@@ -1048,7 +1060,9 @@ async function handle(req, res) {
     pp.pinv.set(token, now + PINV_MS);
     const box = inbox.get(to) || [];
     // (one invite per party in the box: the newest)
-    const v = { id: id(6), from: clean(body.from, 16) || (who ? clean(who.name, 16) : "A player"), dev: !!who, party: pp.id, name: pp.name, token, until: now + PINV_MS };
+    let vfrom = clean(body.from, 16) || (who ? clean(who.name, 16) : "A player");
+    if (devName(vfrom) && !who) vfrom = "A player"; // [v1.7] (a developer's name needs the key)
+    const v = { id: id(6), from: vfrom, dev: !!who, party: pp.id, name: pp.name, token, until: now + PINV_MS };
     inbox.set(to, box.filter((x) => x.party !== pp.id).concat(v).slice(-5));
     hEvent(pp, "invite", v.from + " -> " + clean(target.name, 16));
     return send(res, 200, { ok: true, text: "Invited " + clean(target.name, 16) + "!" });
@@ -1093,6 +1107,20 @@ async function handle(req, res) {
     return send(res, 200, { ok: true });
   }
 
+  // [v1.7] the game checks an admin key before it unlocks a developer's name
+  if (p0 === "/api/admcheck") {
+    const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+    if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+    const who = adminFor(body.key);
+    if (!who) {
+      t.n++;
+      adminTries.set(ip, t);
+      log("ADMIN: wrong key (name check) from", ipKey(ip).slice(0, 8));
+      return fail(res, 403, "That admin key isn't right.", { badKey: true });
+    }
+    return send(res, 200, { ok: true });
+  }
+
   // moderators: /kick and /ban (and unban) from the game
   if (p0 === "/api/admin") {
     const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
@@ -1120,6 +1148,21 @@ async function handle(req, res) {
     for (const q of parties.values()) if ((netKey(q.hostIp) || String(q.hostIp)) === hn) open++;
     if (open >= PARTIES_OPEN_PER_NET) return fail(res, 429, "You already have " + open + " parties open. Close one first.");
     if (use.made.length >= PARTIES_PER_HOUR) return fail(res, 429, "That's a lot of parties in an hour. Wait a while and try again.");
+    // [v1.7] a developer's name needs their admin key
+    let hostAdmin = false;
+    if (devName(body.host)) {
+      const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+      if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+      if (!adminFor(body.key)) {
+        if (body.key) {
+          t.n++;
+          adminTries.set(ip, t);
+        }
+        log("NAME: a developer's name without the admin key (party)", ipKey(ip).slice(0, 8));
+        return fail(res, 403, DEV_NAME_MSG, { devName: true });
+      }
+      hostAdmin = true;
+    }
     use.made.push(Date.now());
     const name = clean(body.name, 24);
     if (!name) return fail(res, 400, "Give your party a name.");
@@ -1127,7 +1170,7 @@ async function handle(req, res) {
     const pass = String(body.pass || "").slice(0, 24);
     if (priv && !pass) return fail(res, 400, "A private party needs a passcode.");
     const max = Math.max(2, Math.min(MAX_PLAYERS, Math.round(Number(body.max) || 4)));
-    const p = { id: id(6), token: id(18), name, priv, salt: id(9), pass: "", max, n: 1, playing: false, host: clean(body.host, 16) || "Host", hostIp: ip, hostDev: bdev, roster: [], kicks: [], made: Date.now(), beat: Date.now() };
+    const p = { id: id(6), token: id(18), name, priv, salt: id(9), pass: "", max, n: 1, playing: false, host: clean(body.host, 16) || "Host", hostIp: ip, hostDev: bdev, hostAdmin, roster: [], kicks: [], made: Date.now(), beat: Date.now() };
     p.pass = priv ? hashPass(p.salt, pass) : "";
     newHistory(p, ip);
     parties.set(p.id, p);
@@ -1149,6 +1192,12 @@ async function handle(req, res) {
     p.hist.tries++;
     let waiting = 0;
     for (const r of requests.values()) if (r.party === p.id && !r.done) waiting++;
+    // [v1.7] a developer's name needs their admin key (checked just below)
+    if (devName(jname) && !body.key) {
+      hEvent(p, "devname", jname);
+      log("NAME: a developer's name without the admin key (join)", ipKey(ip).slice(0, 8));
+      return fail(res, 403, DEV_NAME_MSG, { devName: true });
+    }
     // [v1.3] moderators (Digitsofpi and Kineto) join any party at any time: private,
     // full or not. Their admin key is checked here, so nobody else can.
     if (body.key) {
@@ -1231,6 +1280,25 @@ async function handle(req, res) {
     if (Array.isArray(body.roster)) {
       p.roster = body.roster.slice(0, MAX_IN_PARTY).map((x) => ({ slot: Math.round(Number(x && x.slot)) || 0, name: clean(x && x.name, 16), rid: String((x && x.rid) || "").slice(0, 40) }));
       hRoster(p, p.roster);
+    }
+    // [v1.7] a developer's name without the admin key: the host's party closes, and a
+    // player using one is removed (also from parties made before this, and by games
+    // that don't check it themselves)
+    if (body.host !== undefined) p.host = clean(body.host, 16) || p.host;
+    if (devName(p.host) && !p.hostAdmin) {
+      dropParty(p.id, "a developer's name without the admin key");
+      log("NAME: closed", p.id, "(host used a developer's name without the key)");
+      return fail(res, 403, DEV_NAME_MSG, { closed: true, devName: true });
+    }
+    p.nameKicked = p.nameKicked || new Set();
+    for (const x of p.roster) {
+      const r = requests.get(x.rid);
+      if (devName(x.name) && !(r && r.admin) && !p.nameKicked.has(x.slot + ":" + x.rid)) {
+        p.nameKicked.add(x.slot + ":" + x.rid);
+        p.kicks.push(x.slot);
+        hEvent(p, "devname", x.name);
+        log("NAME: removing", JSON.stringify(x.name), "from", p.id, "(a developer's name without the key)");
+      }
     }
     hBeat(p, p.beat);
     // [v1.3] live: the joiners still waiting, so the host's game drops the ones who left
