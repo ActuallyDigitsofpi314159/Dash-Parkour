@@ -10,7 +10,7 @@
 #   dash-party history N  everything that happened in party number N
 #   dash-party stats      how the game is doing: players online, per day, peaks, busy hours
 #   dash-party unban NAME let someone back in
-#   dash-party notify     phone notices when a party is made (on | off | test)
+#   dash-party notify     phone notices: parties with 2+ players, the server down, records... (on | off | test)
 #   dash-party turn       the relay for players who can't link directly (metered | set | pi | guide | off)
 #   dash-party restart    restart the server and the tunnel
 #   dash-party fix        run the watchdog's checks and fixes now
@@ -150,7 +150,9 @@ notify() {
       if [ -z "$topic" ]; then topic="dash-party-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"; fi
       printf '{"topic":"%s","server":"%s"}\n' "$topic" "$srv" | S tee "$f.tmp" >/dev/null &&
         S sh -c "mv '$f.tmp' '$f' && chown dashparty:dashparty '$f' && chmod 600 '$f'" || { echo "${R}Couldn't save the setting.${N}"; exit 1; }
-      echo "${G}Party notices are on.${N} (the server picks this up within 5 seconds)"
+      echo "${G}Phone notices are on.${N} (the server picks this up within 5 seconds)"
+      echo "You'll hear about: parties with 2 or more players, the server being down (crash,"
+      echo "power cut), new records for players online, and relay or security problems."
       echo
       echo "On your phone:"
       echo "  1. Install the ${B}ntfy${N} app (App Store or Google Play)."
@@ -165,14 +167,14 @@ notify() {
       S rm -f "$f" && echo "Party notices are off." ;;
     test)
       [ -z "$topic" ] && { echo "Notices are off. Turn them on with: dash-party notify on"; exit 1; }
-      if curl -fsS -m 10 -H "Title: DASH party server" -H "Tags: video_game" -d "Test notice: you'll get one like this when someone makes a party." "$srv/$topic" >/dev/null; then
+      if curl -fsS -m 10 -H "Title: DASH party server" -H "Tags: video_game" -d "Test notice: you'll get these for parties with 2 or more players, the server being down, new player records, and relay or security problems." "$srv/$topic" >/dev/null; then
         echo "${G}Sent.${N} It should be on your phone in a few seconds."
       else
         echo "${R}Couldn't reach $srv.${N}"; exit 1
       fi ;;
     "")
-      if [ -n "$topic" ]; then echo "Party notices are ${G}on${N}. Topic: ${B}$topic${N} on $srv"; echo "${D}dash-party notify test | off${N}"
-      else echo "Party notices are off. Turn them on with: ${B}dash-party notify on${N}"; fi ;;
+      if [ -n "$topic" ]; then echo "Phone notices are ${G}on${N}. Topic: ${B}$topic${N} on $srv"; echo "${D}(parties with 2+ players, server down, records, relay and security)  dash-party notify test | off${N}"
+      else echo "Phone notices are off. Turn them on with: ${B}dash-party notify on${N}"; fi ;;
     *) echo "Use: dash-party notify [on | off | test]"; exit 1 ;;
   esac
 }

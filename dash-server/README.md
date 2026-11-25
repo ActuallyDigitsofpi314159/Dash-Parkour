@@ -97,7 +97,7 @@ Other commands:
 | `dash-party history N` | the full timeline of party number N from that list |
 | `dash-party stats` | how the game is doing: players online now, the most at once, players and new players per day, multiplayer use, parties and joins, and the busiest hours. Every game on the website checks in (not only multiplayer); only a random device id is kept, never names or addresses |
 | `dash-party bans` / `dash-party unban NAME` | see bans, let someone back in |
-| `dash-party notify on` | a phone notice (ntfy app) whenever someone makes a party; it prints the topic to subscribe to. `notify test` sends one, `notify off` stops them |
+| `dash-party notify on` | phone notices (ntfy app): a party with 2 or more players in it, the server back after being down (a crash, a power cut, or stopped for over 2 minutes; normal restarts and updates stay quiet) or crashing, a new record of players online or in multiplayer, the Cloudflare relay hard-stopping or coming back, and someone guessing admin keys or using a developer's name. It prints the topic to subscribe to. `notify test` sends one, `notify off` stops them |
 | `dash-party restart` | restart the server and the tunnel |
 | `dash-party fix` | run the watchdog's checks and fixes now |
 | `dash-party update` | get the newest setup from GitHub and run it again |

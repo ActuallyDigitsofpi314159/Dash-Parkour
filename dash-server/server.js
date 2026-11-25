@@ -147,46 +147,107 @@ const sameNet = (a, b) => {
   return !!x && x === netKey(b);
 };
 
-// ---------------- [v1.3] phone notice when a party is made (ntfy) ----------------
+// ---------------- [v1.3] phone notices (ntfy) ----------------
 // DATA_DIR/notify.json: { "topic": "...", "server": "https://ntfy.sh" } (made by
 // "dash-party notify on"). Subscribe to the same topic in the ntfy app.
+// [v1.8] What is sent (not every party made any more):
+//  * a party with 2 or more players in it (once per party);
+//  * the server back after being down (a crash, a power cut, or stopped for more than
+//    2 minutes: a normal restart or update says nothing), and a crash as it happens;
+//  * a new record: the most players online at once, or in multiplayer at once;
+//  * the Cloudflare relay hard-stopping (and why), and coming back;
+//  * someone locked out for guessing admin keys, or using a developer's name.
 const NOTIFY_FILE = path.join(DATA_DIR, "notify.json");
 let notifyConf = readJson(NOTIFY_FILE, null);
 fs.watchFile(NOTIFY_FILE, { interval: 5000 }, () => {
   notifyConf = readJson(NOTIFY_FILE, null);
   log("notify settings reloaded:", notifyConf && notifyConf.topic ? "on" : "off");
 });
-const notified = new Map(); // host+party name -> time (a party listed again after a restart isn't news)
-function notifyParty(p) {
+// o: { tags, priority ("min" "low" "default" "high" "urgent"), click }; done: called when sent
+function notifySend(title, body, o, done) {
+  o = o || {};
   const c = notifyConf;
-  if (!c || !c.topic || !/^[\w-]{8,64}$/.test(c.topic)) return;
-  const now = Date.now();
-  for (const [k, t] of notified) if (now - t > 10 * 60 * 1000) notified.delete(k);
-  const k = ipKey(p.hostIp) + "\u0000" + p.name.toLowerCase();
-  if (notified.has(k)) return;
-  notified.set(k, now);
+  const fin = () => {
+    if (done) done();
+    done = null;
+  };
+  if (!c || !c.topic || !/^[\w-]{8,64}$/.test(c.topic)) return fin();
   let u;
   try {
     u = new URL("/" + c.topic, c.server || "https://ntfy.sh");
   } catch (e) {
-    return;
+    return fin();
   }
-  if (u.protocol !== "https:" && u.protocol !== "http:") return;
-  const ascii = (s) => s.replace(/[\u2018\u2019]/g, "'").replace(/[^\x20-\x7e]/g, "?"); // headers must be plain text
-  const body = p.host + " made \"" + p.name + "\" (" + (p.priv ? "private" : "public") + ", up to " + p.max + " players). Open DASH Parkour > Multiplayer to join.";
-  const req = require(u.protocol === "https:" ? "https" : "http").request(u, {
-    method: "POST",
-    timeout: 8000,
-    headers: { Title: ascii("DASH party: " + p.name), Tags: "video_game", Click: "https://" + SITE_DOMAIN + GAME_PATH, "Content-Type": "text/plain; charset=utf-8", "Content-Length": Buffer.byteLength(body) },
-  });
+  if (u.protocol !== "https:" && u.protocol !== "http:") return fin();
+  const ascii = (x) => String(x).replace(/[‘’]/g, "'").replace(/[^\x20-\x7e]/g, "?"); // headers must be plain text
+  const headers = { Title: ascii(title), Tags: o.tags || "video_game", Priority: o.priority || "default", "Content-Type": "text/plain; charset=utf-8", "Content-Length": Buffer.byteLength(body) };
+  if (o.click !== null) headers.Click = o.click || "https://" + SITE_DOMAIN + GAME_PATH;
+  const req = require(u.protocol === "https:" ? "https" : "http").request(u, { method: "POST", timeout: 8000, headers });
   req.on("response", (res) => {
     if (res.statusCode >= 300) log("notify: ntfy said", res.statusCode);
     res.resume();
+    fin();
   });
   req.on("timeout", () => req.destroy(new Error("timed out")));
-  req.on("error", (e) => log("notify: couldn't reach ntfy:", e.message));
+  req.on("error", (e) => {
+    log("notify: couldn't reach ntfy:", e.message);
+    fin();
+  });
   req.end(body);
 }
+// the same notice at most once per `every` ms (key: what it is about)
+const notifiedAt = new Map();
+function notifyOnce(key, every, title, body, o) {
+  const now = Date.now();
+  for (const [k, t] of notifiedAt) if (now - t > 24 * 3600 * 1000) notifiedAt.delete(k);
+  if (notifiedAt.has(key) && now - notifiedAt.get(key) < every) return;
+  notifiedAt.set(key, now);
+  notifySend(title, body, o);
+}
+// a party now has 2 or more players (called from its heartbeat)
+function notifyParty(p) {
+  if (p.notified2 || p.n < 2) return;
+  p.notified2 = true;
+  const names = [p.host].concat((p.roster || []).map((x) => x.name)).filter((x, i, a) => x && a.indexOf(x) === i);
+  const who = names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : p.n + " players";
+  // (a party listed again after a restart isn't news: once per host and name a while)
+  notifyOnce("party:" + ipKey(p.hostIp) + "\u0000" + p.name.toLowerCase(), 20 * 60 * 1000, "DASH party: " + p.name + " (" + p.n + " players)", who + " are playing in \"" + p.name + "\" (" + (p.priv ? "private" : "public") + ", up to " + p.max + "). Open DASH Parkour > Multiplayer to join.");
+}
+// [v1.8] was the server down? (alive.json: written every minute; "clean" on a normal stop)
+const ALIVE_FILE = path.join(DATA_DIR, "alive.json");
+(function () {
+  const last = readJson(ALIVE_FILE, null);
+  const fmtMin = (ms) => {
+    const m = Math.round(ms / 60000);
+    return m < 60 ? m + " minute" + (m === 1 ? "" : "s") : Math.floor(m / 60) + " h " + (m % 60) + " min";
+  };
+  if (last && last.at) {
+    const gap = Date.now() - last.at;
+    if (!last.clean) {
+      setTimeout(() => notifySend("Party server is back", "It went down without stopping properly (a crash, a power cut or the internet) around " + fmtMin(gap) + " ago" + (last.why ? " (" + last.why + ")" : "") + ", and is running again.", { tags: "warning", priority: "high", click: null }), 5000);
+    } else if (gap > 2 * 60 * 1000) {
+      setTimeout(() => notifySend("Party server is back", "It was stopped for " + fmtMin(gap) + " and is running again.", { tags: "white_check_mark", click: null }), 5000);
+    }
+  }
+  const alive = () => writeJson(ALIVE_FILE, { at: Date.now(), clean: false });
+  alive();
+  setInterval(alive, 60000).unref();
+})();
+process.on("uncaughtException", (e) => {
+  log("CRASH:", e && e.stack ? e.stack : e);
+  try {
+    writeJson(ALIVE_FILE, { at: Date.now(), clean: false, why: String((e && e.message) || e).slice(0, 120) });
+  } catch (err) {}
+  let left = false;
+  const leave = () => {
+    if (!left) {
+      left = true;
+      process.exit(1); // (systemd starts it again)
+    }
+  };
+  notifySend("Party server crashed", String((e && e.message) || e).slice(0, 300) + "\n\nIt restarts by itself. Details: dash-party errors", { tags: "rotating_light", priority: "urgent", click: null }, leave);
+  setTimeout(leave, 2500);
+});
 
 // ---------------- rate limit (requests per 10 s, per address) ----------------
 const hits = new Map();
@@ -368,6 +429,9 @@ function dropParty(pid, why) {
 // save the history on a normal stop (systemctl stop / restart)
 for (const sig of ["SIGTERM", "SIGINT"]) {
   process.on(sig, () => {
+    try {
+      writeJson(ALIVE_FILE, { at: Date.now(), clean: true }); // [v1.8] (a normal stop: no "was down" notice unless it stays down)
+    } catch (e) {}
     for (const pid of [...parties.keys()]) dropParty(pid, "server restarted");
     historyDirty = true;
     writeHistory();
@@ -467,6 +531,9 @@ setInterval(() => {
   const d = statDay(now);
   d.peak = Math.max(d.peak, o.n);
   d.mpPeak = Math.max(d.mpPeak, o.mp);
+  // [v1.8] a new record: a phone notice (from 3 players up, at most every 15 minutes)
+  if (o.n > pstats.peak.n && o.n >= 3) notifyOnce("rec:on", 15 * 60 * 1000, "New record: " + o.n + " players online!", "The most players on DASH Parkour at once so far (the last record was " + pstats.peak.n + ").", { tags: "trophy" });
+  if (o.mp > pstats.mpPeak.n && o.mp >= 3) notifyOnce("rec:mp", 15 * 60 * 1000, "New record: " + o.mp + " in multiplayer!", "The most players in multiplayer at once so far (the last record was " + pstats.mpPeak.n + ").", { tags: "trophy" });
   if (o.n > pstats.peak.n) pstats.peak = { n: o.n, at: now };
   if (o.mp > pstats.mpPeak.n) pstats.mpPeak = { n: o.mp, at: now };
   const hr = new Date(now).getHours();
@@ -698,6 +765,7 @@ async function hardStop(why, until) {
     await cfRequest("api.cloudflare.com", cfKeysPath(c) + "/" + encodeURIComponent(c.id), c.api, undefined, "DELETE");
     saveTurnConf({ id: "", token: "" });
     log("TURN: HARD STOP (" + why + "): the relay key is deleted, every relay login has stopped");
+    notifyOnce("relay:stop", 3600 * 1000, "Relay stopped", "Cloudflare relay hard stop: " + why + ". Players link directly only until it comes back by itself.", { tags: "no_entry", priority: "high", click: null });
   } catch (e) {
     if (e.status === 404) saveTurnConf({ id: "", token: "" });
     log("TURN: HARD STOP (" + why + "): couldn't delete the relay key (" + e.message + "), logins cancelled one by one");
@@ -747,6 +815,7 @@ async function readTurnMeter() {
       turnUse.lockWhy = "";
       writeJson(TURN_USE_FILE, turnUse);
       log("TURN: relay back on with a new key");
+      notifySend("Relay back on", "The Cloudflare relay is on again (with a new key).", { tags: "white_check_mark", priority: "low", click: null });
     }
   } catch (e) {
     log("TURN: couldn't read the usage meter:", e.message);
@@ -1224,6 +1293,7 @@ async function handle(req, res) {
       if (!who) {
         t.n++;
         adminTries.set(ip, t);
+        if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
         return fail(res, 403, "That admin key isn't right.", { badKey: true });
       }
     }
@@ -1270,6 +1340,7 @@ async function handle(req, res) {
     if (!who) {
       t.n++;
       adminTries.set(ip, t);
+      if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
     if (p0 === "/api/stats") return send(res, 200, statsSummary());
@@ -1310,6 +1381,7 @@ async function handle(req, res) {
     if (!who) {
       t.n++;
       adminTries.set(ip, t);
+      if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
       log("ADMIN: wrong key (name check) from", ipKey(ip).slice(0, 8));
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
@@ -1324,6 +1396,7 @@ async function handle(req, res) {
     if (!who) {
       t.n++;
       adminTries.set(ip, t);
+      if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
       log("ADMIN: wrong key (Cloudflare page) from", ipKey(ip).slice(0, 8));
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
@@ -1336,7 +1409,8 @@ async function handle(req, res) {
     const easy = !!(email || gkey);
     if (easy) {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 400, "Type the email you log into Cloudflare with.");
-      if (!/^[0-9a-f]{30,50}$/i.test(gkey)) return fail(res, 400, "That doesn't look like the Global API Key (about 37 letters and numbers). Copy it again from Cloudflare.");
+      // ([v1.8] new keys: cfk_ and 48 more; older ones: 37 letters a-f and numbers)
+      if (!/^(cfk_[A-Za-z0-9_-]{30,90}|[0-9a-f]{30,50})$/i.test(gkey)) return fail(res, 400, "That doesn't look like the Global API Key (it starts with cfk_, or is about 37 letters and numbers). Copy it again from Cloudflare.");
     } else {
       if (!/^[0-9a-f]{32}$/.test(account)) return fail(res, 400, "The Account ID should be 32 letters (a-f) and numbers.");
       if (!/^[\w-]{20,200}$/.test(api)) return fail(res, 400, "That doesn't look like an API token. Copy it again from Cloudflare.");
@@ -1408,6 +1482,7 @@ async function handle(req, res) {
     if (!who) {
       t.n++;
       adminTries.set(ip, t);
+      if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
       log("ADMIN: wrong key (relay setup) from", ipKey(ip).slice(0, 8));
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
@@ -1439,6 +1514,7 @@ async function handle(req, res) {
     if (!who) {
       t.n++;
       adminTries.set(ip, t);
+      if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
       log("ADMIN: wrong key from", ipKey(ip).slice(0, 8));
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
@@ -1467,6 +1543,7 @@ async function handle(req, res) {
         if (body.key) {
           t.n++;
           adminTries.set(ip, t);
+          if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
         }
         log("NAME: a developer's name without the admin key (party)", ipKey(ip).slice(0, 8));
         return fail(res, 403, DEV_NAME_MSG, { devName: true });
@@ -1487,7 +1564,6 @@ async function handle(req, res) {
     stats.made++;
     statDay(Date.now()).parties++;
     log("party made", p.id, JSON.stringify(p.name), priv ? "(private)" : "");
-    notifyParty(p);
     return send(res, 200, { id: p.id, token: p.token });
   }
 
@@ -1517,6 +1593,7 @@ async function handle(req, res) {
       if (!who) {
         t.n++;
         adminTries.set(ip, t);
+        if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
         log("ADMIN: wrong key (join) from", ipKey(ip).slice(0, 8));
         return fail(res, 403, "That admin key isn't right.", { badKey: true });
       }
@@ -1586,6 +1663,7 @@ async function handle(req, res) {
     p.relay = !!body.rl; // [v1.5] reads relay addresses
     p.n = Math.max(1, Math.min(MAX_IN_PARTY, Math.round(Number(body.n) || 1)));
     p.playing = !!body.playing;
+    setTimeout(() => parties.get(p.id) === p && notifyParty(p), 0); // [v1.8] (after the roster below)
     // who is in the party: [{ slot, name, rid }] (rid = how they joined)
     if (Array.isArray(body.roster)) {
       p.roster = body.roster.slice(0, MAX_IN_PARTY).map((x) => ({ slot: Math.round(Number(x && x.slot)) || 0, name: clean(x && x.name, 16), rid: String((x && x.rid) || "").slice(0, 40) }));
@@ -1598,6 +1676,7 @@ async function handle(req, res) {
     if (devName(p.host) && !p.hostAdmin) {
       dropParty(p.id, "a developer's name without the admin key");
       log("NAME: closed", p.id, "(host used a developer's name without the key)");
+      notifyOnce("devname:" + ipKey(p.hostIp), 3600 * 1000, "Developer name used", "Someone hosted a party as \"" + p.host + "\" without the admin key. The party was closed.", { tags: "warning", priority: "high", click: null });
       return fail(res, 403, DEV_NAME_MSG, { closed: true, devName: true });
     }
     p.nameKicked = p.nameKicked || new Set();

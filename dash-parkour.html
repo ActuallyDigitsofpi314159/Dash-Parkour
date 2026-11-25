@@ -29457,7 +29457,7 @@ function program() {
       var alpha = 255 * (0 + c / numCircles);
       __p.stroke(0, 200, 0, alpha);
       __p.noFill();
-      __p.strokeWeight(spacing / 2);
+      __p.strokeWeight(spacing / 2 + 0.8); // ([v1.8] the rings overlap a little: no hairline gaps)
       var size = s - c * spacing;
       __p.ellipse(x, y, size, size);
     }
@@ -38325,9 +38325,15 @@ function program() {
         dyy = q.y - oy;
       return [dx * cr + dyy * sn, -dx * sn + dyy * cr];
     };
-    var LP = [];
+    // [v1.8] the cloth only moves 60 times a second, but it's drawn every frame: between
+    // its steps each loose point is drawn as far along as the part of a step that has
+    // passed (as the Parkour Master's cape is). Above 60 fps the top edge followed Dash
+    // every frame and the rest of the cape only on its steps, so it stuttered.
+    var LP = [],
+      ahead = __p.constrain(cs.acc || 0, 0, 1);
     for (var k = 0; k < P.length; k++) {
-      LP.push(L(P[k]));
+      var qk = P[k];
+      LP.push(k < C ? L(qk) : L({ x: qk.x + (qk.x - qk.px) * ahead, y: qk.y + (qk.y - qk.py) * ahead }));
     }
     __p.noStroke();
     if (fancy) {
@@ -38803,8 +38809,11 @@ function program() {
     this.idleVY = nly - (this.idleLY || 0);
     this.idleLX = nlx;
     this.idleLY = nly;
-    faceX += this.idleLX * scaleOffset * 0.9;
-    faceY += this.idleLY * this.h * 0.1;
+    // ([v1.8] never further than running moves them: a cutscene's look on top of that
+    // took his eyes almost off his body)
+    var eyeRoom = this.visualW * 0.16; // (as far as the eyes go and stay on his body)
+    faceX = __p.constrain(faceX + this.idleLX * scaleOffset * 0.9, -__p.max(eyeRoom, __p.abs(this.vx * 0.7)), __p.max(eyeRoom, __p.abs(this.vx * 0.7)));
+    faceY = __p.max(faceY + this.idleLY * this.h * 0.1, -this.visualH * 0.65 - this.h * 0.25);
 
     // Get current skin data safely
     var sData = skins[currentSkin] || {
@@ -42052,7 +42061,13 @@ function program() {
       if (this.attackTimer > 540) {
         bulletCircleSize = __p.lerp(bulletCircleSize, 0, dtLerp(0.15));
       }
-      drawBulletCircle(this.x + 71 * dir, this.y + 10 + handAnimationY, bulletCircleSize);
+      // [v1.8] on his hand exactly: where drawGuard draws it (with the lean and sway
+      // the hands get in this attack), from where he is drawn (visualY), not a guess
+      var hs = this.size,
+        hvx = this.vx || 0;
+      var handX = dir > 0 ? hs / 1.5 - handAnimationY / 3 - bossXShift / 20 * bossDir + hvx : -hs / 1.5 - handAnimationY / 3 + bossXShift / 20 * -bossDir + hvx;
+      var handY = hs / 5 + handAnimationY + bossXShift / 10 * (dir > 0 ? bossDir : -bossDir);
+      drawBulletCircle(this.x + handX, this.visualY + handY, bulletCircleSize);
 
       // Shoot bullets periodically
       if (dtEveryOn(this.attackTimer, 60) && this.attackTimer < 540) {
@@ -45763,7 +45778,7 @@ function program() {
           this.attackTimer = 0;
         }
       }
-      if (this.vortexStability <= 0) {
+      if (this.vortexStability <= 0 && !mpSpecOn()) {
         if (p.health > 0) {
           sfx("vortexSwallow"); // [v1.2] sound
         }
@@ -46955,7 +46970,6 @@ function program() {
             // parkMast(20, 50, 100);
 
             gearButton(60, 500, 140, 'Settings');
-            titleSaveButton(); // [v1.8] LOAD SAVE (top right)
             sceneButton(175, 487.5, 'Goals', 85);
             drawAchCount(175 + 30, 487.5 - 32); // [v1.1] new achievements since you last looked
             sceneButton(300, 475, 'Play', 105);
@@ -47921,7 +47935,7 @@ function program() {
               p.faceX = -2;
               p.mouth = 'open';
               // [v1.6] (his eyes really do now: up and to the left, at the text)
-              p.look = { x: -1, y: -1.5, f: __p.frameCount };
+              p.look = { x: -0.7, y: -1.1, f: __p.frameCount };
 
               // Animate text screen until frame 10
               if (lvlEndFrames < 10) {
@@ -47932,10 +47946,10 @@ function program() {
                 p.faceY = -3;
                 p.faceX = 0;
                 p.mouth = 'closed';
-                p.look = { x: 0, y: -1.6, f: __p.frameCount }; // [v1.6] up, as he floats away
+                p.look = { x: 0, y: -1.1, f: __p.frameCount }; // [v1.6] up, as he floats away
 
                 // Check this first cause otherwise portal doesn't exist and everything breaks
-                if (!bossFight) {
+                if (!bossFight && lvl.portal) {
                   if (p.y < lvl.portal.y - 200) {
                     // Increase level unlock by 1
                     if (currentLevel + 1 === lvlUnlock && mpMayUnlock()) {
@@ -48536,7 +48550,10 @@ function program() {
               }
             }
             __p.noStroke();
-            if (currentLevel !== 3 && currentLevel !== 7 && currentLevel !== 11 && currentLevel !== 15 && currentLevel !== 16) {
+            // ([v1.8] lvl.portal too: a joiner's currentLevel changes as soon as the host
+            // starts the next level, while the last one (a boss level: no portal) is
+            // still drawn until the transition gets there, and the game stopped)
+            if (lvl.portal && currentLevel !== 3 && currentLevel !== 7 && currentLevel !== 11 && currentLevel !== 15 && currentLevel !== 16) {
               // Animate Portal Color
               if (portalCol >= 150) {
                 portalColChange = -1;
@@ -49332,7 +49349,10 @@ function program() {
                   var lbx = o.x + o.w / 2.7 - p.x,
                     lby = o.y + 100 + bossFloatY - p.y;
                   var lbd = Math.sqrt(lbx * lbx + lby * lby) || 1;
-                  p.look = { x: lbx / lbd * 1.1, y: __p.constrain(lby / lbd * 1.4, -1.5, 1), f: __p.frameCount };
+                  // ([v1.8] once the arena rises, carrying Dash up, he looks across at the
+                  // boss: the spot he watched stayed below and his eyes ended up looking down)
+                  var lbUp = __p.constrain((bossIntroFrames - 350) / 30, 0, 1);
+                  p.look = { x: __p.lerp(lbx / lbd * 1.1, lbx >= 0 ? 1 : -1, lbUp), y: __p.lerp(__p.constrain(lby / lbd * 1.4, -1.5, 1), 0, lbUp), f: __p.frameCount };
                 }
 
                 // set dash x ([v1.1] the team side by side)
@@ -49676,7 +49696,7 @@ function program() {
               __p.stroke(0, 255, 0, 200);
               __p.strokeWeight(1.5);
               __p.quad(pv[0].x, pv[0].y, pv[1].x, pv[1].y, pv[2].x, pv[2].y, pv[3].x, pv[3].y);
-              if (currentLevel !== 3 && currentLevel !== 7 && currentLevel !== 11 && currentLevel !== 15 && currentLevel !== 16) {
+              if (lvl.portal && currentLevel !== 3 && currentLevel !== 7 && currentLevel !== 11 && currentLevel !== 15 && currentLevel !== 16) {
                 // draw exact OBB
                 var portv = getVertices(lvl.portal);
                 __p.noFill();
@@ -50272,7 +50292,7 @@ function program() {
             // Render game entities relative to states
             if (FinalPhase.currentState === "STABILIZE_VORTEX") {
               vortexCollapseSize = __p.lerp(vortexCollapseSize, 670, dtLerp(0.1));
-              tunnelSpeed += 0.04 * DT;
+              tunnelSpeed = __p.min(tunnelSpeed + 0.04 * DT, baseTunnelSpeed + 24); // ([v1.8] as fast as it ever gets)
               for (var i = 0; i < FinalPhase.touchpoints.length; i++) {
                 var tp = FinalPhase.touchpoints[i];
 
@@ -53960,6 +53980,22 @@ function program() {
     if (b && bossFight && b.dead && !MP.bsync) {
       msg.bd = b.bossNum + ":" + bossRemixStage; // [v1.8] beaten (a spectator's copy is too)
     }
+    // [v1.8] the vortex (X-4, stage 2) as this game has it, for a spectator: its copy
+    // couldn't collect the glowing points (their Dash is hidden), so it stayed in the
+    // stabilising part, the tunnel sped up for ever and the bar flashed
+    if (currentLevel === 15 && finalBossPhase === 3 && !MP.bsync) {
+      var F = FinalPhase;
+      msg.v = {
+        l: F.livesRemaining,
+        s: F.currentState === "STABILIZE_VORTEX" ? 1 : F.currentState === "DEAD" ? 2 : 0,
+        st: __p.round(F.vortexStability * 10) / 10,
+        ap: F.currentAttackPattern || "",
+        at: __p.round(F.attackTimer),
+        tp: F.currentState === "STABILIZE_VORTEX" ? (F.touchpoints || []).map(function (t) {
+          return [__p.round(t.angle * 10) / 10, t.pathRadius, t.radius, t.isHit ? 1 : 0];
+        }) : undefined
+      };
+    }
     if (b && (bossFight || bossIntro) && !b.dead) {
       msg.b = {
         n: b.bossNum,
@@ -54021,6 +54057,9 @@ function program() {
       lv: m.lv,
       src: msrc
     };
+    if (m.v && MP.spectating && !MP.bsync && currentLevel === 15 && finalBossPhase === 3) {
+      mpSpecVortex(m.v); // [v1.8]
+    }
     var b = bosses[world - 1];
     var H = m.b;
     // [v1.8] the fight being watched was won: so is the spectator's copy of it (it
@@ -54087,6 +54126,52 @@ function program() {
     }
     if (specSrc && !differs) {
       mpSpecBossOrder(b, H); // [v1.8] (so its next attack is the watched one's next attack)
+    }
+  };
+  // [v1.8] a spectator's vortex follows the one it watches: lives, the part it is in,
+  // its stability, the attack, and the glowing points (and which are collected)
+  var mpSpecVortex = function mpSpecVortex(v) {
+    var F = FinalPhase;
+    var want = v.s === 1 ? "STABILIZE_VORTEX" : v.s === 2 ? "DEAD" : "SURVIVAL";
+    if (typeof v.l === "number") {
+      F.livesRemaining = v.l;
+    }
+    if (want !== F.currentState) {
+      if (want === "STABILIZE_VORTEX" && F.currentState === "SURVIVAL") {
+        sfx("vortexAlarm");
+      } else if (want === "SURVIVAL" && F.currentState === "STABILIZE_VORTEX") {
+        sfx("vortexBreak");
+        F.attackTimer = v.at || 0;
+      }
+      F.currentState = want;
+      F.obstacles = want === "SURVIVAL" ? F.obstacles : [];
+      F.touchedCount = 0;
+    }
+    if (typeof v.st === "number") {
+      F.vortexStability = v.st;
+    }
+    if (want === "SURVIVAL" && v.ap && v.ap !== F.currentAttackPattern) {
+      F.triggerAttack(v.ap);
+      F.attackTimer = v.at || F.attackTimer;
+    }
+    if (want === "STABILIZE_VORTEX" && Array.isArray(v.tp)) {
+      var T = F.touchpoints || (F.touchpoints = []);
+      if (T.length !== v.tp.length) {
+        T.length = 0;
+        for (var i = 0; i < v.tp.length; i++) {
+          T.push({ angle: v.tp[i][0], pathRadius: v.tp[i][1], radius: v.tp[i][2], isHit: false, x: 300, y: 300 });
+        }
+      }
+      for (var j = 0; j < v.tp.length; j++) {
+        var q = v.tp[j];
+        if (q[3] && !T[j].isHit) {
+          T[j].isHit = true; // (collected over there: the sparkle here too)
+          spawnParticles(T[j].x, T[j].y, 40, "vortexEnergy", 10);
+        }
+        if (Math.abs(T[j].angle - q[0]) > 8) {
+          T[j].angle = q[0];
+        }
+      }
     }
   };
   // [v1.8] a spectator's fight takes the watched fight's attack order and place in it
@@ -56240,7 +56325,13 @@ function program() {
             t: 0
           };
           MP.raceWinner = m.win;
-          sfx(mpRaceWonByMe() ? "raceWin" : "raceLose"); // [v1.2] sound
+          // [v1.2] sound ([v1.8] one win jingle: not on top of the level's own ending one)
+          if (!mpRaceWonByMe()) {
+            sfx("raceLose");
+          } else if (Date.now() - (dashSnd.jingleAt || 0) > 4000) {
+            dashSnd.jingleAt = Date.now();
+            sfx("raceWin");
+          }
           if (mpRaceWonByMe()) {
             mpAwardRaceWin(); // ([v1.8] in RELAY: everyone on the winning team)
           }
@@ -57181,7 +57272,10 @@ function program() {
     // jingles: level complete (or a boss beaten), game over
     var ended = scene === "game" && levelEnd;
     if (ended && !dashSnd.levelEnd) {
-      sfx(currentLevel % 4 === 3 ? "bossFanfare" : "levelComplete");
+      if (Date.now() - (dashSnd.jingleAt || 0) > 4000) {
+        dashSnd.jingleAt = Date.now(); // ([v1.8] a race win's jingle may have just played)
+        sfx(currentLevel % 4 === 3 ? "bossFanfare" : "levelComplete");
+      }
     }
     dashSnd.levelEnd = ended;
     var over = scene === "game" && p && p.gameOver;
@@ -61658,29 +61752,6 @@ function program() {
     arcAlign(__p.LEFT);
     __p.popStyle();
   };
-  // [v1.8] the title screen's LOAD SAVE button (and the start screen's, see the loader)
-  var titleSaveButton = function titleSaveButton() {
-    var bw = 150,
-      bh = 40,
-      bx = 600 + widePad - bw - 14,
-      by = 14;
-    var hov = worldMouseX > bx && worldMouseX < bx + bw && worldMouseY > by && worldMouseY < by + bh;
-    __p.stroke(0);
-    __p.strokeWeight(4);
-    __p.fill(hov ? __p.color(40, 150, 230) : __p.color(0, 120, 200));
-    __p.rect(bx, by, bw, bh, 12);
-    __p.stroke(255);
-    arcAlign(__p.CENTER);
-    arcSize(9);
-    arcText("LOAD SAVE", bx + bw / 2, by + bh / 2 + 5);
-    arcAlign(__p.LEFT);
-    if (hov) {
-      __p.cursor(__p.HAND);
-    }
-    if (typeof mobileGesture === "function") {
-      mobileGesture(bx, by, bw, bh, dashLoadSavePanel); // (in the click itself: the phone keyboard)
-    }
-  };
   var dashLoadSavePanel = function dashLoadSavePanel() {
     sfx("click");
     var box = document.getElementById("dash-load-box");
@@ -64001,6 +64072,15 @@ window.__dashParkourBootPromise = runPJS(program);
     tapArmed = false;
     window.__dashBootHold = false;
     window.__dashTapStart = false;
+    // [v1.8] the game takes the keyboard now (the click that started it was kept from
+    // it, and the keys only reach the game while it has the focus)
+    try {
+      var cv = document.getElementById("output-canvas");
+      if (cv) {
+        if (!cv.hasAttribute("tabindex")) cv.setAttribute("tabindex", "0");
+        cv.focus({ preventScroll: true });
+      }
+    } catch (err) {}
   }
   function tapUp(e) {
     if (e.target && e.target.closest && e.target.closest("#dash-load-box, #dash-start-load")) return;
