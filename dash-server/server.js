@@ -616,10 +616,12 @@ function turnState() {
   if (turnUse.today >= c.dayGB * 1e9 * 0.97) return off("today's share used (" + c.dayGB + " GB)");
   return Object.assign({ on: true }, info);
 }
+// token: an API token, or [v1.8] { email, key } (the Global API Key, only while setting up)
 function cfRequest(host, pth, token, body, method) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? "" : JSON.stringify(body);
-    const req = https.request({ method: method || (body === undefined ? "GET" : "POST"), host, path: pth, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }, timeout: 10000 }, (res) => {
+    const auth = token && typeof token === "object" ? { "X-Auth-Email": token.email, "X-Auth-Key": token.key } : { Authorization: "Bearer " + token };
+    const req = https.request({ method: method || (body === undefined ? "GET" : "POST"), host, path: pth, headers: Object.assign(auth, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }), timeout: 10000 }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => {
@@ -999,23 +1001,27 @@ fetch("/api/turnset",{method:"POST",headers:{"Content-Type":"application/json"},
 function cloudflarePage(res) {
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>DASH Parkour: Cloudflare relay</title>
 <style>:root{color-scheme:dark}body{font:17px/1.5 system-ui,-apple-system,sans-serif;background:#0d0f16;color:#f5f4f0;max-width:640px;margin:0 auto;padding:32px 16px}h1{font-size:26px;margin:0 0 6px}ol{padding-left:22px}li{margin:7px 0}code{background:#1b1f2c;padding:1px 6px;border-radius:6px;font-size:15px}a{color:#7ab8ff}label{display:block;margin:16px 0 6px;font-weight:600}input{width:100%;box-sizing:border-box;padding:11px;border-radius:10px;border:1px solid #39405a;background:#151926;color:#fff;font:15px ui-monospace,Menlo,monospace}button{margin-top:18px;padding:12px 18px;border:0;border-radius:10px;background:#f63;color:#fff;font:700 17px system-ui,sans-serif;cursor:pointer}button.alt{background:#2b3350;margin-left:8px}button:disabled{opacity:.5}#out{display:none;margin-top:18px;padding:14px;border-radius:10px;white-space:pre-line}.good{background:#13381f}.bad{background:#4a1616}small{color:#a9aec2}.box{background:#151926;border-radius:12px;padding:12px 16px;margin:14px 0;color:#cfd3e2;font-size:15px}</style></head>
-<body><h1>Cloudflare relay</h1><p>For players whose networks block direct links. Cloudflare relays <b>1,000 GB a month for free</b>. This server watches Cloudflare's own meter every minute and <b>hard-stops the relay</b> (deletes its key, so every login stops at once) well before that, so it can't go over.</p>
-<ol><li>In the <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">Cloudflare dashboard</a>, copy your <b>Account ID</b> (on the account's home page, at the right under <b>API</b>, or in the address: <code>dash.cloudflare.com/<i>account-id</i>/...</code>).</li>
-<li>Open <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">My Profile, API Tokens</a>, then <b>Create Token</b>, then <b>Create Custom Token</b> (at the bottom).</li>
-<li>Name it <code>dash-parkour</code> and add two permissions (all on <b>Account</b>):<br><code>Calls</code> (it may be called <code>Realtime</code>): <b>Edit</b><br><code>Account Analytics</code>: <b>Read</b></li>
-<li>Under <b>Account Resources</b> pick your account. Leave the rest, then <b>Continue to summary</b> and <b>Create Token</b>, and copy the token.</li>
-<li>Paste both below with your admin key.</li></ol>
-<form id="f"><label for="a">Account ID</label><input id="a" autocomplete="off" spellcheck="false" placeholder="32 letters and numbers">
-<label for="t">API token</label><input id="t" type="password" autocomplete="off" spellcheck="false">
-<label for="g">Limit for any 30 days, in GB <small>(900 if empty; at most 950: the free amount is 1,000)</small></label><input id="g" inputmode="numeric" autocomplete="off" placeholder="900">
+<body><h1>Cloudflare relay</h1><p>For players whose networks block direct links. Cloudflare relays <b>1,000 GB a month for free</b>. This server watches Cloudflare's own meter every minute and <b>hard-stops the relay</b> well before that, so it can't go over.</p>
+<h2 style="font-size:20px;margin:22px 0 4px">Set it up</h2>
+<ol><li>Open <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">Cloudflare: My Profile, API Tokens</a>.</li>
+<li>Next to <b>Global API Key</b>, press <b>View</b>, type your password, and copy the key.</li>
+<li>Paste it below with the email you log into Cloudflare with, and your admin key. That's all.</li></ol>
+<p><small>The server uses the Global API Key once, to make its own token that can only make relay keys and read the usage meter, and then forgets it. It is never saved.</small></p>
+<form id="f"><label for="e">Cloudflare email</label><input id="e" type="email" autocomplete="off" spellcheck="false">
+<label for="gk">Global API Key</label><input id="gk" type="password" autocomplete="off" spellcheck="false">
 <label for="k">Your admin key <small>(from dash-party keys / setkey)</small></label><input id="k" type="password" autocomplete="off">
-<button id="b" type="submit">Turn the relay on</button><button id="s" class="alt" type="button">Check usage</button></form><div id="out"></div>
+<button id="b" type="submit">Set up the relay</button><button id="s" class="alt" type="button">Check usage</button></form><div id="out"></div>
+<details style="margin-top:18px"><summary style="cursor:pointer;color:#a9aec2">Or use an API token you made yourself</summary>
+<p><small>Make a custom token with two Account permissions: <code>Calls</code> (or <code>Realtime</code>) <b>Edit</b> and <code>Account Analytics</code> <b>Read</b>. Then fill in these instead of the email and key above (with your admin key).</small></p>
+<label for="a">Account ID</label><input id="a" autocomplete="off" spellcheck="false" placeholder="32 letters and numbers">
+<label for="t">API token</label><input id="t" type="password" autocomplete="off" spellcheck="false"></details>
+<label for="g">Limit for any 30 days, in GB <small>(900 if empty; at most 950)</small></label><input id="g" inputmode="numeric" autocomplete="off" placeholder="900">
 <div class="box"><b>How it's guarded</b><br>Logins only go to games hosting or joining a party (a few a day per address and per party, 200 a day in all). Each login that moves more than 300 MB is cancelled. A day's share (a fifteenth of the limit) is the most any day can use, so bots can only stop the relay until the next day. The hard stop also comes if the traffic is fast enough to reach a limit within 15 minutes, or if Cloudflare's meter can't be read for 10 minutes. The relay comes back by itself, with a new key, once it's allowed again.</div>
 <script>
 var f=document.getElementById("f"),o=document.getElementById("out"),b=document.getElementById("b"),v=function(i){return document.getElementById(i).value.replace(/\\s+/g,"")};
 function show(x){o.className=x.ok?"good":"bad";o.textContent=x.ok?x.j.text:(x.j.error||"That didn't work.");o.style.display="block";b.disabled=false}
-function call(u,d){b.disabled=true;o.style.display="none";fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(show).catch(function(){show({ok:false,j:{error:"Couldn't reach the party server. Try again."}})})}
-f.onsubmit=function(e){e.preventDefault();call("/api/cfset",{account:v("a"),token:v("t"),budget:v("g"),key:v("k")})};
+function call(u,d){b.disabled=true;fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(show).catch(function(){show({ok:false,j:{error:"Couldn't reach the party server. Try again."}})})}
+f.onsubmit=function(e){e.preventDefault();var mine=v("t");if(!mine&&(!v("e")||!v("gk"))){show({ok:false,j:{error:"Fill in your Cloudflare email and Global API Key."}});return}o.className="good";o.textContent="Setting it up with Cloudflare... (this takes up to half a minute)";o.style.display="block";call("/api/cfset",mine?{account:v("a"),token:mine,budget:v("g"),key:v("k")}:{email:document.getElementById("e").value.trim(),gkey:v("gk"),budget:v("g"),key:v("k")})};
 document.getElementById("s").onclick=function(){call("/api/cfstatus",{key:v("k")})};
 </script></body></html>`;
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer" });
@@ -1322,22 +1328,65 @@ async function handle(req, res) {
       return fail(res, 403, "That admin key isn't right.", { badKey: true });
     }
     if (p0 === "/api/cfstatus") return send(res, 200, { ok: true, text: cfStatusText() });
-    const account = String(body.account || "").trim().toLowerCase();
-    const api = String(body.token || "").trim();
+    let account = String(body.account || "").trim().toLowerCase();
+    let api = String(body.token || "").trim();
+    const email = String(body.email || "").trim();
+    const gkey = String(body.gkey || "").trim();
     const budgetGB = Math.min(950, Math.max(1, Math.floor(Number(body.budget) || 900)));
-    if (!/^[0-9a-f]{32}$/.test(account)) return fail(res, 400, "The Account ID should be 32 letters (a-f) and numbers.");
-    if (!/^[\w-]{20,200}$/.test(api)) return fail(res, 400, "That doesn't look like an API token. Copy it again from Cloudflare.");
-    const c = { kind: "cloudflare", account, api, analytics: api, budgetGB };
+    const easy = !!(email || gkey);
+    if (easy) {
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 400, "Type the email you log into Cloudflare with.");
+      if (!/^[0-9a-f]{30,50}$/i.test(gkey)) return fail(res, 400, "That doesn't look like the Global API Key (about 37 letters and numbers). Copy it again from Cloudflare.");
+    } else {
+      if (!/^[0-9a-f]{32}$/.test(account)) return fail(res, 400, "The Account ID should be 32 letters (a-f) and numbers.");
+      if (!/^[\w-]{20,200}$/.test(api)) return fail(res, 400, "That doesn't look like an API token. Copy it again from Cloudflare.");
+    }
     return (async () => {
-      // the token can read the meter...
-      const g = await cfRequest("api.cloudflare.com", "/client/v4/graphql", api, { query: '{ viewer { accounts(filter: { accountTag: "' + account + '" }) { callsTurnUsageAdaptiveGroups(limit: 1, filter: { date_geq: "' + gqlDay(new Date()) + '", date_leq: "' + gqlDay(new Date()) + '" }) { sum { egressBytes } } } } }' }).catch((e) => ({ errors: [{ message: e.message }] }));
+      let made = "";
+      if (easy) {
+        // [v1.8] the easy way: with the Global API Key (used for this and then forgotten),
+        // find the account and make a token that can only do what the relay needs
+        const G = { email, key: gkey };
+        const accs = await cfRequest("api.cloudflare.com", "/client/v4/accounts?per_page=50", G).catch((e) => {
+          throw new Error(e.status === 403 || e.status === 400 || e.status === 401 ? "the email or Global API Key isn't right" : e.message);
+        });
+        const list = (accs && accs.result) || [];
+        if (!list.length) throw new Error("no account found for that login");
+        const acc = (account && list.find((a) => a.id === account)) || list[0];
+        account = acc.id;
+        const pg = await cfRequest("api.cloudflare.com", "/client/v4/user/tokens/permission_groups", G);
+        const groups = (pg && pg.result) || [];
+        const pick = (test) => groups.find((g) => test(String(g.name || "")) && (g.scopes || []).some((x) => /account/.test(x)));
+        const calls = pick((n) => /^(calls|realtime)\b/i.test(n) && /(write|edit|admin)/i.test(n)) || pick((n) => /(calls|realtime)/i.test(n) && /(write|edit|admin)/i.test(n));
+        const ana = pick((n) => /^account analytics read$/i.test(n)) || pick((n) => /analytics/i.test(n) && /read/i.test(n));
+        if (!calls || !ana) throw new Error("couldn't find the Realtime and Analytics permissions in your account");
+        const tok = await cfRequest("api.cloudflare.com", "/client/v4/user/tokens", G, {
+          name: "dash-parkour relay (" + new Date().toISOString().slice(0, 10) + ")",
+          policies: [{ effect: "allow", resources: { ["com.cloudflare.api.account." + account]: "*" }, permission_groups: [{ id: calls.id }, { id: ana.id }] }],
+        });
+        api = String((tok && tok.result && tok.result.value) || "");
+        if (!api) throw new Error("Cloudflare didn't give back the new token");
+        made = " (account \"" + String(acc.name || account).slice(0, 60) + "\")";
+      }
+      const c = { kind: "cloudflare", account, api, analytics: api, budgetGB };
+      // the token can read the meter... (a new token can take a few seconds to work)
+      let g = null;
+      for (let tries = 0; tries < (easy ? 6 : 1); tries++) {
+        if (tries) await new Promise((r) => setTimeout(r, 2000));
+        g = await cfRequest("api.cloudflare.com", "/client/v4/graphql", api, { query: '{ viewer { accounts(filter: { accountTag: "' + account + '" }) { callsTurnUsageAdaptiveGroups(limit: 1, filter: { date_geq: "' + gqlDay(new Date()) + '", date_leq: "' + gqlDay(new Date()) + '" }) { sum { egressBytes } } } } }' }).catch((e) => ({ errors: [{ message: e.message }] }));
+        if (!(g.errors && g.errors.length)) break;
+      }
       if (g.errors && g.errors.length) throw new Error("the token can't read the usage meter (add Account Analytics: Read): " + g.errors[0].message);
       if (!(g.data && g.data.viewer && g.data.viewer.accounts && g.data.viewer.accounts[0])) throw new Error("the token can't see that account (check the Account ID, and pick the account under Account Resources)");
       // ...and make (and delete) relay keys
       const old = turnConf();
-      const k = await cfMakeKey(c).catch((e) => {
-        throw new Error("the token can't make relay keys (add Calls or Realtime: Edit): " + e.message);
-      });
+      let k = null,
+        kErr = null;
+      for (let tries = 0; tries < (easy ? 5 : 1) && !k; tries++) {
+        if (tries) await new Promise((r) => setTimeout(r, 2000));
+        k = await cfMakeKey(c).catch((e) => ((kErr = e), null));
+      }
+      if (!k) throw new Error("the token can't make relay keys (add Calls or Realtime: Edit): " + (kErr ? kErr.message : "?"));
       if (old && old.kind === "cloudflare" && old.api && old.account && old.id) {
         cfRequest("api.cloudflare.com", cfKeysPath(old) + "/" + encodeURIComponent(old.id), old.api, undefined, "DELETE").catch(() => {});
       }
@@ -1347,7 +1396,7 @@ async function handle(req, res) {
       writeJson(TURN_USE_FILE, turnUse);
       await readTurnMeter();
       log("RELAY: Cloudflare set up from the relay page by", who.name, "(limit " + budgetGB + " GB)");
-      send(res, 200, { ok: true, text: "Done! The relay is set up with Cloudflare.\n\n" + cfStatusText() + "\n\nTest it by joining a party from the game with ?relaytest at the end of its address." });
+      send(res, 200, { ok: true, text: "Done! The relay is set up with Cloudflare" + made + ".\n\n" + cfStatusText() + "\n\nTest it by joining a party from the game with ?relaytest at the end of its address." });
     })().catch((e) => fail(res, 400, "Cloudflare didn't accept that: " + e.message));
   }
 

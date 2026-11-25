@@ -8810,6 +8810,13 @@ function _typeof(o) {
             return;
           }
           dashSchedule();
+          // [v1.8] the clock never goes back: a refresh's timestamp (the moment the
+          // refresh began) can be earlier than the extra frame made just before it
+          // (V-Sync off), and that bit of time was counted twice, every refresh.
+          // At very high frame rates the whole game ran a little fast.
+          if (dashLast >= 0 && now < dashLast) {
+            now = Math.max(dashLast, window.performance.now());
+          }
           var dt;
           if (typeof window.__dashFixedDT === "number") {
             dt = window.__dashFixedDT;
@@ -30203,19 +30210,7 @@ function program() {
     if (dtEvery(50) && this.alive !== false) {
       sfxAt("zappCrackle", this.x + this.size / 2, this.y, 0.7); // [v1.2] sound: a faint buzz when you're near
     }
-    var legsTarget = this.legsScene; // two scenes
-    var directionTarget = this.direction; // 0 is left, 1 is right
-
-    // Smoothly move toward target
-    this.legsLerp = __p.lerp(this.legsLerp, legsTarget, dtLerp(0.05));
-    this.directionLerp = __p.lerp(this.directionLerp, directionTarget, dtLerp(0.2));
-    if (dtEvery(60)) {
-      if (this.legsScene === 1) {
-        this.legsScene = 0;
-      } else if (this.legsScene === 0) {
-        this.legsScene = 1;
-      }
-    }
+    this.animate();
 
     // Calculating direction switch
     if (this.x > this.startX + this.detectRad) {
@@ -30231,6 +30226,22 @@ function program() {
     }
     if (this.direction === 1) {
       this.x += this.speed * DT;
+    }
+  };
+  // [v1.8] his legs and turning (apart, so they go on while he stands still on a red light)
+  Zapp.prototype.animate = function () {
+    var legsTarget = this.legsScene; // two scenes
+    var directionTarget = this.direction; // 0 is left, 1 is right
+
+    // Smoothly move toward target
+    this.legsLerp = __p.lerp(this.legsLerp, legsTarget, dtLerp(0.05));
+    this.directionLerp = __p.lerp(this.directionLerp, directionTarget, dtLerp(0.2));
+    if (dtEvery(60)) {
+      if (this.legsScene === 1) {
+        this.legsScene = 0;
+      } else if (this.legsScene === 0) {
+        this.legsScene = 1;
+      }
     }
   };
   Zapp.prototype.checkHit = function (player) {
@@ -36970,6 +36981,11 @@ function program() {
     return dashParticleCol(currentSkin, typeof MP !== "undefined" && MP.active ? mpMyColor() : 0);
   };
   var spawnParticles = function spawnParticles(x, y, count, type, speed, boss) {
+    // [v1.8] FREEZE's red light: no trails (Digitsofpi's digits, dust) piling up while
+    // the world stands still
+    if (typeof redLightFreeze !== "undefined" && redLightFreeze && (type === "pi" || type === "dust")) {
+      return;
+    }
     var psk = particleSkin !== null ? particleSkin : currentSkin;
     // [v5] Fancy Graphics off: about a third of the particles (spawn particles
     // stay, they show where you appear)
@@ -39808,7 +39824,7 @@ function program() {
       case 17:
         return 44;
       case 19:
-        return 50;
+        return 100; // [v1.8] (a bigger entrance: see fxPiBuild)
       case 18:
         return 112; // [v1.7] (slower: a beat as a little oval, then he swirls out)
       case 11:
@@ -41062,14 +41078,18 @@ function program() {
   // Digitsofpi: [v1.6] dozens of little digits fly in and stack up into his shape,
   // bottom up (red body, white eyes, black hat with its red band), then he
   // solidifies out of them
+  // [v1.8] Digitsofpi: a big pi spins in with a ring of pi's digits orbiting it; the
+  // digits peel off the ring and build his body from the bottom up, his top hat drops
+  // in from above and lands with a bounce, he turns solid and a burst of digits pops out
   var fxPiBuild = function fxPiBuild(a) {
     var t = a.t,
       gx,
       gy;
     if (!a.digits) {
       a.digits = [];
-      var add = function (x, y, col) {
-        a.digits.push({ x: x, y: y, col: col });
+      a.hat = [];
+      var add = function (x, y, col, hat) {
+        (hat ? a.hat : a.digits).push({ x: x, y: y, col: col });
       };
       for (gy = -12; gy <= 18; gy += 6) {
         for (gx = -17; gx <= 17; gx += 5.7) {
@@ -41078,70 +41098,135 @@ function program() {
         }
       }
       for (gx = -22; gx <= 22; gx += 5.5) {
-        add(gx, -17.5, [25, 25, 25]); // the brim
+        add(gx, -17.5, [25, 25, 25], true); // the brim
       }
       for (gx = -14; gx <= 14; gx += 5.6) {
-        add(gx, -23, [255, 40, 40]); // the band
+        add(gx, -23, [255, 40, 40], true); // the band
       }
       for (gy = -29; gy >= -47; gy -= 6) {
         for (gx = -14; gx <= 14; gx += 5.6) {
-          add(gx, gy, [25, 25, 25]);
+          add(gx, gy, [25, 25, 25], true);
         }
       }
+      // the body: bottom row first, each digit leaving the orbiting ring
       a.digits.sort(function (p1, p2) {
-        return p2.y - p1.y + (Math.random() - 0.5) * 8;
+        return p2.y - p1.y + (Math.random() - 0.5) * 4;
       });
-      for (var i = 0; i < a.digits.length; i++) {
-        var d = a.digits[i],
-          ang = Math.random() * Math.PI * 2,
-          dist = 80 + Math.random() * 70;
-        d.sx = Math.cos(ang) * dist;
-        d.sy = Math.sin(ang) * dist;
-        d.at = i / a.digits.length * 24; // when it sets off
-        d.fly = 10 + Math.random() * 5;
-        d.arc = __p.random(-18, 18);
+      var nb = a.digits.length;
+      for (var i = 0; i < nb; i++) {
+        var d = a.digits[i];
+        d.at = 24 + i / nb * 34;
+        d.fly = 13 + Math.random() * 4;
         d.ch = PI_DIGITS.charAt(i % PI_DIGITS.length);
-        d.r = __p.random(-200, 200);
+        d.r = __p.random(-160, 160);
+      }
+      for (var h = 0; h < a.hat.length; h++) {
+        var hq = a.hat[h];
+        hq.ch = PI_DIGITS.charAt((h + 7) % PI_DIGITS.length);
+        hq.r = 0;
       }
     }
+    var ringR = 56,
+      spin = t * 0.09;
+    // where a body digit sets off from: its place on the spinning ring at that moment
+    var ringAt = function (i, at) {
+      var ang = i * 2.39996 + at * 0.09;
+      return { x: Math.cos(ang) * ringR, y: Math.sin(ang) * ringR * 0.8 };
+    };
+    var solid = fxEase((t - 80) / 12); // he forms out of the digits at the end
+    // a soft red glow, pulsing, until he is solid
+    var glowA = __p.min(1, t / 10) * (1 - solid);
+    if (glowA > 0) {
+      var pul = 0.5 + 0.5 * Math.sin(t * 0.22);
+      __p.noStroke();
+      for (var gl = 3; gl >= 1; gl--) {
+        __p.fill(255, 60, 60, (16 + 12 * pul) * glowA);
+        __p.ellipse(a.x, a.y - 6, 34 + gl * 16 + pul * 6, 30 + gl * 14 + pul * 5);
+      }
+    }
+    __p.textAlign(__p.CENTER, __p.CENTER);
+    __p.noStroke();
+    // the big pi: spins and grows in, then fades as the body takes its place
+    var piIn = fxBack(t / 16),
+      piOut = 1 - fxEase((t - 34) / 24);
+    if (piOut > 0) {
+      __p.pushMatrix();
+      __p.translate(a.x, a.y - 4);
+      __p.rotate(-200 * (1 - __p.min(1, t / 16)));
+      __p.scale(__p.max(0.01, piIn) * (0.6 + 0.4 * piOut));
+      __p.textSize(46);
+      __p.fill(0, 0, 0, 90 * piOut);
+      __p.text("π", 2, 3);
+      __p.fill(255, 30, 30, 255 * piOut);
+      __p.text("π", 0, 0);
+      __p.popMatrix();
+    }
+    __p.textSize(8.5);
+    // the ring of digits still waiting to fly in
+    var ringA = __p.min(1, t / 8);
+    for (var k = 0; k < a.digits.length; k++) {
+      var q = a.digits[k];
+      var u = (t - q.at) / q.fly;
+      var st = ringAt(k, __p.min(t, q.at));
+      var px, py, rot = 0, al;
+      if (u <= 0) {
+        // orbiting
+        var ang = k * 2.39996 + spin;
+        px = a.x + Math.cos(ang) * ringR;
+        py = a.y + Math.sin(ang) * ringR * 0.8;
+        al = ringA;
+      } else {
+        var e = fxEase(u);
+        px = a.x + __p.lerp(st.x, q.x, e);
+        py = a.y + __p.lerp(st.y, q.y, e) - Math.sin(e * Math.PI) * 14;
+        rot = q.r * (1 - e);
+        al = 1 - solid;
+      }
+      if (al <= 0.01) {
+        continue;
+      }
+      __p.fill(q.col[0], q.col[1], q.col[2], 255 * al);
+      __p.pushMatrix();
+      __p.translate(px, py);
+      __p.rotate(rot);
+      __p.text(q.ch, 0, 0);
+      __p.popMatrix();
+    }
+    // the top hat, falling in from above as one piece, with a little bounce
+    var hatT = (t - 60) / 14;
+    if (hatT > 0 && solid < 1) {
+      var fall = hatT < 1 ? (1 - hatT * hatT) * -150 : hatT < 1.5 ? -Math.sin((hatT - 1) / 0.5 * Math.PI) * 7 : 0;
+      for (var hh = 0; hh < a.hat.length; hh++) {
+        var hq2 = a.hat[hh];
+        __p.fill(hq2.col[0], hq2.col[1], hq2.col[2], 255 * (1 - solid) * __p.min(1, hatT * 4));
+        __p.text(hq2.ch, a.x + hq2.x, a.y + hq2.y + fall);
+      }
+    }
+    // sounds: a tick as the body builds, the hat landing
     var landed = 0;
     for (var lk = 0; lk < a.digits.length; lk++) {
       if (t >= a.digits[lk].at + a.digits[lk].fly) {
         landed++;
       }
     }
-    var tickP = Math.floor(landed / 11);
+    var tickP = Math.floor(landed / 9);
     if (tickP > (a.tickN === undefined ? 0 : a.tickN)) {
       a.tickN = tickP;
       fxSnd(a, "skinTick", 0.8, { n: tickP });
     }
-    if (fxAt(a, 38)) {
+    if (fxAt(a, 74)) {
       fxSnd(a, "skinHat");
     }
-    var solid = fxEase((t - 36) / 12); // he forms out of them at the end
     if (solid > 0) {
       skinFxDummy(19, a.x, a.y, { tint: a.tint, a: solid });
     }
-    if (solid < 1) {
-      __p.noStroke();
-      __p.textAlign(__p.CENTER, __p.CENTER);
-      __p.textSize(8.5);
-      for (var k = 0; k < a.digits.length; k++) {
-        var q = a.digits[k];
-        var u = (t - q.at) / q.fly;
-        if (u <= 0) {
-          continue;
-        }
-        var e = fxEase(u),
-          px = a.x + __p.lerp(q.sx, q.x, e),
-          py = a.y + __p.lerp(q.sy, q.y, e) - Math.sin(e * Math.PI) * q.arc;
-        var al = __p.min(1, u * 3) * (1 - solid);
-        __p.fill(q.col[0], q.col[1], q.col[2], 255 * al);
-        __p.pushMatrix();
-        __p.translate(px, py);
-        __p.rotate(q.r * (1 - e));
-        __p.text(q.ch, 0, 0);
-        __p.popMatrix();
+    // done: a burst of digits (and a pi) pops out of him
+    if (fxAt(a, 90)) {
+      fxSnd(a, "skinPop");
+      for (var bi = 0; bi < 14; bi++) {
+        var ba = bi / 14 * Math.PI * 2 + Math.random() * 0.3,
+          bs = 2.6 + Math.random() * 2.2;
+        fxPart({ kind: "txt", txt: bi === 0 ? "π" : PI_DIGITS.charAt(bi % PI_DIGITS.length), ts: bi === 0 ? 22 : bi % 3 ? 12 : 16, x: a.x, y: a.y - 4, vx: Math.cos(ba) * bs, vy: Math.sin(ba) * bs - 2, g: 0.16, vr: __p.random(-14, 14), life: 40, col: bi % 2 ? [255, 40, 40] : [40, 40, 40] });
       }
     }
     return t < a.len;
@@ -41447,6 +41532,9 @@ function program() {
   };
   // ---------- trails some skins leave while they move ----------
   var skinTrail = function skinTrail(sk, pl, grounded) {
+    if (redLightFreeze) {
+      return; // [v1.8] (no trails piling up on a red light)
+    }
     var speed = __p.abs(pl.vx || 0) + __p.abs(pl.vy || 0);
     var x = pl.x,
       y = pl.y;
@@ -46679,6 +46767,23 @@ function program() {
 
   // Draw loop
   var redLightFreeze = false; // [v1.8]
+  var playerFrame = 0;
+  // run fn on the players' clock (on a red light: real time, the players' frame count)
+  var withPlayerClock = function withPlayerClock(fn) {
+    if (!redLightFreeze) {
+      return fn();
+    }
+    var kf = __p.frameCount,
+      kd = DT;
+    __p.frameCount = Math.floor(playerFrame);
+    DT = gameRealDT;
+    try {
+      return fn();
+    } finally {
+      __p.frameCount = kf;
+      DT = kd;
+    }
+  };
   var gameRealDT = 1,
     gamePaused = false,
     gamePauseFrame = 0;
@@ -46698,12 +46803,21 @@ function program() {
     // [v1.8] FREEZE mode's red light: the world stands still too, but the players
     // (and the camera) keep moving: see the player physics below
     redLightFreeze = !gamePaused && !loading && typeof mpFreezeWorld === "function" && mpFreezeWorld();
-    if (gamePaused || redLightFreeze) {
+    // ([v1.8] on a red light only time stops (DT 0: nothing moves, no timer runs,
+    // nothing is spawned, as dtEvery never fires); the frame count goes on, so
+    // everything is still drawn moving: animations, eyes, glows)
+    if (gamePaused) {
       DT = 0;
       __p.frameCount = gamePauseFrame;
     } else {
+      if (redLightFreeze) {
+        DT = 0;
+      }
       gamePauseFrame = __p.frameCount;
     }
+    // [v1.8] the players' own clock: on a red light the players (their animations,
+    // their death and spawn animations) keep going while the world stands still
+    playerFrame = __p.frameCount;
     if (window.dashPauseSfx) {
       window.dashPauseSfx(gamePaused); // [v1.1] game sounds freeze with the game (not music)
     }
@@ -46841,6 +46955,7 @@ function program() {
             // parkMast(20, 50, 100);
 
             gearButton(60, 500, 140, 'Settings');
+            titleSaveButton(); // [v1.8] LOAD SAVE (top right)
             sceneButton(175, 487.5, 'Goals', 85);
             drawAchCount(175 + 30, 487.5 - 32); // [v1.1] new achievements since you last looked
             sceneButton(300, 475, 'Play', 105);
@@ -48001,7 +48116,7 @@ function program() {
                   }
                   // [DELTA] the spring is a 60 Hz recurrence: tick it at 60 Hz
                   // (drawn with extrapolation, see trampolineSpringShown)
-                  o.springAcc = (o.springAcc || 0) + DT;
+                  o.springAcc = (o.springAcc || 0) + (redLightFreeze ? 0 : DT); // ([v1.8] not on a red light)
                   while (o.springAcc >= 1) {
                     o.springAcc -= 1;
                     o.springPrev = o.springOffset;
@@ -48058,6 +48173,7 @@ function program() {
                         x: o.x,
                         y: o.y + o.h / 2
                       };
+                      mpRelayCheckpoint(o.x, o.y + o.h / 2); // [v1.8] RELAY: the turn passes here
                     }
                   }
                   if (checkpointReached) {
@@ -48134,13 +48250,14 @@ function program() {
                       var dirY = __p.sin(o.r) * o.d;
 
                       // Move player based on the vector
+                      var beltDT = redLightFreeze ? 0 : DT; // [v1.8] (belts stand still on a red light)
                       if (o.type === 'conveyorbelt') {
                         // Change player X and Y
-                        p.x += dirX * 4 * DT;
+                        p.x += dirX * 4 * beltDT;
                       }
-                      if (o.type === 'hyperbelt') {
+                      if (o.type === 'hyperbelt' && !redLightFreeze) {
                         // Change player X and Y
-                        p.x += dirX * 8 * DT;
+                        p.x += dirX * 8 * beltDT;
                         p.vy = dirY * 4;
                       }
                     } else if (mtv.y > 0 && p.vy < 0) {
@@ -48193,7 +48310,8 @@ function program() {
               for (var i = 0; i < enemies.length; i++) {
                 var e = enemies[i];
                 // for Boing/Zapp too (they just don't have .checkHit yet)
-                if (e.checkHit && e.checkHit(p) && p.health > 0 && p.spikeCooldown <= 0 && !p.paralyzed) {
+                // ([v1.8] not on a red light: a frozen Zapp can't zap)
+                if (!redLightFreeze && e.checkHit && e.checkHit(p) && p.health > 0 && p.spikeCooldown <= 0 && !p.paralyzed) {
                   if (e instanceof Zapp) {
                     if (e.type === 'X') {
                       p.lastHurtBy = "was zapped by Zapp"; // [v5] for the multiplayer death message
@@ -48401,7 +48519,13 @@ function program() {
             // Particles behind
             for (var i = particles.length - 1; i >= 0; i--) {
               var pp = particles[i];
-              pp.update();
+              if (redLightFreeze && (pp.type === "spawn" || pp.type === "death")) {
+                withPlayerClock(function () {
+                  pp.update(); // [v1.8] (spawn and death animations go on on a red light)
+                });
+              } else {
+                pp.update();
+              }
 
               // Only draw non-spawn/death particles in this pass
               if (pp.type !== "spawn" && pp.type !== "death") {
@@ -49078,7 +49202,7 @@ function program() {
               // Master by itself in a few seconds, which won it for everyone (and in a
               // race, gave the spectator the win and the crown)
               var chaseWatch = mpSpecOn() || typeof MP !== "undefined" && MP.active && MP.spectating;
-              p.vx = chaseWatch ? 0 : 7;
+              p.vx = chaseWatch || redLightFreeze ? 0 : 7; // ([v1.8] on a red light the chase stops, Dash too)
               if (chaseWatch) {
                 // (the Master stays just ahead of the player being watched)
                 var cwPl = MP.players[MP.specId],
@@ -49257,7 +49381,9 @@ function program() {
                   dropDownGoToY = dropDownVisibleY;
                 }
                 mpBossGlide(); // [MP] Linked: drawn where the host's boss is, smoothly
-                currentBoss.draw();
+                withPlayerClock(function () {
+                  currentBoss.draw(); // ([v1.8] on a red light he stands still, still animated)
+                });
               }
             }
             if (currentLevel === 15 && bossRemixStage !== 2) {
@@ -49443,16 +49569,18 @@ function program() {
               }
             }
             admDrawWorld(); // [ADMIN] rainbow trails (under every player)
-            mpDrawGhosts(); // [MP] other players
-            if (!p.dead && !mpSpecOn() && !admDrawPlayer()) {
-              mpLocalTint();
-              p.draw();
-              if (MP.active) {
-                mpTeamTint(p.x, p.y, p.w, p.h, mpColorOf(MP.myId), currentSkin); // [v1.8]
+            withPlayerClock(function () {
+              mpDrawGhosts(); // [MP] other players
+              if (!p.dead && !mpSpecOn() && !admDrawPlayer()) {
+                mpLocalTint();
+                p.draw();
+                if (MP.active) {
+                  mpTeamTint(p.x, p.y, p.w, p.h, mpColorOf(MP.myId), currentSkin); // [v1.8]
+                }
+                dashTint = null;
               }
-              dashTint = null;
-            }
-            skinFxRun(); // [v1.6] skin spawn / death animations and trails
+              skinFxRun(); // [v1.6] skin spawn / death animations and trails
+            });
             admDrawOver(); // [ADMIN] orbital strikes, over everyone
             if (showHitboxes) {
               // draw object hitboxes
@@ -52090,35 +52218,21 @@ function program() {
           __p.rect(-60 - widePad, cRectY[1], 660 + widePad * 2, 70);
           skipButton(500 + widePad, 545);
         }
-        // [v1.8] the website starts without a start screen: a first click, tap or key
+        // [v1.8] the website's start screen (drawn in the game): a first click, tap or key
         // starts the game (and its sounds, which can't play before one)
         if (window.__dashTapStart && !logoIs) {
-          var tsK = 0.75 + 0.25 * Math.sin(__p.millis() / 260);
-          __p.noStroke();
-          __p.fill(0, 150);
-          __p.rect(-widePad - 10, 0, 620 + widePad * 2, 600);
-          __p.fill(255);
-          __p.stroke(0);
-          __p.strokeWeight(6);
-          __p.rect(150, 236, 300, 128, 24);
-          __p.stroke(255, 0, 0);
-          arcAlign(__p.CENTER);
-          arcSize(14);
-          arcText("DASH PARKOUR", 300, 284);
-          __p.stroke(0, 0, 0, 255 * tsK);
-          arcSize(9);
-          arcText(window.__dashTouch && window.__dashTouch.active() ? "TAP TO START" : "CLICK OR PRESS A KEY", 300, 330);
-          arcAlign(__p.LEFT);
-          __p.strokeWeight(1);
+          dashStartScreen();
         }
 
         // Portal animation
         xPortalRot -= 3 * DT;
 
         // Boss Blinking animation
-        for (var i = 0; i < bossBlinks.length; i++) {
-          updateBossBlink(bossBlinks[i]);
-        }
+        withPlayerClock(function () {
+          for (var i = 0; i < bossBlinks.length; i++) {
+            updateBossBlink(bossBlinks[i]); // ([v1.8] blinking on a red light too)
+          }
+        });
 
         // [v1.4] the touch buttons (MENU, CHAT) go under the transition, not over it
         __p.pushStyle();
@@ -53133,6 +53247,10 @@ function program() {
       return;
     }
     mpTeamsFix(true); // [v1.8] (players came or went)
+    if (MP.mode === "relay" && mpCount() < 3) {
+      MP.mode = "race"; // [v1.8] (RELAY needs 3 players: back to a race)
+      mpChatLine("", "Fewer than 3 players: the mode is RACE now.", -1);
+    }
     for (var i = 0; i < MP.links.length; i++) {
       mpSendRaw(MP.links[i], {
         t: "roster",
@@ -53486,7 +53604,7 @@ function program() {
     });
     if (relayNext >= 0) {
       p.lives++; // (no life lost: the turn passes)
-      mpRelayPass(relayNext);
+      mpRelayPass(relayNext, "die");
     }
     if (MP.mode === "linked") {
       mpBroadcast({
@@ -54419,7 +54537,9 @@ function program() {
       if (MP.isHost && !MP.goSent) {
         mpSendGo(); // (scene transitions switched off: no transition to start it earlier)
       }
-      MP.goSent = false;
+      // ([v1.8] goSent stays set until the transition has finished: it was cleared
+      // here, half way through, and a second "go" started the level again for
+      // everyone else, with a new session)
       MP.race = null;
       MP.raceDecided = false;
       MP.raceWinner = null;
@@ -54541,6 +54661,25 @@ function program() {
   // While waiting for the team at a launcher, the boss, a cutscene or the
   // finish, nothing can hurt you.
   var mpGuardWaiting = function mpGuardWaiting() {
+    // [v1.8] FREEZE: on a red light nothing can hurt you (the world is frozen around
+    // you: Zapp, the boss, lava...), only the red light itself
+    if (redLightFreeze && !MP.fzOutPend && !p.dead && !p.deathTriggered) {
+      if (p.health < MP.hpStart) {
+        p.health = MP.hpStart;
+        p.hurtFrames = 0;
+        p.lastHurtBy = undefined;
+      }
+      // (zapped or frozen by something during the red light: undone)
+      if (p.paralyzed && !(MP.fzRedFx && MP.fzRedFx.par)) {
+        p.paralyzed = false;
+        p.paralyzedFrames = 0;
+      }
+      if (p.frozen && !(MP.fzRedFx && MP.fzRedFx.frz)) {
+        p.frozen = false;
+        p.frozenFrames = 0;
+      }
+      return;
+    }
     // (a teammate's death in Linked mode still takes you down while you wait)
     if (MP.active && MP.spectating && scene === "game") {
       // [v1.3] a spectator can't be hurt
@@ -54646,8 +54785,8 @@ function program() {
     if (MP.mode === "linked") {
       return "One team: shared deaths, and everyone waits at checkpoints, bosses and the finish.";
     }
-    if (MP.mode === "relay") {
-      return "Teams of two, one runner each. When the runner dies, a teammate takes over.";
+    if (MP.mode === "relay" || mpCount() < 3) {
+      return MP.mode === "relay" ? "Teams of two, one runner each. At a checkpoint or a death, a teammate takes over." : MP.mode === "linked" ? "One team: shared deaths, and everyone waits at checkpoints, bosses and the finish." : MP.mode === "freeze" ? "A race with red light, green light. Move on red and you're out." : "Everyone for themselves. First to the finish wins. (RELAY needs 3 players.)";
     }
     if (MP.mode === "freeze") {
       return "A race with red light, green light. Move on red and you're out.";
@@ -54678,9 +54817,10 @@ function program() {
       ids[j] = tmp;
     }
     var n = ids.length,
-      nT = __p.max(1, __p.floor(n / 2));
+      nT = n === 3 ? 2 : __p.max(1, __p.floor(n / 2));
+    // ([v1.8] 3 players: a pair and one on their own, so there's still a race)
     var cap = function cap(t) {
-      return n === 1 ? 1 : n % 2 && t === nT - 1 ? 3 : 2;
+      return n === 1 ? 1 : n === 3 ? (t === 0 ? 2 : 1) : n % 2 && t === nT - 1 ? 3 : 2;
     };
     var T = [],
       crowns = [];
@@ -54761,6 +54901,8 @@ function program() {
         if (big >= 0) {
           singles[0].push(T[big].pop());
           T.push(singles[0]);
+        } else if (T.length && Object.keys(MP.players).length === 3) {
+          T.push(singles[0]); // (3 players: a pair and one on their own)
         } else if (T.length) {
           var small = 0;
           for (var j = 1; j < T.length; j++) {
@@ -54953,6 +55095,7 @@ function program() {
       return tm.slice(0);
     }) : [];
     MP.relayRun = {};
+    MP.relayCps = {};
     if (MP.relayWait) {
       MP.spectating = false; // (waiting from an earlier start of this level)
       MP.specId = -1;
@@ -55040,56 +55183,96 @@ function program() {
       ay: lvl && lvl.arenaY !== undefined ? lvl.arenaY : 0
     };
   };
-  // my turn is over: the next teammate takes over, and I watch them
-  var mpRelayPass = function mpRelayPass(to) {
-    var spot = mpRelaySpot();
+  // [v1.8] my turn is over: the next teammate takes over at my last checkpoint (or
+  // at the checkpoint I just reached), and I watch them. why: "die" or "cp".
+  var mpRelayPass = function mpRelayPass(to, why) {
+    var t = mpTeamOf(MP.myId);
+    var cps = (MP.relayCps && MP.relayCps[t]) || [];
     var msg = {
       t: "baton",
       id: MP.myId,
       ses: MP.session,
       to: to,
-      x: __p.round(spot.x * 10) / 10,
-      y: __p.round(spot.y * 10) / 10,
-      ay: __p.round((spot.ay || 0) * 10) / 10,
-      rs: bossRemixStage,
-      fb: finalBossPhase,
+      why: why,
       cx: lastCheckpoint.x,
-      cy: lastCheckpoint.y
+      cy: lastCheckpoint.y,
+      cps: cps.slice(-30)
     };
     mpBroadcast(msg);
     mpHandle(msg, MP.myId);
     MP.spectating = true;
     MP.relayWait = true;
     MP.specId = to;
-    MP.relaySafe = [];
+  };
+  // the runner reached a checkpoint the team hasn't passed yet: the next teammate runs
+  var mpRelayCheckpoint = function mpRelayCheckpoint(x, y) {
+    if (!mpRelayOn() || MP.spectating || MP.relayWait) {
+      return;
+    }
+    var t = mpTeamOf(MP.myId);
+    var key = Math.round(x) + "," + Math.round(y);
+    MP.relayCps = MP.relayCps || {};
+    var cps = MP.relayCps[t] || (MP.relayCps[t] = []);
+    if (cps.indexOf(key) >= 0) {
+      return; // (where this turn started)
+    }
+    cps.push(key);
+    var next = mpRelayNext();
+    if (next >= 0 && MP.players[next]) {
+      var who = MP.players[MP.myId] ? MP.players[MP.myId].name : "Player";
+      var line = who + " reached a checkpoint. " + MP.players[next].name + " runs on!";
+      mpChatLine("", line, -1);
+      mpBroadcast({
+        t: "sys",
+        x: line
+      });
+      mpRelayPass(next, "cp");
+    }
   };
   var mpRelayTakeOver = function mpRelayTakeOver(m) {
     MP.spectating = false;
     MP.relayWait = false;
     MP.hold = false;
+    var t = mpTeamOf(MP.myId);
+    MP.relayCps = MP.relayCps || {};
+    if (Array.isArray(m.cps)) {
+      MP.relayCps[t] = m.cps.slice(0);
+    }
     if (m.cx !== undefined && m.cy !== undefined) {
       lastCheckpoint = {
         x: m.cx,
         y: m.cy
       };
+      var key = Math.round(m.cx) + "," + Math.round(m.cy);
+      if ((MP.relayCps[t] || (MP.relayCps[t] = [])).indexOf(key) < 0) {
+        MP.relayCps[t].push(key);
+      }
     }
-    var x = m.x !== undefined ? m.x : lastCheckpoint.x;
-    var y = m.y !== undefined ? m.y + (m.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - m.ay : 0) : lastCheckpoint.y;
+    // the same as coming back after a death: at the checkpoint, and a boss fight that
+    // was on starts again (it was taken over mid-fight before, and broke)
     p.health = 100;
     p.dead = false;
     p.deathTriggered = false;
     p.deathFrames = 0;
     p.lives = 10;
     p.gameOver = false;
-    if (finalBossPhase >= 3 || currentLevel === 16) {
-      p.x = x; // (the vortex and the chase keep their own Dash)
-      p.y = y;
-      p.vx = 0;
-      p.vy = 0;
+    if (m.why === "left" && m.x !== undefined) {
+      p.reset(m.x, m.y + (m.ay !== undefined && lvl && lvl.arenaY !== undefined ? lvl.arenaY - m.ay : 0));
     } else {
-      p.reset(x, y); // (with the skin's spawn animation)
+      p.reset(lastCheckpoint.x, lastCheckpoint.y);
     }
-    MP.relaySafe = [];
+    if (m.why !== "cp" && (bossFight || bossIntro)) {
+      bossFight = false;
+      bossIntro = false;
+      lvl.arenaY = 0;
+      bossIntroFrames = 0;
+      bossFloatY = 0;
+      zoomScale = 1;
+      if (bosses[world - 1]) {
+        bosses[world - 1].reset();
+      }
+      clearBossAttackState();
+    }
     mpChatLine("", "Your turn! Go!", -1);
     MP.goFlash = 50;
   };
@@ -55134,6 +55317,7 @@ function program() {
             id: 0,
             ses: MP.session,
             to: id,
+            why: "left",
             x: pos.x,
             y: pos.y,
             ay: pos.ay
@@ -55155,6 +55339,9 @@ function program() {
       return; // (only a teammate, or the host, hands over)
     }
     MP.relayRun[bt] = m.to;
+    if (Array.isArray(m.cps) && mpTeamOf(MP.myId) === bt) {
+      (MP.relayCps || (MP.relayCps = {}))[bt] = m.cps.slice(0); // (the checkpoints this team passed)
+    }
     if (m.to === MP.myId) {
       mpRelayTakeOver(m);
     } else if (MP.relayWait && mpTeamOf(MP.myId) === bt) {
@@ -55267,6 +55454,7 @@ function program() {
     p.lastHurtBy = why;
     p.health = 0;
     p.hurtFrames = 15;
+    MP.fzOutPend = true; // (until the death plays: past the red light's guard and Invincible)
   };
   var mpFzApply = function mpFzApply(m) {
     if (m.ses !== MP.session) {
@@ -55291,6 +55479,7 @@ function program() {
         el: false
       };
       MP.fzLatch = false;
+      MP.fzRedFx = { par: !!(p && p.paralyzed), frz: !!(p && p.frozen) }; // (what they had already)
       sfx("countBeep");
     } else if (m.s === "green" && MP.fzRed && !MP.fzRed.sent) {
       // the red light is over: what this player did in it
@@ -55426,6 +55615,13 @@ function program() {
   // every game: watch this player's keys on a red light
   var mpFzTick = function mpFzTick() {
     MP.fzWorld = mpFreezeWorld();
+    if (MP.fzOutPend) {
+      if (!p || p.dead || p.deathTriggered || !mpFreezeOn()) {
+        MP.fzOutPend = false;
+      } else {
+        p.health = 0; // (nothing brings them back before the death plays)
+      }
+    }
     if (!MP.fzWorld || !MP.fzRed || MP.fzRed.n !== MP.fz.n) {
       MP.fzLatch = false;
       return;
@@ -55456,35 +55652,54 @@ function program() {
     var showMaster = !(currentLevel === 15 && (bossFight || bossIntro));
     var ty = showMaster ? 128 : 60;
     if (showMaster) {
-      // turned away on green, turning round on yellow, watching on red
-      var turn = s === "yellow" ? __p.constrain(age / 0.5, 0, 1) : s === "red" ? 1 : 0;
-      var face = turn >= 0.5;
-      var sx = __p.max(0.08, __p.abs(Math.cos(turn * Math.PI)));
-      __p.pushMatrix();
-      __p.pushStyle();
-      __p.translate(300, 58);
-      if (s === "red") {
-        __p.noStroke();
-        __p.fill(255, 0, 0, 70 + 40 * Math.sin(age * 8));
-        __p.ellipse(0, 0, 110, 110);
-      }
-      __p.scale(sx, 1);
-      if (face) {
+      // [v1.8] turned away on green (his back and his cape), turning round on yellow,
+      // watching on red; he hovers and drifts, and his real cape trails behind him
+      withPlayerClock(function () {
+        var turn = s === "yellow" ? __p.constrain(age / 0.5, 0, 1) : s === "red" ? 1 : 0;
+        var face = turn >= 0.5;
+        var sx = __p.max(0.06, __p.abs(Math.cos(turn * Math.PI)));
+        var now = Date.now();
+        var cx = 300 + Math.sin(now / 1400) * 22,
+          cy = 62 + Math.sin(now / 380) * 4;
+        __p.pushMatrix();
+        __p.pushStyle();
+        if (s === "red") {
+          __p.noStroke();
+          __p.fill(255, 0, 0, 60 + 40 * Math.sin(age * 8));
+          __p.ellipse(cx, cy + 6, 118, 112);
+        }
+        __p.translate(cx, cy);
+        __p.scale(sx, 1);
+        capeWorldX = cx;
+        capeWorldY = cy;
         var keepCape = pmNoCape;
-        pmNoCape = true;
+        pmNoCape = false;
         parkMast(0, 0, 80, undefined);
         pmNoCape = keepCape;
-      } else {
-        // his back: the body and his cape
-        __p.fill(253, 147, 255);
-        __p.stroke(0);
-        __p.strokeWeight(1);
-        __p.quad(0, -30, -28, 0, 0, 26, 28, -2);
-        __p.fill(40, 20, 120);
-        __p.quad(-22, -8, 22, -8, 27, 34, -27, 34);
-      }
-      __p.popStyle();
-      __p.popMatrix();
+        if (!face) {
+          // his back: the body without a face, and the cape over it
+          __p.fill(253, 147, 255);
+          __p.stroke(0);
+          __p.strokeWeight(0.8);
+          __p.beginShape();
+          __p.vertex(0, -80 / 2.67);
+          __p.vertex(-80 / 2.85, -80 / 100);
+          __p.vertex(0, 80 / 3.07);
+          __p.vertex(80 / 2.85, -80 / 40);
+          __p.endShape(__p.CLOSE);
+          if (settings.fancyGraphics) {
+            capeDraw();
+          } else {
+            __p.noStroke();
+            __p.fill(40, 20, 120);
+            __p.quad(-80 / 3, -80 / 12, 80 / 3, -80 / 12, 80 / 2.6 + lowCapeSwing, 80 / 1.35, -80 / 2.6 + lowCapeSwing * 0.8, 80 / 1.35);
+          }
+        }
+        capeWorldX = 0;
+        capeWorldY = 0;
+        __p.popStyle();
+        __p.popMatrix();
+      });
     }
     var label = s === "red" ? "RED LIGHT" : "GREEN LIGHT";
     var col = s === "red" ? __p.color(235, 20, 20) : s === "yellow" ? __p.color(255, 200, 0) : __p.color(20, 200, 70);
@@ -55900,7 +56115,7 @@ function program() {
       case "admmode":
         // [v1.5] a developer in the party switched the mode
         pl = MP.players[fromId];
-        if (MP.isHost && pl && mpAdmOf(pl) && MP_MODES.indexOf(m.mode) >= 0 && MP.mode !== m.mode) {
+        if (MP.isHost && pl && mpAdmOf(pl) && MP_MODES.indexOf(m.mode) >= 0 && MP.mode !== m.mode && !(m.mode === "relay" && mpCount() < 3)) {
           MP.mode = m.mode;
           mpBroadcast({
             t: "mode",
@@ -57115,6 +57330,9 @@ function program() {
     if (MP.isHost && transitionActive && sceneToTransition === "game" && !MP.goSent && mpCount() > 1) {
       mpSendGo();
     }
+    if (!transitionActive && scene === "game") {
+      MP.goSent = false; // [v1.8] (in the level: the next level start sends its own)
+    }
     if (MP.hold) {
       if (scene !== "game") {
         MP.hold = false;
@@ -57183,7 +57401,6 @@ function program() {
     if (MP.active && MP.spectating && scene === "game" && !MP.relayWait) {
       MP.specRun = true; // [v1.6] (watched some of this level) ([v1.8] not a RELAY teammate waiting)
     }
-    mpRelayTrack(); // [v1.8]
     mpRelayHostTick();
     mpFzHostTick();
     mpFzTick();
@@ -58527,7 +58744,8 @@ function program() {
       // [v1.8] four modes, two rows
       for (var mi = 0; mi < MP_MODES.length; mi++) {
         var mmode = MP_MODES[mi];
-        if (mpButton(40 + mi % 2 * 110, 352 + __p.floor(mi / 2) * 40, 100, 34, mmode.toUpperCase(), MP.mode === mmode ? MP_MODE_COLS[mmode] : __p.color(150)) && MP.mode !== mmode) {
+        // ([v1.8] RELAY needs 3 players or more)
+        if (mpButton(40 + mi % 2 * 110, 352 + __p.floor(mi / 2) * 40, 100, 34, mmode.toUpperCase(), MP.mode === mmode ? MP_MODE_COLS[mmode] : __p.color(150), mmode !== "relay" || mpCount() >= 3) && MP.mode !== mmode) {
           mpSetMode(mmode);
         }
       }
@@ -58621,7 +58839,7 @@ function program() {
           mpLabel("Mode (developer)", 330, y + 86);
           for (var am = 0; am < MP_MODES.length; am++) {
             var amode = MP_MODES[am];
-            if (mpButton(330 + am % 2 * 120, y + 112 + __p.floor(am / 2) * 46, 110, 38, amode.toUpperCase(), MP.mode === amode ? MP_MODE_COLS[amode] : __p.color(150)) && MP.mode !== amode) {
+            if (mpButton(330 + am % 2 * 120, y + 112 + __p.floor(am / 2) * 46, 110, 38, amode.toUpperCase(), MP.mode === amode ? MP_MODE_COLS[amode] : __p.color(150), amode !== "relay" || mpCount() >= 3) && MP.mode !== amode) {
               mpSendRaw(MP.links[0], {
                 t: "admmode",
                 mode: amode
@@ -60260,6 +60478,9 @@ function program() {
     }
   };
   var admGuard = function admGuard() {
+    if (MP.fzOutPend) {
+      return; // [v1.8] (out on a red light: developers too)
+    }
     if (admOn() && ADM.invincible && p.health < 100 && !p.admDoom) {
       p.health = 100;
       p.lastHurtBy = undefined;
@@ -61366,6 +61587,100 @@ function program() {
     }
     return v.replace(/^["']|["'];?$/g, "").replace(/\s+/g, "");
   };
+  // [v1.8] the start screen on the website (before the first click): the Area 1 grid,
+  // the logo, your Dash bouncing in the middle, a parade of skins hopping by, and a
+  // pulsing CLICK TO START (the save code button under it is part of the page)
+  var startScreenSkins = null;
+  var dashStartScreen = function dashStartScreen() {
+    var t = __p.millis() / 1000;
+    __p.pushStyle();
+    worldBackground(t * 14, t * 14, 1);
+    // a soft spotlight in the middle
+    __p.noStroke();
+    for (var k = 7; k > 0; k--) {
+      __p.fill(255, 255, 255, 18);
+      __p.ellipse(300, 300, 160 + k * 52, 120 + k * 40);
+    }
+    // the parade along the bottom
+    if (!startScreenSkins) {
+      startScreenSkins = skins.map(function (sk) {
+        return sk.id;
+      }).filter(function (id) {
+        return id !== 1 && id !== 22;
+      });
+    }
+    var span = wideW + 160,
+      n = startScreenSkins.length,
+      gap = span / n;
+    var keepSprite = activeSprite;
+    activeSprite = imgs.pixelSkinRight || activeSprite;
+    for (var i = 0; i < n; i++) {
+      var px = -widePad - 80 + ((t * 55 + i * gap) % span);
+      var hop = Math.abs(Math.sin(t * 4 + i * 1.3));
+      __p.noStroke();
+      __p.fill(0, 0, 0, 30 + 30 * (1 - hop));
+      __p.ellipse(px, 524, 30 - hop * 9, 6);
+      __p.pushMatrix();
+      __p.translate(px, 503 - hop * 14);
+      __p.rotate(Math.sin(t * 4 + i * 1.3) * 8);
+      you(0, 0, 30, startScreenSkins[i]);
+      __p.popMatrix();
+    }
+    activeSprite = keepSprite;
+    // the logo
+    dashLogo(100, 26, 250, 9999);
+    // Dash, bouncing in the middle
+    var b = Math.abs(Math.sin(t * 2.6));
+    var squash = b < 0.12 ? (0.12 - b) * 2.2 : 0;
+    __p.noStroke();
+    __p.fill(0, 0, 0, 40 + 40 * (1 - b));
+    __p.ellipse(300, 374, 120 - b * 40, 18);
+    var me = new Player(0, 0, currentSkin);
+    me.mouth = b > 0.5 ? "open" : "closed";
+    __p.pushMatrix();
+    __p.translate(300, 330 - b * 40);
+    __p.scale(2.6 * (1 + squash), 2.6 * (1 - squash));
+    __p.rotate(Math.sin(t * 2.6) * 6);
+    me.draw();
+    __p.popMatrix();
+    // CLICK TO START, pulsing
+    var pulse = 0.5 + 0.5 * Math.sin(t * 4);
+    var label = window.__dashTouch && window.__dashTouch.active() ? "TAP TO START" : "CLICK TO START";
+    arcAlign(__p.CENTER);
+    arcSize(17 + pulse * 2);
+    __p.stroke(0, 0, 0, 120);
+    arcText(label, 303, 413);
+    __p.stroke(235, 20 + 30 * pulse, 20 + 30 * pulse);
+    arcText(label, 300, 410);
+    arcSize(8);
+    __p.stroke(0, 0, 0, 150);
+    arcText("OR PRESS ANY KEY", 300, 436);
+    arcAlign(__p.LEFT);
+    __p.popStyle();
+  };
+  // [v1.8] the title screen's LOAD SAVE button (and the start screen's, see the loader)
+  var titleSaveButton = function titleSaveButton() {
+    var bw = 150,
+      bh = 40,
+      bx = 600 + widePad - bw - 14,
+      by = 14;
+    var hov = worldMouseX > bx && worldMouseX < bx + bw && worldMouseY > by && worldMouseY < by + bh;
+    __p.stroke(0);
+    __p.strokeWeight(4);
+    __p.fill(hov ? __p.color(40, 150, 230) : __p.color(0, 120, 200));
+    __p.rect(bx, by, bw, bh, 12);
+    __p.stroke(255);
+    arcAlign(__p.CENTER);
+    arcSize(9);
+    arcText("LOAD SAVE", bx + bw / 2, by + bh / 2 + 5);
+    arcAlign(__p.LEFT);
+    if (hov) {
+      __p.cursor(__p.HAND);
+    }
+    if (typeof mobileGesture === "function") {
+      mobileGesture(bx, by, bw, bh, dashLoadSavePanel); // (in the click itself: the phone keyboard)
+    }
+  };
   var dashLoadSavePanel = function dashLoadSavePanel() {
     sfx("click");
     var box = document.getElementById("dash-load-box");
@@ -61457,6 +61772,9 @@ function program() {
     try {
       t0.focus();
     } catch (e) {}
+  };
+  window.__dashLoadSave = function () {
+    dashLoadSavePanel();
   };
   // Every time the save code changes it is stored on this device, so the
   // start screen already has your latest progress next time (with the code it
@@ -63674,7 +63992,7 @@ window.__dashParkourBootPromise = runPJS(program);
   var tapUps = ["pointerup", "mouseup", "touchend", "click", "keyup"];
   function tapDown(e) {
     if (!window.__dashTapStart) return;
-    if (e.target && e.target.closest && e.target.closest("#boot-screen")) return;
+    if (e.target && e.target.closest && e.target.closest("#boot-screen, #dash-load-box, #dash-start-load")) return;
     e.stopImmediatePropagation();
     if (!tapArmed || e.isTrusted === false) return; // (still loading: nothing to press yet)
     if (e.type === "keydown" && /^(Shift|Control|Alt|Meta|Tab|Escape|F\d+)$/.test(e.key)) return;
@@ -63685,12 +64003,30 @@ window.__dashParkourBootPromise = runPJS(program);
     window.__dashTapStart = false;
   }
   function tapUp(e) {
+    if (e.target && e.target.closest && e.target.closest("#dash-load-box, #dash-start-load")) return;
     if (window.__dashTapStart || Date.now() < upUntil) e.stopImmediatePropagation();
   }
   tapDowns.forEach(function (n) { window.addEventListener(n, tapDown, true); });
   tapUps.forEach(function (n) { window.addEventListener(n, tapUp, true); });
   function waitForTap() {
     tapArmed = true;
+    // [v1.8] a save code can be loaded right here too (or later: the title screen's
+    // LOAD SAVE button, or Settings, General)
+    var b = document.createElement("button");
+    b.id = "dash-start-load";
+    b.type = "button";
+    b.textContent = "Have a save code? Load it";
+    b.style.cssText = "position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:20;padding:10px 18px;border:4px solid #000;border-radius:14px;background:#0078c8;color:#fff;font:800 16px 'Trebuchet MS',Arial,sans-serif;cursor:pointer;box-shadow:0 4px 0 #000";
+    b.onclick = function () {
+      if (window.__dashLoadSave) window.__dashLoadSave();
+    };
+    document.body.appendChild(b);
+    var gone = setInterval(function () {
+      if (!window.__dashTapStart) {
+        clearInterval(gone);
+        if (b.parentNode) b.parentNode.removeChild(b);
+      }
+    }, 100);
   }
 
   function bootScripts(sources) {
