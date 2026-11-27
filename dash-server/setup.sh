@@ -76,10 +76,10 @@ SUDO_KEEPER=$!
 trap 'kill $SUDO_KEEPER 2>/dev/null' EXIT
 
 CONF_OLD="$ETC/setup.conf"
-DOMAIN=""; PARTY_SUB=""; HOST_SITE=""
+DOMAIN=""; PARTY_SUB=""; HOST_SITE=""; SETUP_USER=""
 if sudo test -r "$CONF_OLD"; then
   # shellcheck disable=SC1090
-  eval "$(sudo cat "$CONF_OLD" | grep -E '^(DOMAIN|PARTY_SUB|HOST_SITE)=')"
+  eval "$(sudo cat "$CONF_OLD" | grep -E '^(DOMAIN|PARTY_SUB|HOST_SITE|SETUP_USER)=')"
   ok "Using your answers from last time ($DOMAIN). Delete $CONF_OLD to be asked again."
 else
   ask "Your domain (it must already be added to Cloudflare, see README):" "digitsandkineto.com"; DOMAIN="$REPLY"
@@ -159,6 +159,7 @@ if [ -f "$SRC/server.js" ]; then
   sudo install -m 755 "$SRC/dash-party" /usr/local/bin/dash-party
   sudo install -m 755 "$SRC/dash-watchdog" "$APP/dash-watchdog"
   [ -f "$SRC/dash-relay" ] && sudo install -m 755 "$SRC/dash-relay" "$APP/dash-relay"
+  [ -f "$SRC/dash-cmd" ] && sudo install -m 755 -o root -g root "$SRC/dash-cmd" "$APP/dash-cmd"
   ok "Installed the server, the watchdog and the dash-party command"
 else bad "The repo has no dash-server/server.js (upload the dash-server folder to GitHub first)"; fi
 
@@ -222,7 +223,9 @@ if [ -n "$TUN_ID" ]; then
     if try 3 "Pointing $h at the Pi" cloudflared tunnel route dns --overwrite-dns "$TUN" "$h"; then ok "$h → this Pi"; else bad "Couldn't set up the address $h (is $DOMAIN on your Cloudflare account?)"; fi
   done
 else bad "Couldn't make the tunnel"; fi
-printf 'DOMAIN=%s\nPARTY_SUB=%s\nHOST_SITE=%s\nPARTY_HOST=%s\n' "$DOMAIN" "$PARTY_SUB" "$HOST_SITE" "$PARTY_HOST" | sudo tee "$ETC/setup.conf" >/dev/null
+# (who ran setup: the /console page's update runs it again with their Cloudflare login)
+[ "$ME" != root ] && SETUP_USER="$ME"
+printf 'DOMAIN=%s\nPARTY_SUB=%s\nHOST_SITE=%s\nPARTY_HOST=%s\nSETUP_USER=%s\n' "$DOMAIN" "$PARTY_SUB" "$HOST_SITE" "$PARTY_HOST" "$SETUP_USER" | sudo tee "$ETC/setup.conf" >/dev/null
 
 # ---------------- 7. services that start by themselves ----------------
 step "Making everything start by itself (power cuts, internet drops, moving the Pi)"
@@ -316,6 +319,31 @@ AccuracySec=15
 [Install]
 WantedBy=timers.target
 EOF
+# [v1.9] the /console page: the server leaves a request, and dash-cmd (root) runs
+# it if it's one of the allowed dash-party commands
+sudo mkdir -p "$DATA/cmd" /var/lib/dash-party-out
+sudo chown "$SVC_USER:$SVC_USER" "$DATA/cmd"; sudo chmod 700 "$DATA/cmd"
+sudo chown root:"$SVC_USER" /var/lib/dash-party-out; sudo chmod 750 /var/lib/dash-party-out
+sudo tee /etc/systemd/system/dash-cmd.path >/dev/null <<EOF
+[Unit]
+Description=DASH Parkour: commands from the /console page
+
+[Path]
+PathExists=$DATA/cmd/request
+Unit=dash-cmd.service
+
+[Install]
+WantedBy=paths.target
+EOF
+sudo tee /etc/systemd/system/dash-cmd.service >/dev/null <<EOF
+[Unit]
+Description=DASH Parkour: run a command from the /console page
+
+[Service]
+Type=oneshot
+ExecStart=$APP/dash-cmd
+TimeoutStartSec=45min
+EOF
 sudo systemctl daemon-reload
 # (restart, not just "enable --now": an already-running server would keep the
 # old server.js in memory, so updates wouldn't take effect)
@@ -325,6 +353,7 @@ if sudo test -s "$ETC/tunnel.json"; then
   sudo systemctl enable dash-tunnel.service >>"$LOG" 2>&1
   sudo systemctl restart dash-tunnel.service >>"$LOG" 2>&1 && ok "Tunnel running" || bad "The tunnel didn't start (see: dash-party log)"
 fi
+[ -x "$APP/dash-cmd" ] && sudo systemctl enable --now dash-cmd.path >>"$LOG" 2>&1 && ok "Commands from https://$PARTY_HOST/console work (with an admin key)"
 sudo systemctl enable --now dash-watchdog.timer >>"$LOG" 2>&1 && ok "Watchdog checks everything every 2 minutes and fixes what it can"
 sudo systemctl enable systemd-networkd-wait-online.service >/dev/null 2>&1 || true
 

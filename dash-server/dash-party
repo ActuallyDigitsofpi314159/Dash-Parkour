@@ -15,6 +15,7 @@
 #   dash-party restart    restart the server and the tunnel
 #   dash-party fix        run the watchdog's checks and fixes now
 #   dash-party update     get the newest version from GitHub and set it up again
+#   (most of these also work from https://party.YOURDOMAIN/console with an admin key)
 set -u
 DATA=/var/lib/dash-party
 ETC=/etc/dash-party
@@ -58,7 +59,7 @@ stats() {
 dashboard() {
   local st wd
   st="$(S cat "$DATA/status.json" 2>/dev/null)"; wd="$(S cat "$DATA/watchdog.json" 2>/dev/null)"
-  clear
+  [ -t 1 ] && clear
   echo "${B}${R}DASH${N}${B} PARKOUR server${N}   $(date '+%a %H:%M:%S')   ${D}Ctrl+C to leave${N}"
   echo
   if systemctl is-active --quiet dash-party; then yes_no ok "Party server running"; else yes_no bad "Party server STOPPED"; fi; echo
@@ -395,5 +396,5 @@ case "${1:-}" in
   restart) S systemctl restart dash-party dash-tunnel && echo "${G}Restarted.${N}" ;;
   fix) S /opt/dash-party/dash-watchdog; echo "Done. $(S tail -n 3 "$DATA/watchdog.log")" ;;
   update) curl -fsSL "https://raw.githubusercontent.com/ActuallyDigitsofpi314159/Dash-Parkour/main/dash-server/setup.sh" | bash ;;
-  *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

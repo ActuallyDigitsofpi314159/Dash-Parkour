@@ -29984,6 +29984,10 @@ function program() {
 
     this.chaseTime = 0;
     this.maxChaseTime = 180; // 3 seconds (assuming 60fps)
+    // [v1.9] it settles onto the ground under it when the level starts (some were
+    // placed a little up in the air and floated there until they saw you); one with
+    // nothing close below stays where it was put
+    this.settleY = this.y;
   }
   Boing.prototype = Object.create(Enemy.prototype);
   Boing.prototype.constructor = Boing;
@@ -30038,6 +30042,14 @@ function program() {
     var move = this.detectRadius(player);
 
     // Idle until player detected
+    if (this.state === "idle" && this.settleY !== undefined) {
+      this.vy += this.gravity * DT;
+      if (this.y - this.settleY > 120) {
+        this.y = this.settleY; // (nothing under it: put back)
+        this.vy = 0;
+        this.settleY = undefined;
+      }
+    }
     if (this.state === "idle") {
       if (move !== 0 && this.hasJumped === false) {
         // Start jump
@@ -30101,6 +30113,7 @@ function program() {
           this.y += mtv.y;
           this.vy = 0;
           this.state = "idle";
+          this.settleY = undefined; // (on the ground)
           break;
         }
       }
@@ -36521,7 +36534,7 @@ function program() {
     }
 
     // Size depends on type
-    if (this.type === "death" || this.type === "deathG" || this.type === "deathY") {
+    if (this.type === "death" || this.type === "deathG" || this.type === "deathY" || this.type === "deathB") {
       this.size = __p.random(2, 6); // smaller sparks for explosion
     } else {
       this.size = __p.random(5, 10);
@@ -36529,7 +36542,7 @@ function program() {
   };
   var p;
   Particle.prototype.update = function () {
-    if (this.type === "death" || this.type === "deathG" || this.type === "deathY") {
+    if (this.type === "death" || this.type === "deathG" || this.type === "deathY" || this.type === "deathB") {
       this.x += this.vx * DT;
       this.y += this.vy * DT;
       this.vy += 0.18 * DT;
@@ -36805,6 +36818,12 @@ function program() {
       __p.strokeWeight(this.size * 1.6);
 
       // Draw a short trail behind the particle for streaking effect
+      if (particleVisible) {
+        __p.line(this.x, this.y, this.x - this.vx * 2, this.y - this.vy * 2);
+      }
+    } else if (this.type === "deathB") {
+      __p.stroke(0, 210, 190, this.life * 2); // [v1.9] (the intro's blue player)
+      __p.strokeWeight(this.size * 1.6);
       if (particleVisible) {
         __p.line(this.x, this.y, this.x - this.vx * 2, this.y - this.vy * 2);
       }
@@ -38814,6 +38833,9 @@ function program() {
     var eyeRoom = this.visualW * 0.16; // (as far as the eyes go and stay on his body)
     faceX = __p.constrain(faceX + this.idleLX * scaleOffset * 0.9, -__p.max(eyeRoom, __p.abs(this.vx * 0.7)), __p.max(eyeRoom, __p.abs(this.vx * 0.7)));
     faceY = __p.max(faceY + this.idleLY * this.h * 0.1, -this.visualH * 0.65 - this.h * 0.25);
+    // [v1.9] and the pupils look that way inside the eyes too (looking up only moved the
+    // whole eye, so at the end of a level his pupils sat level and just off to the left)
+    faceYMove = __p.constrain(faceYMove + this.idleLY * this.h * 0.09, -this.h * 0.25, this.h * 0.25);
 
     // Get current skin data safely
     var sData = skins[currentSkin] || {
@@ -42114,11 +42136,13 @@ function program() {
         diveSpeedX = diveTargetX / 30;
 
         // Line
-        var numPoints = __p.abs(diveTargetX / 25);
+        // ([v1.9] as many dots as the line is long: counted by the sideways distance
+        // alone, standing right under him showed none)
+        var numPoints = __p.max(4, Math.ceil(Math.sqrt(diveTargetX * diveTargetX + 220 * 220) / 25));
         for (var d = 0; d < numPoints; d++) {
           __p.stroke(0, 0, 0, 255 - d * (255 / numPoints + 1));
           __p.strokeWeight(7);
-          __p.point(this.x + d * ((diveTargetX - numPoints) / numPoints), this.y + d * (220 / numPoints));
+          __p.point(this.x + d * (diveTargetX / numPoints), this.y + d * (220 / numPoints));
         }
 
         // Orange outline buildup
@@ -46182,6 +46206,238 @@ function program() {
   var bossMenuGone = false;
   var voucherMenuGone = false;
 
+  // [v1.9] the intro's "world's greatest players tried" (t: frames into the scene).
+  // Everything comes from t alone, so it looks the same at any frame rate.
+  var INTRO_PROS = [
+  // colour, eye colour, where on screen, death sparks, their two jumps (flips),
+  // and the big leap: its start, the jumps in it (frames after the start, power),
+  // how fast it carries them, an air dash, and whether they catch the ledge
+  { c: [0, 220, 0], x0: 250, ev: "deathG", hops: [[25, 1], [85, 1]], L: 150, j: [[0, 9], [24, 8]], fwd: 2.4 },
+  { c: [255, 220, 0], x0: 180, ev: "deathY", hops: [[48, 1], [108, 2]], L: 173, j: [[0, 9.5], [20, 7]], fwd: 2.4, dash: [30, 40, 5] },
+  { c: [0, 230, 200], x0: 110, ev: "deathB", hops: [[72, 2], [132, 1]], L: 196, j: [[0, 8], [24, 6], [44, 5]], fwd: 2.2, grab: true }];
+  var INTRO_CLIFF = 1060,
+    INTRO_TOP = 340,
+    INTRO_GAP = 745,
+    INTRO_LAVA = 490; // (wide screens show down to about 530)
+  var introProAt = function introProAt(a, t) {
+    var o = { x: a.x0, y: 380, r: 0, sx: 1, sy: 1, look: 0, hit: false, grab: -1, dashing: false, gone: false, crumble: -1 };
+    if (t < a.L) {
+      // running, and the two hops (50 frames, a flip or two in each)
+      for (var h = 0; h < a.hops.length; h++) {
+        var u = (t - a.hops[h][0]) / 50;
+        if (u >= 0 && u <= 1) {
+          o.y = 380 - 82 * Math.sin(Math.PI * u);
+          var e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+          o.r = a.hops[h][1] * 360 * e;
+        }
+        // (a squash on take-off and landing)
+        var d0 = t - a.hops[h][0];
+        if (d0 > -5 && d0 < 0 || d0 > 50 && d0 < 56) {
+          o.sx = 1.15;
+          o.sy = 0.85;
+        }
+      }
+      if (o.y === 380) {
+        o.y = 380 - Math.abs(Math.sin(t * 0.35)) * 3; // (their running bounce)
+      }
+      return o;
+    }
+    // the big leap, step by step (always in whole steps from its start, so it's the
+    // same every time)
+    var y = 380,
+      vy = 0,
+      x = a.x0,
+      k = 0,
+      s = a.L,
+      spin = -99;
+    while (s < t) {
+      var hstep = Math.min(1, t - s);
+      var r = s - a.L;
+      while (k < a.j.length && r >= a.j[k][0]) {
+        vy = -a.j[k][1];
+        spin = a.j[k][0];
+        k++;
+      }
+      if (o.hit || o.grab >= 0) {
+        x = INTRO_CLIFF - 40 - 3 * (s + hstep);
+        if (o.grab >= 0 && s - o.grab < 24) {
+          y = INTRO_TOP - 4 - Math.max(0, Math.sin((s - o.grab) * 0.5)) * 5; // (trying to pull up)
+          vy = 0;
+        } else {
+          if (o.grab >= 0 && o.crumble < 0) {
+            o.crumble = s;
+          }
+          vy += 0.5 * hstep;
+          y += vy * hstep;
+        }
+      } else {
+        var dashing = a.dash && r >= a.dash[0] && r < a.dash[1];
+        o.dashing = dashing;
+        x += (dashing ? a.dash[2] : a.fwd) * hstep;
+        if (dashing) {
+          vy = 0;
+        } else {
+          vy += 0.5 * hstep;
+        }
+        y += vy * hstep;
+        if (x + 3 * (s + hstep) + 40 >= INTRO_CLIFF) {
+          if (a.grab) {
+            o.grab = s;
+            y = INTRO_TOP - 4;
+          } else {
+            o.hit = s;
+            vy = Math.max(vy, 1);
+          }
+          x = INTRO_CLIFF - 40 - 3 * (s + hstep);
+        }
+      }
+      s += hstep;
+    }
+    o.x = x;
+    o.y = y;
+    o.gone = y > INTRO_LAVA - 20;
+    if (!o.hit && o.grab < 0 && spin > -99) {
+      o.r = 360 * Math.min(1, (t - a.L - spin) / 20); // (a spin with each jump)
+    }
+    if (o.hit !== false || o.crumble >= 0) {
+      o.r = 0;
+      o.look = 1;
+    }
+    if (o.grab >= 0 && o.crumble < 0) {
+      o.look = 2;
+    }
+    return o;
+  };
+  var introProDraw = function introProDraw(a, o, t) {
+    var c = a.c;
+    __p.pushMatrix();
+    __p.translate(o.x + 20, o.y + 20);
+    __p.rotate(o.r);
+    __p.scale(o.sx, o.sy);
+    // the headband's tails, streaming out behind
+    __p.stroke(30);
+    __p.strokeWeight(4);
+    var fl = Math.sin(t * 0.5 + a.x0) * 4;
+    __p.line(-18, -9, -32, -12 + fl);
+    __p.line(-18, -7, -30, -3 + fl * 0.7);
+    __p.noStroke();
+    __p.fill(c[0], c[1], c[2]);
+    __p.rect(-20, -20, 40, 40, 10);
+    // headband
+    __p.fill(30);
+    __p.rect(-20, -13, 40, 7);
+    __p.fill(255, 60, 60);
+    __p.rect(-6, -12, 6, 5, 1);
+    // eyes (ahead, or up at the ledge, or wide when it goes wrong)
+    var ey = o.look === 2 ? -1 : 0,
+      ex = o.look === 1 ? 0 : 2;
+    __p.fill(255);
+    __p.ellipse(15, -2, 14, o.look === 1 ? 16 : 13);
+    __p.ellipse(-3, -2, 14, o.look === 1 ? 16 : 13);
+    __p.fill(0);
+    __p.ellipse(15 + ex, -2 + ey * 3 + (o.look === 1 ? -2 : 0), 6.5, 6.5);
+    __p.ellipse(-3 + ex, -2 + ey * 3 + (o.look === 1 ? -2 : 0), 6.5, 6.5);
+    // a focused frown (eyebrows), or a shocked mouth
+    __p.stroke(0);
+    __p.strokeWeight(2.5);
+    if (o.look === 1) {
+      __p.noFill();
+      __p.ellipse(7, 12, 7, 8);
+    } else {
+      __p.line(-9, -11, 3, -8);
+      __p.line(9, -8, 21, -11);
+      __p.line(2, 11, 13, 10);
+    }
+    __p.popMatrix();
+    // hands on the ledge
+    if (o.grab >= 0 && o.crumble < 0) {
+      __p.noStroke();
+      __p.fill(c[0] * 0.8, c[1] * 0.8, c[2] * 0.8);
+      __p.ellipse(o.x + 30, INTRO_TOP + 1, 12, 9);
+      __p.ellipse(o.x + 42, INTRO_TOP + 1, 12, 9);
+    }
+  };
+  var introGreatest = function introGreatest(t) {
+    var sx = -3 * t;
+    // the course: lava, spikes, then a gap no one can cross to a higher cliff
+    __p.noStroke();
+    __p.fill(150);
+    __p.rect(-20 + sx, 420, 400, 400, 15);
+    drawLavaBody(380 + sx, 432, 90, 100);
+    __p.fill(150);
+    __p.rect(470 + sx, 420, INTRO_GAP - 470, 400, 15);
+    __p.fill(180);
+    for (var q = 0; q < 4; q++) {
+      __p.triangle(560 + q * 20 + sx, 420, 570 + q * 20 + sx, 392, 580 + q * 20 + sx, 420);
+    }
+    drawLavaBody(INTRO_GAP + sx, INTRO_LAVA, INTRO_CLIFF - INTRO_GAP, 160);
+    // (the lava's glow up the gap)
+    for (var g = 0; g < 4; g++) {
+      __p.fill(255, 80, 0, 16);
+      __p.rect(INTRO_GAP + sx, INTRO_LAVA - 10 - g * 16, INTRO_CLIFF - INTRO_GAP, 12 + g * 16);
+    }
+    __p.fill(150);
+    __p.rect(INTRO_CLIFF + sx, INTRO_TOP, 900, 400, 15);
+    // the lip that breaks off under the last one
+    var last = introProAt(INTRO_PROS[2], t);
+    var lipY = INTRO_TOP;
+    if (last.crumble >= 0) {
+      var ct = t - last.crumble;
+      lipY = INTRO_TOP + 0.25 * ct * ct + ct;
+      if (dtCross(t, last.crumble + 0.01)) {
+        spawnParticles(INTRO_CLIFF + 20 + sx, INTRO_TOP + 6, 12, "dust", 4);
+      }
+    }
+    if (lipY < 620) {
+      __p.fill(135);
+      __p.rect(INTRO_CLIFF + sx, lipY, 34, 22, 6);
+    }
+    __p.fill(150);
+    if (last.crumble >= 0) {
+      __p.fill(110);
+      __p.rect(INTRO_CLIFF + sx, INTRO_TOP, 34, 22, 0); // (where it broke)
+    }
+    for (var i = 0; i < INTRO_PROS.length; i++) {
+      var a = INTRO_PROS[i];
+      var o = i === 2 ? last : introProAt(a, t);
+      var before = introProAt(a, t - DT);
+      if (o.gone) {
+        if (!before.gone) {
+          spawnParticles(o.x + 20, INTRO_LAVA, 22, a.ev, 5);
+          sfx("lavaSizzle");
+        }
+        continue;
+      }
+      // speed lines while they run, a streak while dashing
+      __p.strokeWeight(3);
+      if (o.y > 370 && t < a.L) {
+        __p.stroke(255, 255, 255, 110);
+        for (var sl = 0; sl < 3; sl++) {
+          var lx = o.x - 14 - ((t * 9 + sl * 17 + a.x0) % 40);
+          __p.line(lx, o.y + 8 + sl * 11, lx - 16, o.y + 8 + sl * 11);
+        }
+      }
+      if (o.dashing) {
+        __p.stroke(a.c[0], a.c[1], a.c[2], 120);
+        __p.strokeWeight(30);
+        __p.line(o.x - 50, o.y + 20, o.x + 10, o.y + 20);
+      }
+      // a puff under each jump in the air
+      for (var jj = 1; jj < a.j.length; jj++) {
+        var pt = t - a.L - a.j[jj][0];
+        if (pt >= 0 && pt < 16 && !o.hit && o.grab < 0) {
+          __p.noFill();
+          __p.stroke(255, 255, 255, 200 - pt * 12);
+          __p.strokeWeight(3);
+          __p.ellipse(o.x + 20 - pt * 1.5, o.y + 44 + pt, 26 + pt * 3, 8 + pt);
+        }
+      }
+      if (o.hit !== false && dtCross(t, o.hit + 0.01)) {
+        sfx("bossHit");
+      }
+      introProDraw(a, o, t);
+    }
+  };
   // Reset certain stats during a transition
   var currentBoss;
   var cutsceneReset = function cutsceneReset() {
@@ -47935,7 +48191,8 @@ function program() {
               p.faceX = -2;
               p.mouth = 'open';
               // [v1.6] (his eyes really do now: up and to the left, at the text)
-              p.look = { x: -0.7, y: -1.1, f: __p.frameCount };
+              // ([v1.9] mostly up: the sideways part won, so he looked left)
+              p.look = { x: -0.22, y: -1.8, f: __p.frameCount };
 
               // Animate text screen until frame 10
               if (lvlEndFrames < 10) {
@@ -47946,7 +48203,7 @@ function program() {
                 p.faceY = -3;
                 p.faceX = 0;
                 p.mouth = 'closed';
-                p.look = { x: 0, y: -1.1, f: __p.frameCount }; // [v1.6] up, as he floats away
+                p.look = { x: 0, y: -1.8, f: __p.frameCount }; // [v1.6] up, as he floats away
 
                 // Check this first cause otherwise portal doesn't exist and everything breaks
                 if (!bossFight && lvl.portal) {
@@ -51054,9 +51311,9 @@ function program() {
               // 2 - Scroll the Obstacle course
               cutsceneX[1] -= 3 * DT;
 
-              // 3 - Fade out text & course
-              if (cFrames > 1970 && cFrames <= 2030) {
-                ctOpacity += 4.25 * DT;
+              // 3 - Fade out text & course ([v1.9] later and quicker: the last try is the best part)
+              if (cFrames > 2000) {
+                ctOpacity = __p.max(ctOpacity, __p.min(255, (cFrames - 2000) / 30 * 255));
               }
               worldBackground(-__p.frameCount / 2, 0, 1); // Area 1 bckg
 
@@ -51067,88 +51324,10 @@ function program() {
               __p.stroke(0);
               arcText('players tried', 190, 200);
 
-              // Obstacle Course
-              __p.fill(150);
-              __p.noStroke();
-              __p.rect(-15 + cutsceneX[1], 420, 1000, 400, 15);
-              __p.rect(1150 + cutsceneX[1], 270, 1000, 400, 15);
-              drawLavaBody(500 + cutsceneX[1], 420, 120, 100);
-
-              // Spikes
-              __p.fill(180);
-              __p.triangle(750 + cutsceneX[1], 400, 760 + cutsceneX[1], 420, 740 + cutsceneX[1], 420);
-              __p.triangle(770 + cutsceneX[1], 400, 780 + cutsceneX[1], 420, 760 + cutsceneX[1], 420);
-              __p.triangle(790 + cutsceneX[1], 400, 800 + cutsceneX[1], 420, 780 + cutsceneX[1], 420);
-              __p.triangle(810 + cutsceneX[1], 400, 820 + cutsceneX[1], 420, 800 + cutsceneX[1], 420);
-
-              // Players
-              if (dtPassDown(cutsceneX[1], -459, 3)) {
-                spawnParticles(80, cutsceneY[0] + 20, 20, "deathG", 5);
-              }
-              if (cutsceneX[1] > -460) {
-                __p.fill(0, 220, 0); // GREEN
-                __p.rect(60, cutsceneY[0], 40, 40, 10);
-                __p.fill(255);
-                __p.ellipse(95, cutsceneY[0] + 15, 15, 15);
-                __p.ellipse(75, cutsceneY[0] + 15, 15, 15);
-                __p.fill(0);
-                __p.ellipse(97, cutsceneY[0] + 15, 7, 7);
-                __p.ellipse(77, cutsceneY[0] + 15, 7, 7);
-              }
-              if (dtPassDown(cutsceneX[1], -645, 3)) {
-                spawnParticles(150, cutsceneY[0] + 20, 20, "deathY", 5);
-              }
-              if (cutsceneX[1] > -645) {
-                __p.fill(255, 220, 0); // YELLOW
-                __p.rect(130, cutsceneY[1], 40, 40, 10);
-                __p.fill(255);
-                __p.ellipse(165, cutsceneY[1] + 15, 15, 15);
-                __p.ellipse(145, cutsceneY[1] + 15, 15, 15);
-                __p.fill(0);
-                __p.ellipse(167, cutsceneY[1] + 15, 7, 7);
-                __p.ellipse(147, cutsceneY[1] + 15, 7, 7);
-              }
-              __p.fill(0, 230, 200); // BLUE
-              __p.rect(200, cutsceneY[2], 40, 40, 10);
-              __p.fill(255);
-              __p.ellipse(235, cutsceneY[2] + 15, 15, 15);
-              __p.ellipse(215, cutsceneY[2] + 15, 15, 15);
-              __p.fill(0);
-              __p.ellipse(237, cutsceneY[2] + 15, 7, 7);
-              __p.ellipse(217, cutsceneY[2] + 15, 7, 7);
-
-              // Loops through each player attributes and tells what to do when jumping
-              for (var i = 0; i < cutsceneY.length; i++) {
-                if (cutsceneIsJump[i]) {
-                  cutsceneY[i] += dtFall(cutsceneJumpVel[i], 0.4);
-                  cutsceneJumpVel[i] += 0.4 * DT;
-                }
-                if ((cutsceneY[i] > 380 || cutsceneJumpVel[i] > 10) && cutsceneX[1] > -690) {
-                  cutsceneY[i] = 380;
-                  cutsceneIsJump[i] = false;
-                  cutsceneJumpVel[i] = -10;
-                }
-              }
-              if (dtPassDown(cutsceneX[1], -300, 3)) {
-                cutsceneIsJump[0] = true;
-              } // Green jumps
-
-              if (dtPassDown(cutsceneX[1], -330, 3)) {
-                cutsceneIsJump[1] = true;
-              } // Yellow jumps
-              if (dtPassDown(cutsceneX[1], -495, 3)) {
-                cutsceneIsJump[1] = true;
-              }
-              if (dtPassDown(cutsceneX[1], -255, 3)) {
-                cutsceneIsJump[2] = true;
-              } // Blue jumps
-              if (dtPassDown(cutsceneX[1], -480, 3)) {
-                cutsceneIsJump[2] = true;
-              }
-              if (dtPassDown(cutsceneX[1], -690, 3)) {
-                cutsceneIsJump[2] = true;
-              }
-
+              // [v1.9] They really are the best: they flip over the lava and the spikes
+              // like it's nothing. The course just can't be done: the last gap is too
+              // wide for anyone, and each one gets a little closer than the one before.
+              introGreatest(cFrames - 1685);
               // Fade-in black rect
               __p.fill(0, 0, 0, ctOpacity);
               __p.rect(0, 0, 600, 600);
@@ -53257,7 +53436,8 @@ function program() {
         id: pl.id,
         n: pl.name,
         c: pl.color,
-        sk: pl.skin
+        sk: pl.skin,
+        ph: pl.id === MP.myId ? mpMyPhone() ? 1 : 0 : pl.ph ? 1 : 0
       });
     }
     return list;
@@ -56012,6 +56192,7 @@ function program() {
         }
         var hiName = String(m.n || "Player").slice(0, 16);
         pl = mpAddPlayer(fromId, hiName, MP.players[fromId] ? MP.players[fromId].color : mpFreeColor(), m.sk | 0);
+        pl.ph = m.ph ? 1 : 0;
         // [v1.7] a developer's name only with the admin key (the party server checked
         // it when they asked to join): anyone else using one is removed at once
         if (mpProtName(hiName) && !(SRV.slotAdm && SRV.slotAdm[fromId])) {
@@ -56057,7 +56238,7 @@ function program() {
           var r = m.p[i];
           seen[r.id] = true;
           var mine = r.id === MP.myId;
-          mpAddPlayer(r.id, r.n, r.c, mine ? currentSkin : r.sk);
+          mpAddPlayer(r.id, r.n, r.c, mine ? currentSkin : r.sk).ph = r.ph ? 1 : 0;
         }
         for (var k in MP.players) {
           if (!seen[k]) {
@@ -57133,6 +57314,7 @@ function program() {
             t: "hi",
             n: mpMyName("Player"),
             sk: currentSkin,
+            ph: mpMyPhone() ? 1 : 0, // [v1.9] (a phone or a computer, for the list)
             cv: MP_CV // [v1.6] (this game reads changes-only states)
           });
           mpChatLine("", "Connected! The host picks the levels.", -1);
@@ -58164,6 +58346,38 @@ function program() {
     }
     return lines.length * lh;
   };
+  // [v1.9] a phone or tablet (a touch screen without a mouse), or a computer
+  var mpMyPhone = function mpMyPhone() {
+    return !!(MOBILE.coarse || window.__dashTouch && window.__dashTouch.active());
+  };
+  var mpDeviceIcon = function mpDeviceIcon(cx, cy, h, phone) {
+    __p.pushStyle();
+    __p.rectMode(__p.CORNER);
+    __p.stroke(0);
+    __p.strokeWeight(__p.max(1.5, h * 0.12));
+    if (phone) {
+      var w = h * 0.58;
+      __p.fill(40, 44, 58);
+      __p.rect(cx - w / 2, cy - h / 2, w, h, h * 0.16);
+      __p.noStroke();
+      __p.fill(120, 200, 255);
+      __p.rect(cx - w / 2 + h * 0.1, cy - h / 2 + h * 0.13, w - h * 0.2, h * 0.62, h * 0.04);
+      __p.fill(200);
+      __p.ellipse(cx, cy + h * 0.36, h * 0.11, h * 0.11);
+    } else {
+      var mw = h * 1.25,
+        mh = h * 0.8;
+      __p.fill(40, 44, 58);
+      __p.rect(cx - mw / 2, cy - h / 2, mw, mh, h * 0.1);
+      __p.noStroke();
+      __p.fill(120, 200, 255);
+      __p.rect(cx - mw / 2 + h * 0.1, cy - h / 2 + h * 0.1, mw - h * 0.2, mh - h * 0.2, h * 0.03);
+      __p.stroke(0);
+      __p.line(cx, cy - h / 2 + mh, cx, cy + h / 2 - h * 0.06);
+      __p.line(cx - h * 0.3, cy + h / 2 - h * 0.04, cx + h * 0.3, cy + h / 2 - h * 0.04);
+    }
+    __p.popStyle();
+  };
   var mpPlayerList = function mpPlayerList(x, y) {
     var i = 0;
     var rh = mpCount() > 8 ? 19 : mpCount() > 5 ? 24 : 34; // twelve players still fit
@@ -58176,7 +58390,7 @@ function program() {
       var dev = mine ? admOn() ? ADM.who : "" : mpAdmOf(pl);
       // [v1.1] the name, its tags and the badges all fit in the column
       var kickable = MP.isHost && !mine && !pl.kicked && !mpIsAdminPl(pl); // [v1.7] (not a developer)
-      var room = 218 - (champ ? 22 : 0) - (dev ? 36 : 0) - (kickable ? 56 : 0);
+      var room = 218 - (champ ? 22 : 0) - (dev ? 36 : 0) - (kickable ? 56 + 22 : 44); // ([v1.9] and the device icon)
       var s = 9;
       while (s > 4.5 && mpArcW(label, s) > room) {
         s -= 0.5;
@@ -58189,7 +58403,10 @@ function program() {
       }
       if (dev) {
         mpDevTag(bx, y + i * rh + 7, dev);
+        bx += 36;
       }
+      // [v1.9] what they're playing on: a phone (or tablet) or a computer
+      mpDeviceIcon(bx + 8, y + i * rh + 14, __p.min(18, rh * 0.62), mine ? mpMyPhone() : !!pl.ph);
       if (kickable && !MP.modal) {
         // [v1.1] host: remove this player
         var kh = __p.min(22, rh - 6);
@@ -59295,14 +59512,20 @@ function program() {
     // keep clear of the Q menu while it is open
     var chatX = -widePad + 8 + (scene === "game" ? __p.max(0, qMenuX + qMenuWidth + 6) : 0);
     var copyHit = null;
+    // [v1.7] with the chat open, clicking a message copies it ([v1.9] and every row
+    // of that message lights up, not just the one under the mouse)
+    for (var r1 = 0; r1 < rows.length && MP.chatOpen; r1++) {
+      var ly1 = bottom - r1 * rowH;
+      if (rows[r1].L && rows[r1].L.x !== undefined && worldMouseX >= chatX && worldMouseX <= chatX + boxW && worldMouseY >= ly1 - rowH + 1 && worldMouseY <= ly1 + 1) {
+        copyHit = rows[r1].L;
+        __p.cursor(__p.HAND);
+      }
+    }
     for (var r0 = 0; r0 < rows.length; r0++) {
       var R = rows[r0];
       var ly = bottom - r0 * rowH;
-      // [v1.7] with the chat open, clicking a message copies it
-      if (MP.chatOpen && R.L && R.L.x !== undefined && worldMouseX >= chatX && worldMouseX <= chatX + boxW && worldMouseY >= ly - rowH + 1 && worldMouseY <= ly + 1) {
-        copyHit = R.L;
+      if (copyHit && R.L === copyHit) {
         mpSnapRect(chatX, ly - rowH + 1, boxW, rowH, 40);
-        __p.cursor(__p.HAND);
       }
       // [v1.5] snapped to whole screen pixels: rows drawn at fractions of a pixel left
       // thin see-through seams between them
@@ -61399,7 +61622,8 @@ function program() {
     }
     // a box that is no longer being typed in lets go (that puts the keyboard away)
     var act = document.activeElement;
-    if (mobileIsBox(act)) {
+    // (only the game's own hidden boxes: the save code panel's box is a real one)
+    if (mobileIsBox(act) && MOBILE.boxes[act.getAttribute("data-dash-box")] === act) {
       var ak = act.getAttribute("data-dash-box");
       var typingThere = ak === "chat" ? MP.chatOpen : MP.focus === ak;
       if (!typingThere && __p.millis() - (MOBILE.focusAt || 0) > 300) {
@@ -61725,7 +61949,6 @@ function program() {
     dashLogo(100, 26, 250, 9999);
     // Dash, bouncing in the middle
     var b = Math.abs(Math.sin(t * 2.6));
-    var squash = b < 0.12 ? (0.12 - b) * 2.2 : 0;
     __p.noStroke();
     __p.fill(0, 0, 0, 40 + 40 * (1 - b));
     __p.ellipse(300, 374, 120 - b * 40, 18);
@@ -61733,7 +61956,7 @@ function program() {
     me.mouth = b > 0.5 ? "open" : "closed";
     __p.pushMatrix();
     __p.translate(300, 330 - b * 40);
-    __p.scale(2.6 * (1 + squash), 2.6 * (1 - squash));
+    __p.scale(2.6);
     __p.rotate(Math.sin(t * 2.6) * 6);
     me.draw();
     __p.popMatrix();
@@ -61760,7 +61983,7 @@ function program() {
       box.id = "dash-load-box";
       box.setAttribute("data-dash-box", "save");
       box.style.cssText = "position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);" + "font:15px 'Trebuchet MS',Arial,sans-serif;color:#000;padding:12px;box-sizing:border-box";
-      box.innerHTML = '<div data-dash-box="save" style="box-sizing:border-box;width:min(440px,100%);background:#fff;border:6px solid #000;border-radius:24px;padding:18px 20px;box-shadow:10px 10px 0 #0003;text-align:left">' + '<div data-dash-box="save" style="font-weight:900;font-size:22px;letter-spacing:2px;color:#f00;text-align:center;margin-bottom:10px">LOAD SAVE CODE</div>' + '<textarea data-dash-box="save" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="Paste a save code here." style="display:block;box-sizing:border-box;width:100%;min-height:90px;padding:9px 10px;border:3px solid #000;border-radius:14px;background:#f4fdff;color:#000;font:16px/1.35 ui-monospace,Menlo,Consolas,monospace;resize:vertical;-webkit-user-select:text;user-select:text;outline:none"></textarea>' + '<div data-dash-box="save" class="dlb-msg" style="min-height:1.3em;margin:8px 0 0;font-size:13px;color:#555">This replaces the progress on this device with the code\'s. (COPY yours first to keep it.)</div>' + '<div data-dash-box="save" style="display:flex;gap:8px;margin-top:12px">' + '<button data-dash-box="save" class="dlb-paste" type="button" style="flex:1;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">PASTE</button>' + '<button data-dash-box="save" class="dlb-cancel" type="button" style="flex:1;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">CANCEL</button>' + '<button data-dash-box="save" class="dlb-load" type="button" style="flex:1.3;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#f00;color:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">LOAD</button>' + "</div></div>";
+      box.innerHTML = '<div data-dash-box="save" style="box-sizing:border-box;width:min(440px,100%);background:#fff;border:6px solid #000;border-radius:24px;padding:18px 20px;box-shadow:10px 10px 0 #0003;text-align:left">' + '<div data-dash-box="save" style="font-weight:900;font-size:22px;letter-spacing:2px;color:#f00;text-align:center;margin-bottom:10px">LOAD SAVE CODE</div>' + '<textarea data-dash-box="save" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="Paste a save code here." style="display:block;box-sizing:border-box;width:100%;min-height:90px;padding:9px 10px;border:3px solid #000;border-radius:14px;background:#f4fdff;color:#000;font:16px/1.35 ui-monospace,Menlo,Consolas,monospace;resize:vertical;-webkit-user-select:text;user-select:text;outline:none"></textarea>' + '<div data-dash-box="save" class="dlb-msg" style="min-height:1.3em;margin:8px 0 0;font-size:13px;color:#555">This replaces the progress on this device with the code\'s. (COPY yours first to keep it.)</div>' + '<div data-dash-box="save" style="display:flex;gap:8px;margin-top:12px">' + '<button data-dash-box="save" class="dlb-paste" type="button" style="flex:1;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">PASTE</button>' + '<button data-dash-box="save" class="dlb-cancel" type="button" style="flex:1;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">CANCEL</button>' + '<button data-dash-box="save" class="dlb-load" type="button" style="flex:1.3;padding:9px 6px;border:4px solid #000;border-radius:14px;background:#f00;color:#fff;font:800 15px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">LOAD</button>' + "</div>" + '<button data-dash-box="save" class="dlb-fresh" type="button" style="display:block;width:100%;margin-top:12px;padding:8px 6px;border:3px solid #c00;border-radius:14px;background:#fff;color:#c00;font:800 14px \'Trebuchet MS\',Arial,sans-serif;cursor:pointer">START FRESH (erase everything on this device)</button>' + "</div>";
       document.body.appendChild(box);
       var ta = box.querySelector("textarea");
       var msg = box.querySelector(".dlb-msg");
@@ -61807,6 +62030,38 @@ function program() {
           say("Paste into the box (Ctrl+V or Cmd+V, or hold and Paste).", true);
         }
       };
+      // [v1.9] start fresh: like the very first time on this device (two presses)
+      var fresh = box.querySelector(".dlb-fresh");
+      fresh.onclick = function () {
+        if (!(box.freshAt && Date.now() - box.freshAt < 6000)) {
+          box.freshAt = Date.now();
+          fresh.textContent = "PRESS AGAIN TO ERASE EVERYTHING";
+          fresh.style.background = "#c00";
+          fresh.style.color = "#fff";
+          say("This erases all your progress on this device: levels, coins, skins, achievements and settings. COPY your save code first if you might want it back.", true);
+          return;
+        }
+        window.__dashFresh = true; // (nothing saves it back on the way out)
+        try {
+          var gone = [];
+          for (var i = 0; i < window.localStorage.length; i++) {
+            var k = window.localStorage.key(i);
+            // (the device's random id and admin keys stay)
+            if (k && /^dashparkour-/.test(k) && !/^dashparkour-(device|admin|mod-key)$/.test(k)) {
+              gone.push(k);
+            }
+          }
+          gone.forEach(function (k) {
+            window.localStorage.removeItem(k);
+          });
+          window.sessionStorage.clear();
+        } catch (e) {}
+        say("Starting fresh...", false);
+        window.setTimeout(function () {
+          var u = String(window.location.href).replace(/#.*$/, "");
+          window.location.replace(u);
+        }, 300);
+      };
       box.querySelector(".dlb-load").onclick = function () {
         var code = dashSaveCodeOf(ta.value);
         if (!code) {
@@ -61835,6 +62090,10 @@ function program() {
       };
     }
     box.style.display = "flex";
+    box.freshAt = 0;
+    box.querySelector(".dlb-fresh").textContent = "START FRESH (erase everything on this device)";
+    box.querySelector(".dlb-fresh").style.background = "#fff";
+    box.querySelector(".dlb-fresh").style.color = "#c00";
     box.querySelector(".dlb-msg").textContent = "This replaces the progress on this device with the code's. (COPY yours first to keep it.)";
     box.querySelector(".dlb-msg").style.color = "#555";
     box.querySelector(".dlb-msg").style.fontWeight = "400";
@@ -61853,7 +62112,7 @@ function program() {
   MOBILE.saveAt = 0;
   MOBILE.lastSave = "";
   var dashAutosave = function dashAutosave() {
-    if (loading || window.__dashBootHold || __p.millis() - MOBILE.saveAt < 2000) {
+    if (loading || window.__dashBootHold || window.__dashFresh || __p.millis() - MOBILE.saveAt < 2000) {
       return;
     }
     MOBILE.saveAt = __p.millis();
@@ -64052,6 +64311,7 @@ window.__dashParkourBootPromise = runPJS(program);
   // otherwise press the game's keys).
   window.__dashBootHold = true;
   function holdKeys(e) {
+    if (e.target && e.target.closest && e.target.closest("#dash-load-box")) return; // (the save code panel's Enter and Esc)
     if (window.__dashBootHold) e.stopImmediatePropagation(); // (the letters still go into the box)
   }
   ["keydown", "keyup", "keypress"].forEach(function (n) { window.addEventListener(n, holdKeys, true); });
@@ -64095,7 +64355,7 @@ window.__dashParkourBootPromise = runPJS(program);
     var b = document.createElement("button");
     b.id = "dash-start-load";
     b.type = "button";
-    b.textContent = "Have a save code? Load it";
+    b.textContent = "Save code / Start fresh";
     b.style.cssText = "position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:20;padding:10px 18px;border:4px solid #000;border-radius:14px;background:#0078c8;color:#fff;font:800 16px 'Trebuchet MS',Arial,sans-serif;cursor:pointer;box-shadow:0 4px 0 #000";
     b.onclick = function () {
       if (window.__dashLoadSave) window.__dashLoadSave();

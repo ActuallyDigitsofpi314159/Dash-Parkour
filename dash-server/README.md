@@ -104,6 +104,14 @@ Other commands:
 
 The full setup log is in `~/dash-setup.log`.
 
+### From anywhere: `https://party.YOURSITE/console`
+
+No need to go to the Pi: open `/console` on the party address, type your admin key, and press a button (Status, Update, Restart, Fix, Errors, Log, Stats, History, Bans, Relay, Test notice) or type a command like `history 12` or `unban NAME`. The output shows as it runs; during an update the server restarts near the end, and the page waits and shows the rest when it's back.
+
+- It only works after one `dash-party update` on the Pi (that installs the part that runs the commands). After that, updates work from the page.
+- Only these commands, nothing else: status, stats, errors, log, history [N], bans, unban NAME, notify [on|off|test], turn [guide|off], fix, restart, update. Admin keys (`keys`, `setkey`) and typing relay passwords (`turn set`, `turn metered`) stay on the Pi.
+- How it's safe: the server (the locked-down `dashparty` user) can only leave a request in a file. A separate small program on the Pi, `dash-cmd` (run by `dash-cmd.path`), reads it, checks it against that list itself, and runs it. So even a broken or hacked server can't run anything else. Wrong keys lock out after 5 a minute, like the other admin pages, and each command is written to the log (`CONSOLE: ... ran dash-party ...`).
+
 ### What fixes itself
 
 | Problem | What happens |

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# dash-cmd: runs the dash-party commands asked for on the party server's /console page.
+#
+# It runs as root, started by dash-cmd.path when the server leaves a request in
+# /var/lib/dash-party/cmd/request. The server (a locked-down user) can only ASK:
+# this script decides what is allowed, so even a broken server can't do more than
+# these commands. Output goes to /var/lib/dash-party-out (root's folder, which the
+# server can only read).
+set -u
+REQ_DIR=/var/lib/dash-party/cmd
+REQ="$REQ_DIR/request"
+OUT=/var/lib/dash-party-out
+ETC=/etc/dash-party
+export TERM=dumb PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+mkdir -p "$OUT"; chown root:dashparty "$OUT"; chmod 750 "$OUT"
+umask 027
+
+# the Pi user who ran setup (setup needs their Cloudflare login in ~/.cloudflared)
+setup_home() {
+  local u=""
+  [ -r "$ETC/setup.conf" ] && u="$(grep -E '^SETUP_USER=' "$ETC/setup.conf" | head -1 | cut -d= -f2 | tr -cd 'a-z0-9_.-')"
+  if [ -n "$u" ] && getent passwd "$u" >/dev/null; then getent passwd "$u" | cut -d: -f6; return; fi
+  for d in /home/*/; do [ -s "$d.cloudflared/cert.pem" ] && { echo "${d%/}"; return; }; done
+  echo /root
+}
+
+run() { # run ID WORDS...
+  local id="$1" c="${2:-}" a="${3:-}" b="${4:-}"
+  case "$c" in
+    status|once) dash-party once ;;
+    stats|errors|bans|restart|fix) dash-party "$c" ;;
+    log)
+      journalctl -u dash-party -u dash-tunnel -n 120 --no-pager
+      echo; echo "--- watchdog ---"; tail -n 25 /var/lib/dash-party/watchdog.log 2>/dev/null ;;
+    history) case "$a" in ""|[0-9]*) dash-party history "$(printf '%s' "$a" | tr -cd 0-9)" ;; *) echo "Use: history, or history NUMBER" ;; esac ;;
+    unban) [ -n "$a" ] && dash-party unban "$a" || echo "Use: unban NAME" ;;
+    notify) case "$a" in ""|on|off|test) dash-party notify "$a" ;; *) echo "Use: notify on, notify off or notify test" ;; esac ;;
+    turn) case "$a" in ""|guide|off) dash-party turn "$a" ;; *) echo "From here: turn, turn guide or turn off. (Setting it up is on the /cloudflare page.)" ;; esac ;;
+    update)
+      local h; h="$(setup_home)"
+      echo "Updating (as on the Pi, with the setup files in $h). The server restarts near the end:"
+      echo "this page keeps waiting and shows the rest when it's back."
+      echo
+      HOME="$h" dash-party update
+      local r=$?
+      [ "$h" != /root ] && chown --reference="$h" "$h/dash-setup.log" 2>/dev/null
+      return $r ;;
+    *) echo "Not a command you can run from here: $c"; return 2 ;;
+  esac
+}
+
+while [ -f "$REQ" ] || [ -L "$REQ" ]; do
+  line=""
+  [ -f "$REQ" ] && [ ! -L "$REQ" ] && line="$(head -c 200 "$REQ" | head -1)"
+  rm -f "$REQ"
+  # the request: ID COMMAND [WORD] [WORD]  (nothing but plain letters and numbers)
+  line="$(printf '%s' "$line" | tr -cd 'A-Za-z0-9 _.-')"
+  set -- $line
+  id="${1:-}"
+  case "$id" in *[!a-f0-9]*|"") continue ;; esac
+  [ ${#id} -ge 8 ] && [ ${#id} -le 24 ] || continue
+  shift
+  printf '%s\n' "$id" >"$OUT/running"
+  f="$OUT/out-$id"
+  rm -f "$f" "$OUT/done-$id"
+  echo "\$ dash-party $*" >"$f"
+  chgrp dashparty "$f"
+  ( run "$id" "$@" ) </dev/null >>"$f" 2>&1 &
+  pid=$!
+  # (at most 40 minutes)
+  ( sleep 2400; kill "$pid" 2>/dev/null ) &
+  timer=$!
+  wait "$pid"; code=$?
+  kill "$timer" 2>/dev/null
+  printf '%s\n' "$code" >"$OUT/done-$id"; chgrp dashparty "$OUT/done-$id"
+  rm -f "$OUT/running"
+  # keep the last 20
+  ls -1t "$OUT"/out-* 2>/dev/null | tail -n +21 | while read -r old; do rm -f "$old" "$OUT/done-${old##*/out-}"; done
+done
+exit 0

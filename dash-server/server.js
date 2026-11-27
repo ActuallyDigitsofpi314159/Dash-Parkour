@@ -741,8 +741,11 @@ const cfKeysPath = (c) => "/client/v4/accounts/" + encodeURIComponent(c.account)
 function cfMakeKey(c) {
   return cfRequest("api.cloudflare.com", cfKeysPath(c), c.api, { name: "dash-parkour-" + new Date().toISOString().slice(0, 10) }).then((j) => {
     const r = j.result || j;
-    if (!r.uid || !r.key) throw new Error("no key in Cloudflare's answer");
-    return { id: String(r.uid), token: String(r.key) };
+    // (Cloudflare calls the secret "secret" now; older answers said "key")
+    const id = r.uid || r.id,
+      secret = r.secret || r.key;
+    if (!id || !secret) throw new Error("no key in Cloudflare's answer");
+    return { id: String(id), token: String(secret) };
   });
 }
 function saveTurnConf(patch) {
@@ -1103,6 +1106,87 @@ function cfStatusText() {
   const read = turnUse.at ? Math.round((Date.now() - turnUse.at) / 1000) + " s ago" : "not yet";
   return (st.on ? "The relay is ON (Cloudflare)." : "The relay is OFF: " + st.why + ".") + "\nLast 30 days: " + gb(st.gb) + " of " + st.budgetGB + " GB\nToday (UTC): " + gb(st.todayGB) + " of " + gb(st.dayGB) + " GB\nMeter read " + read + ". Logins given out today: " + turnDay.n + ".";
 }
+// [v1.9] the /console page: run dash-party commands from anywhere (with an admin key).
+// The server only leaves a request; dash-cmd (root, on the Pi) checks it and runs it.
+const CMD_REQ_DIR = path.join(DATA_DIR, "cmd");
+const CMD_OUT_DIR = process.env.CMD_OUT_DIR || "/var/lib/dash-party-out";
+const CMD_OK = {
+  status: /^$/, once: /^$/, stats: /^$/, errors: /^$/, log: /^$/, bans: /^$/, restart: /^$/, fix: /^$/, update: /^$/,
+  history: /^(\d{1,6})?$/, unban: /^[A-Za-z0-9 _.-]{1,30}$/, notify: /^(on|off|test)?$/, turn: /^(guide|off)?$/,
+};
+function cmdParse(line) {
+  const w = String(line || "").trim().replace(/^dash-party\b\s*/i, "").split(/\s+/).filter(Boolean);
+  const c = (w.shift() || "status").toLowerCase();
+  const a = w.join(" ");
+  if (!Object.prototype.hasOwnProperty.call(CMD_OK, c)) return { error: "From here you can run: " + Object.keys(CMD_OK).join(", ") + "." };
+  if (!CMD_OK[c].test(a)) return { error: "That isn't how " + c + " works here." + (c === "turn" ? " (Set up the relay on the /cloudflare page.)" : "") };
+  return { c, a };
+}
+function cmdRunning() {
+  try {
+    const st = fs.statSync(path.join(CMD_OUT_DIR, "running"));
+    if (Date.now() - st.mtimeMs < 45 * 60 * 1000) return fs.readFileSync(path.join(CMD_OUT_DIR, "running"), "utf8").trim();
+  } catch (e) {}
+  return "";
+}
+const cmdAsked = new Map(); // id -> { at, line }
+function consolePage(res) {
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>DASH Parkour: console</title>
+<style>:root{color-scheme:dark}body{font:16px/1.5 system-ui,-apple-system,sans-serif;background:#0d0f16;color:#f5f4f0;max-width:860px;margin:0 auto;padding:24px 14px}h1{font-size:24px;margin:0 0 4px}small{color:#a9aec2}label{display:block;margin:14px 0 6px;font-weight:600}input{width:100%;box-sizing:border-box;padding:11px;border-radius:10px;border:1px solid #39405a;background:#151926;color:#fff;font:15px ui-monospace,Menlo,monospace}.row{display:flex;gap:8px}.row input{flex:1}button{padding:10px 14px;border:0;border-radius:10px;background:#2b3350;color:#fff;font:600 15px system-ui,sans-serif;cursor:pointer}button.go{background:#f63}button:disabled{opacity:.45;cursor:default}#quick{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}#out{margin-top:14px;background:#06070b;border:1px solid #262a38;border-radius:12px;padding:12px 14px;min-height:260px;max-height:68vh;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13.5px/1.45 ui-monospace,Menlo,monospace}#state{margin-top:8px;color:#a9aec2;font-size:14px;min-height:20px}.b{font-weight:700}.d{opacity:.6}.r{color:#ff6b6b}.g{color:#5ee08a}.y{color:#ffd166}.c{color:#6cd3ff}.cmd{color:#f63;font-weight:700}</style></head>
+<body><h1>Console</h1><small>Runs <b>dash-party</b> commands on the Pi, so you don't have to go to it. Needs an admin key.</small>
+<label for="k">Your admin key</label><input id="k" type="password" autocomplete="off">
+<div id="quick"></div>
+<form id="f" class="row"><input id="c" autocomplete="off" spellcheck="false" placeholder="a command, like: history 12" autocapitalize="off"><button class="go" id="b" type="submit">Run</button></form>
+<div id="state"></div><div id="out"></div>
+<p><small>Allowed here: status, stats, errors, log, history [N], bans, unban NAME, notify [on|off|test], turn [guide|off], fix, restart, update. Admin keys and relay setup stay on the Pi (relay setup is on <a href="/cloudflare" style="color:#7ab8ff">/cloudflare</a>).</small></p>
+<script>
+var $=function(i){return document.getElementById(i)},out=$("out"),st=$("state"),busy=false,id="",from=0,fails=0;
+try{$("k").value=sessionStorage.getItem("dashKey")||""}catch(e){}
+var Q=[["Status","status"],["Update","update"],["Restart","restart"],["Fix","fix"],["Errors","errors"],["Log","log"],["Stats","stats"],["History","history"],["Bans","bans"],["Relay","turn"],["Test notice","notify test"]];
+Q.forEach(function(q){var b=document.createElement("button");b.type="button";b.textContent=q[0];b.onclick=function(){go(q[1])};$("quick").appendChild(b)});
+function lock(on){busy=on;[].forEach.call(document.querySelectorAll("button"),function(b){b.disabled=on})}
+var cls=[];
+function addText(t){
+  t=t.replace(/\\r(?!\\n)/g,"\\n");
+  var parts=t.split(/\\x1b\\[([0-9;?]*)([A-Za-z])/);
+  for(var i=0;i<parts.length;i++){
+    if(i%3===0){if(parts[i]){var s=document.createElement("span");s.className=cls.join(" ");s.textContent=parts[i];out.appendChild(s)}}
+    else if(i%3===1){if(parts[i+1]==="m"){(parts[i]||"0").split(";").forEach(function(n){n=+n;if(n===0)cls=[];else{var m={1:"b",2:"d",31:"r",32:"g",33:"y",36:"c"}[n];if(m&&cls.indexOf(m)<0)cls.push(m)}})}i++}
+  }
+  out.scrollTop=out.scrollHeight;
+}
+function post(u,d){return fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){return r.json().then(function(j){j.status=r.status;return j})})}
+function key(){var k=$("k").value.replace(/\\s+/g,"");try{sessionStorage.setItem("dashKey",k)}catch(e){}return k}
+function go(line){
+  if(busy)return;if(!key()){st.textContent="Type your admin key first.";$("k").focus();return}
+  if(/^\\s*update/.test(line)&&!confirm("Update the server now? Parties playing right now get cut off for a few seconds while it restarts."))return;
+  if(/^\\s*restart/.test(line)&&!confirm("Restart the server and the tunnel? Parties get cut off for a few seconds."))return;
+  lock(true);st.textContent="Asking the Pi...";
+  if(out.childNodes.length)addText("\\n");
+  post("/api/cmd",{key:key(),line:line}).then(function(j){
+    if(!j.ok){lock(false);st.textContent=j.error||"That didn't work.";return}
+    id=j.id;from=0;fails=0;cls=[];poll();
+  }).catch(function(){lock(false);st.textContent="Couldn't reach the party server."})
+}
+function poll(){
+  post("/api/cmdout",{key:key(),id:id,from:from}).then(function(j){
+    if(!j.ok){lock(false);st.textContent=j.error||"That didn't work.";return}
+    fails=0;
+    if(j.text){addText(j.text);from=j.next}
+    if(j.done){lock(false);cls=[];st.textContent=j.code==="0"?"Done.":"Finished with a problem (code "+j.code+").";return}
+    st.textContent=j.waiting?"Waiting for the Pi to start it...":"Running...";
+    setTimeout(poll,j.text?400:1200);
+  }).catch(function(){
+    fails++;st.textContent="The server is restarting (normal during an update or restart). Still waiting... ("+fails+")";
+    if(fails>150){lock(false);st.textContent="The server didn't come back. Check the Pi.";return}
+    setTimeout(poll,2000);
+  })
+}
+$("f").onsubmit=function(e){e.preventDefault();var v=$("c").value;if(!v.trim())return;go(v);$("c").value=""};
+</script></body></html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer" });
+  res.end(body);
+}
 function statusPage(req, res) {
   const players = [...parties.values()].reduce((a, p) => a + p.n, 0);
   const onl = onlineNow(); // [v1.8] (every game on the website checks in, in a party or not)
@@ -1141,6 +1225,7 @@ async function handle(req, res) {
       if (p0 === "/") return statusPage(req, res);
       if (p0 === "/relay") return relayPage(res); // [v1.7]
       if (p0 === "/cloudflare") return cloudflarePage(res); // [v1.8]
+      if (p0 === "/console") return consolePage(res); // [v1.9]
       res.writeHead(302, { Location: "https://" + SITE_DOMAIN + GAME_PATH, "Cache-Control": "no-store" });
       return res.end();
     }
@@ -1388,6 +1473,86 @@ async function handle(req, res) {
     return send(res, 200, { ok: true });
   }
 
+  // [v1.9] the /console page
+  if (p0 === "/api/cmd" || p0 === "/api/cmdout") {
+    const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
+    if (t.n >= 5) return fail(res, 429, "Too many wrong keys. Wait a minute.");
+    const who = adminFor(String(body.key || "").replace(/\s+/g, ""));
+    if (!who) {
+      t.n++;
+      adminTries.set(ip, t);
+      if (t.n === 5) notifyOnce("admguess:" + ipKey(ip), 3600 * 1000, "Admin key guessing", "Someone got 5 admin keys wrong in a minute and is locked out for now (address " + ipKey(ip).slice(0, 8) + "). Check dash-party errors.", { tags: "lock", priority: "high", click: null });
+      log("ADMIN: wrong key (console) from", ipKey(ip).slice(0, 8));
+      return fail(res, 403, "That admin key isn't right.", { badKey: true });
+    }
+    if (p0 === "/api/cmd") {
+      const q = cmdParse(body.line);
+      if (q.error) return fail(res, 400, q.error);
+      if (!fs.existsSync(CMD_OUT_DIR)) return fail(res, 503, "The Pi can't run commands from here yet. Run dash-party update on the Pi once (after that, updates work from this page).");
+      const r = cmdRunning();
+      if (r) return fail(res, 409, "Another command is still running. Wait for it to finish.");
+      if (fs.existsSync(path.join(CMD_REQ_DIR, "request"))) return fail(res, 409, "The Pi hasn't picked up the last command yet. Wait a moment.");
+      const id = crypto.randomBytes(8).toString("hex");
+      try {
+        fs.mkdirSync(CMD_REQ_DIR, { recursive: true, mode: 0o700 });
+        const tmp = path.join(CMD_REQ_DIR, "request.tmp");
+        fs.writeFileSync(tmp, id + " " + q.c + (q.a ? " " + q.a : "") + "\n", { mode: 0o600 });
+        fs.renameSync(tmp, path.join(CMD_REQ_DIR, "request"));
+      } catch (e) {
+        return fail(res, 500, "Couldn't leave the command for the Pi: " + e.message);
+      }
+      cmdAsked.set(id, { at: Date.now() });
+      for (const [k, v] of cmdAsked) if (Date.now() - v.at > 3600 * 1000) cmdAsked.delete(k);
+      log("CONSOLE:", who.name, "ran dash-party", q.c + (q.a ? " " + q.a : ""));
+      return send(res, 200, { ok: true, id });
+    }
+    const id = String(body.id || "");
+    if (!/^[a-f0-9]{16}$/.test(id)) return fail(res, 400, "Which command?");
+    const from = Math.max(0, Math.floor(Number(body.from) || 0));
+    let text = "",
+      next = from,
+      size = 0,
+      done = false,
+      code = "";
+    try {
+      const fd = fs.openSync(path.join(CMD_OUT_DIR, "out-" + id), "r");
+      try {
+        size = fs.fstatSync(fd).size;
+        const n = Math.min(65536, Math.max(0, size - from));
+        if (n) {
+          const buf = Buffer.alloc(n);
+          fs.readSync(fd, buf, 0, n, from);
+          // (don't cut a letter in half)
+          let end = n;
+          if (from + n < size) {
+            while (end > 0 && n - end < 4 && (buf[end - 1] & 0xc0) === 0x80) end--;
+            if (end > 0 && buf[end - 1] >= 0xc0) end--;
+            if (end <= 0) end = n;
+          }
+          text = buf.slice(0, end).toString("utf8");
+          next = from + end;
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch (e) {
+      // not started yet (the Pi starts it within a second or two)
+      const a = cmdAsked.get(id);
+      if (a && Date.now() - a.at > 20000 && fs.existsSync(path.join(CMD_REQ_DIR, "request"))) {
+        try {
+          fs.unlinkSync(path.join(CMD_REQ_DIR, "request"));
+        } catch (e2) {}
+        return fail(res, 503, "The Pi didn't pick up the command. Run dash-party update on the Pi once to set up the console.");
+      }
+      return send(res, 200, { ok: true, text: "", next: from, waiting: true });
+    }
+    try {
+      code = fs.readFileSync(path.join(CMD_OUT_DIR, "done-" + id), "utf8").trim();
+      done = next >= fs.statSync(path.join(CMD_OUT_DIR, "out-" + id)).size; // (only once everything's been read)
+    } catch (e) {}
+    return send(res, 200, { ok: true, text, next, done, code });
+  }
+
   // [v1.8] the Cloudflare relay page (/cloudflare): set up, and usage
   if (p0 === "/api/cfset" || p0 === "/api/cfstatus") {
     const t = adminTries.get(ip) || { t: Date.now(), n: 0 };
@@ -1464,6 +1629,14 @@ async function handle(req, res) {
       if (old && old.kind === "cloudflare" && old.api && old.account && old.id) {
         cfRequest("api.cloudflare.com", cfKeysPath(old) + "/" + encodeURIComponent(old.id), old.api, undefined, "DELETE").catch(() => {});
       }
+      // [v1.8] clear out other dash-parkour keys (left by earlier tries)
+      cfRequest("api.cloudflare.com", cfKeysPath(c), api)
+        .then((j) => {
+          for (const x of (j && j.result) || []) {
+            if (x && x.uid && x.uid !== k.id && /^dash-parkour-/.test(String(x.name || ""))) cfRequest("api.cloudflare.com", cfKeysPath(c) + "/" + encodeURIComponent(x.uid), api, undefined, "DELETE").catch(() => {});
+          }
+        })
+        .catch(() => {});
       revokeAllTurn("relay set up again");
       writeJson(TURN_FILE, Object.assign(c, k));
       turnUse = { lockUntil: 0 };
